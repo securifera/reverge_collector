@@ -1,7 +1,6 @@
 import recon_manager
 import traceback
 import argparse
-import threading
 import time
 import sys
 import logging
@@ -9,6 +8,7 @@ import logging
 local_extender_port = 33333
 
 logger = logging.getLogger(__name__)
+
 
 def print_usage():
     print("Help:")
@@ -91,9 +91,9 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-x", "--token", help="Collector Token", required=True)
-    parser.add_argument('-t', dest='test', help='Test flag', action='store_true')
+    parser.add_argument('-t', dest='test',
+                        help='Test flag', action='store_true')
     args = parser.parse_args()
-
 
     setup_logging()
 

@@ -24,8 +24,8 @@ waluigi_tools = [
     ('waluigi.httpx_scan', 'Httpx'),
     ('waluigi.sectrails_ip_lookup', 'Sectrails'),
     ('waluigi.module_scan', 'Module'),
-    ('waluigi.badsecrets_scan', 'Badsecrets'),
-    ('waluigi.divvycloud_lookup', 'Divvycloud')
+    ('waluigi.badsecrets_scan', 'Badsecrets')
+    # ('waluigi.divvycloud_lookup', 'Divvycloud')
 ]
 
 
@@ -592,6 +592,17 @@ class ScanData():
 
             # Add to overall map
             self.scan_obj_map[record_obj.id] = record_obj
+
+    def get_port_number_list_from_scope(self):
+        return list(self.port_number_list)
+
+    def get_port_number_list_from_port_map(self):
+        port_number_list = set()
+        for port_id in self.port_map:
+            port_obj = self.port_map[port_id]
+            if port_obj.port:
+                port_number_list.add(str(port_obj.port))
+        return list(port_number_list)
 
     def __init__(self, scan_data, record_tags=set()):
 

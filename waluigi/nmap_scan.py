@@ -139,6 +139,7 @@ class NmapScan(luigi.Task):
 
             # Use original scope for scan
             target_map = scheduled_scan_obj.scan_data.host_port_obj_map
+            port_num_list = scope_obj.get_port_number_list_from_scope()
 
             # Use original scope for scan
             # Create scan for each subnet, for all ports to scan
@@ -154,7 +155,7 @@ class NmapScan(luigi.Task):
                     scan_obj['resolve_dns'] = False
 
                     port_set = set()
-                    for port_str in scope_obj.port_number_list:
+                    for port_str in port_num_list:
                         port_set.add(port_str)
 
                     scan_obj['port_list'] = list(port_set)
@@ -202,7 +203,6 @@ class NmapScan(luigi.Task):
 
             else:
 
-                port_num_list = scope_obj.port_number_list
                 if len(port_num_list) > 0:
 
                     # Get host map and pair each host with all ports to scan
@@ -597,6 +597,11 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                                                                     if ":" in san_value:
                                                                         dns_name = san_value.split(":")[
                                                                             1]
+                                                                        if "," in dns_name:
+                                                                            dns_name = dns_name.split(",")[
+                                                                                0]
+                                                                        logger.debug(
+                                                                            "Adding SAN: %s" % dns_name)
                                                                         domain_obj = cert_obj.add_domain(
                                                                             host_id, dns_name)
                                                                         if domain_obj:

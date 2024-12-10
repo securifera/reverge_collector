@@ -89,7 +89,9 @@ def get_masscan_input(scheduled_scan_obj):
 
     # Get the scan inputs
     scope_obj = scheduled_scan_obj.scan_data
-    scan_port_list = scope_obj.port_number_list
+    scan_port_list = scope_obj.get_port_number_list_from_scope()
+    if len(scan_port_list) == 0:
+        scan_port_list = scope_obj.get_port_number_list_from_port_map()
 
     target_list = []
     subnet_map = scope_obj.subnet_map

@@ -136,7 +136,7 @@ class HttpXScan(luigi.Task):
                     # Add IP to list
                     endpoint_url_set.add(url_inst)
 
-            scan_port_list = scope_obj.port_number_list
+            scan_port_list = scope_obj.get_port_number_list_from_scope()
             if len(scan_port_list) > 0:
 
                 url_list = scope_obj.get_scope_urls()
