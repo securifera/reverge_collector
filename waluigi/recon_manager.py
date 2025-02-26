@@ -595,7 +595,7 @@ class ReconManager:
                           verify=False)
         if r.status_code != 200:
             logger.error("Error retrieving session key.")
-            return session_key
+            raise Exception("Error retrieving session key")
 
         if r.content:
             ret_json = r.json()
