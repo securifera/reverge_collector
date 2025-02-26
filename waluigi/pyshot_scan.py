@@ -95,15 +95,20 @@ def pyshot_wrapper(ip_addr, port, dir_path, ssl_val, port_id, query_arg="", doma
     return ret_msg
 
 
-def queue_scan(futures, host, port_str, dir_path, secure, port_id, query_arg="", domain_str=None, http_endpoint_data_id=None):
+def queue_scan(host, port_str, dir_path, secure, port_id, query_arg="", domain_str=None, http_endpoint_data_id=None):
 
     global url_set
-    url = scan_utils.construct_url(host, port_str, secure, query_arg)
+
+    target_str = host
+    if domain_str:
+        target_str = domain_str
+
+    url = scan_utils.construct_url(target_str, port_str, secure, query_arg)
 
     if url not in url_set:
         url_set.add(url)
-        futures.append(scan_utils.executor.submit(pyshot_wrapper, host, port_str,
-                       dir_path, secure, port_id, query_arg, domain_str, http_endpoint_data_id))
+        return scan_utils.executor.submit(pyshot_wrapper, host, port_str,
+                                          dir_path, secure, port_id, query_arg, domain_str, http_endpoint_data_id)
 
 
 class PyshotScan(luigi.Task):
@@ -185,22 +190,21 @@ class PyshotScan(luigi.Task):
                                 domain_str = domain_obj.name
                                 host = domain_str
 
-                            queue_scan(futures, host, port_str, dir_path,
-                                       secure, port_id, query_arg, domain_str, http_endpoint_data_id)
+                            futures.append(queue_scan(host, port_str, dir_path,
+                                                      secure, port_id, query_arg, domain_str, http_endpoint_data_id))
 
-                    queue_scan(futures, host, port_str, dir_path,
-                               secure, port_id, query_arg, domain_str)
+                    futures.append(queue_scan(host, port_str, dir_path,
+                                              secure, port_id, query_arg, domain_str))
             else:
-
-                queue_scan(futures, ip_addr, port_str, dir_path,
-                           secure, port_id, query_arg, domain_str)
+                futures.append(queue_scan(ip_addr, port_str, dir_path,
+                                          secure, port_id, query_arg, domain_str))
 
         # Wait for the tasks to complete and retrieve results
         for future in futures:
             future.result()
 
 
-@ inherits(PyshotScan)
+@inherits(PyshotScan)
 class ImportPyshotOutput(data_model.ImportToolXOutput):
 
     def requires(self):
