@@ -427,36 +427,29 @@ class ReconManager:
             tool_name_inst_map[tool_inst.name] = tool_inst
 
         # Send collector data to server
-        try:
+        collector_tools = []
+        # tool_map = self.waluigi_tool_map
+        for tool_obj in tool_name_inst_map.values():
+            collector_tools.append(tool_obj.to_jsonable())
 
-            collector_tools = []
-            # tool_map = self.waluigi_tool_map
-            for tool_obj in tool_name_inst_map.values():
-                collector_tools.append(tool_obj.to_jsonable())
+        collector_data = {
+            'interfaces': self.network_ifaces, 'tools': collector_tools}
 
-            collector_data = {
-                'interfaces': self.network_ifaces, 'tools': collector_tools}
-
-            # Send interfaces & tools
-            ret_obj = self.update_collector(collector_data)
-            if ret_obj:
-                # logger.debug("Collector data: %s" % ret_obj)
-                if 'tool_name_id_map' in ret_obj:
-                    tool_name_id_map = ret_obj['tool_name_id_map']
+        # Send interfaces & tools
+        ret_obj = self.update_collector(collector_data)
+        if ret_obj:
+            # logger.debug("Collector data: %s" % ret_obj)
+            if 'tool_name_id_map' in ret_obj:
+                tool_name_id_map = ret_obj['tool_name_id_map']
+                if len(tool_name_id_map) > 0:
                     for tool_name in tool_name_id_map:
                         tool_id = tool_name_id_map[tool_name]
                         tool_id_hex = format(int(tool_id), 'x')
                         self.waluigi_tool_map[tool_id_hex] = tool_name_inst_map[tool_name]
 
-            else:
-                logger.error("Unable to get tool map from server")
+                    return
 
-        except requests.exceptions.ConnectionError as e:
-            logger.error("Unable to connect to server")
-            pass
-        except Exception as e:
-            logger.debug(traceback.format_exc())
-            pass
+        raise SessionException()
 
     def get_tool_map(self):
         return self.waluigi_tool_map

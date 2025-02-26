@@ -77,7 +77,7 @@ def main(args):
 
         except Exception as e:
             if isinstance(e, recon_manager.SessionException):
-                print("[*] Unable to get session key. Retrying in 30 seconds")
+                print("[*] Unable to register with server. Retrying in 30 seconds")
                 time.sleep(30)
                 continue
             elif "refused" in str(e):
