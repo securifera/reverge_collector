@@ -70,14 +70,19 @@ def main(args):
                         debug = True
                         print("[*] Debugging enabled")
                     recon_manager_inst.set_debug(debug)
+
                 elif command == 'x':
                     # Toggle the scan poller
                     scan_thread.toggle_poller()
 
         except Exception as e:
-            if "refused" in str(e):
+            if isinstance(e, recon_manager.SessionException):
+                print("[*] Unable to get session key. Retrying in 30 seconds")
+                time.sleep(30)
+                continue
+            elif "refused" in str(e):
                 print("[*] Connection refused. Retrying in 30 seconds")
-                time.sleep(30)  # Stop scan scheduler thread
+                time.sleep(30)
                 continue
             else:
                 print(traceback.format_exc())

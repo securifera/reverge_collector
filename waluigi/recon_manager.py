@@ -161,6 +161,7 @@ class ScheduledScanThread(threading.Thread):
         self.recon_manager = recon_manager
         self.connection_manager = connection_manager
         self.exit_event = Event()
+        self.checkin_interval = 60
 
     # Event handler to catch luigi task failures
     @luigi.Task.event_handler(luigi.Event.FAILURE)
@@ -289,6 +290,21 @@ class ScheduledScanThread(threading.Thread):
 
         return err_msg
 
+    def process_collector_settings(self, collector_settings):
+
+        try:
+
+            if 'poll_interval' in collector_settings:
+                poll_interval = int(collector_settings['poll_interval'])
+                if poll_interval > 0 and poll_interval < 3600:
+                    logger.debug("Setting poll interval to %d" % poll_interval)
+                    # Set the poll interval
+                    self.checkin_interval = poll_interval
+
+        except Exception as e:
+            logger.error("Error: %s" % str(e))
+            logger.debug(traceback.format_exc())
+
     def process_scan_obj(self, sched_scan_obj):
 
         # Create scan object
@@ -332,8 +348,7 @@ class ScheduledScanThread(threading.Thread):
                 self._is_running = True
                 while self._is_running:
 
-                    # Add the wait up here so the continues will sleep for 60 seconds
-                    self.exit_event.wait(60)
+                    self.exit_event.wait(self.checkin_interval)
                     if self._enabled:
                         logger.debug("Checking for any scheduled scans")
                         lock_val = None
@@ -351,6 +366,12 @@ class ScheduledScanThread(threading.Thread):
                                     logger.debug(
                                         "Connection lock is currently held. Retrying later")
                                     continue
+
+                            # Update any collector settings
+                            collector_settings = recon_manager.get_collector_settings()
+                            if collector_settings:
+                                self.process_collector_settings(
+                                    collector_settings)
 
                             sched_scan_obj_arr = recon_manager.get_scheduled_scans()
                             if sched_scan_obj_arr and len(sched_scan_obj_arr) > 0:
@@ -754,6 +775,30 @@ class ReconManager:
                 logger.debug(traceback.format_exc())
 
         return sched_scan_arr
+
+    def get_collector_settings(self):
+
+        settings = None
+        r = requests.get('%s/api/collector/settings' %
+                         (self.manager_url), headers=self.headers, verify=False)
+        if r.status_code == 404:
+            return settings
+        elif r.status_code != 200:
+            logger.error("Unknown Error retrieving collector settings")
+            return settings
+
+        if r.content:
+            try:
+                content = r.json()
+                data = self._decrypt_json(content)
+                if data:
+                    settings = json.loads(data)
+            except Exception as e:
+                logger.error(
+                    "Error retrieving collector settings: %s" % str(e))
+                logger.debug(traceback.format_exc())
+
+        return settings
 
     def get_scheduled_scan(self, sched_scan_id):
 
