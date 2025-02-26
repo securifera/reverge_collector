@@ -29,6 +29,11 @@ requests.packages.urllib3.disable_warnings()
 recon_mgr_inst = None
 
 
+class SessionException(Exception):
+    def __init__(self, message="Unable to get session token"):
+        super().__init__(message)
+
+
 def tool_order_cmp(x, y):
 
     if x.collection_tool.scan_order is None:
@@ -595,7 +600,7 @@ class ReconManager:
                           verify=False)
         if r.status_code != 200:
             logger.error("Error retrieving session key.")
-            raise Exception("Error retrieving session key")
+            raise SessionException()
 
         if r.content:
             ret_json = r.json()
