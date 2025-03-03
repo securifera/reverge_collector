@@ -14,9 +14,13 @@ jobs:
     - name: Install
       run: |
         sh ./install.sh
+    - name: Test
+      run: |
+        cd /opt/reverge_collector
+        source ~/venv/bin/activate
+        pytest tests/
     - name: Execute
       run: |
         cd /opt/collector
         source ~/venv/bin/activate
         python3 /opt/reverge_collector/waluigi/scan_poller.py -x 1337 -t
-      
