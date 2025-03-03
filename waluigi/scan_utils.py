@@ -1,4 +1,5 @@
 from functools import wraps
+import math
 import os
 import subprocess
 import re
@@ -191,6 +192,46 @@ def get_ports(byte_array):
                 if current_byte & mask:
                     port_list.append(str(j + (i*8)))
     return port_list
+
+
+def set_bit(num, byte_array):
+    # Get byte
+    byte_num = math.floor(num / 8)
+    bit_pos = num % 8
+
+    if byte_num < len(byte_array):
+        current_byte = byte_array[byte_num]
+        byte_array[byte_num] = current_byte | (1 << bit_pos)
+
+
+def get_port_byte_array(port_list):
+
+    port_map_bytes = bytearray(8192)
+    if len(port_list) > 0:
+
+        # Split on comma or space
+        split_delim = None
+        if "," in port_list:
+            split_delim = ","
+        elif " " in port_list:
+            split_delim = " "
+
+        port_arr = [port_list]
+        if split_delim:
+            port_arr = port_list.split(split_delim)
+
+        # Iterate over list
+        for port_inst in port_arr:
+            port_range_arr = port_inst.split("-")
+            if len(port_range_arr) == 1:
+                set_bit(int(port_range_arr[0]), port_map_bytes)
+            else:
+                start = int(port_range_arr[0])
+                end = int(port_range_arr[1])
+                for port in range(start, end + 1):
+                    set_bit(int(port), port_map_bytes)
+
+    return port_map_bytes
 
 
 def check_domain(domain_str):

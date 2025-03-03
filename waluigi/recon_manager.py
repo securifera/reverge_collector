@@ -445,8 +445,11 @@ class ReconManager:
                     for tool_name in tool_name_id_map:
                         tool_id = tool_name_id_map[tool_name]
                         tool_id_hex = format(int(tool_id), 'x')
-                        self.waluigi_tool_map[tool_id_hex] = tool_name_inst_map[tool_name]
-
+                        if tool_name in tool_name_inst_map:
+                            self.waluigi_tool_map[tool_id_hex] = tool_name_inst_map[tool_name]
+                        else:
+                            logger.debug(
+                                "%s tool not found in tool name instance map." % tool_name)
                     return
 
         raise SessionException()

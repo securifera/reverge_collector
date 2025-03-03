@@ -690,7 +690,7 @@ class ScanData():
         self.module_map = {}
         self.component_name_module_map = {}
 
-        logger.debug("Processing scan data\n %s" % scan_data)
+        # logger.debug("Processing scan data\n %s" % scan_data)
         # Decode the port map
         if 'b64_port_bitmap' in scan_data and scan_data['b64_port_bitmap']:
             b64_port_bitmap = scan_data['b64_port_bitmap']
