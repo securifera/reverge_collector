@@ -19,33 +19,6 @@ logger = logging.getLogger(__name__)
 url_set = set()
 
 
-# def get_url(host, port_arg, secure, query_arg, domain=None):
-#     port = ""
-#     if port_arg:
-#         port = ":" + port_arg
-#         # Default port 443 to secure
-#         if port_arg == '443':
-#             secure = True
-
-#     # Add query if it exists
-#     if domain:
-#         host = domain
-#     full_path = host + port
-
-#     path = ""
-#     if query_arg:
-#         path += query_arg
-
-#     full_path += path
-
-#     url = "http"
-#     if secure == True:
-#         url += "s"
-#     url += "://" + full_path
-
-#     return url
-
-
 class Pyshot(data_model.WaluigiTool):
 
     def __init__(self):
@@ -131,9 +104,6 @@ class PyshotScan(luigi.Task):
 
     def run(self):
 
-        global url_set
-        url_set = set()
-
         # Ensure output folder exists
         dir_path = os.path.dirname(self.output().path)
 
@@ -160,16 +130,18 @@ class PyshotScan(luigi.Task):
             ip_addr = host_obj.ipv4_addr
 
             # Add domain if it is different from the IP
-            domain_str = None
+            domain_str_orig = None
             target_arr = target_key.split(":")
             if target_arr[0] != ip_addr:
-                domain_str = target_arr[0]
+                domain_str_orig = target_arr[0]
 
             if port_id in http_endpoint_port_id_map:
 
                 http_endpoint_obj_list = http_endpoint_port_id_map[port_id]
                 for http_endpoint_obj in http_endpoint_obj_list:
 
+                    query_arg = ""
+                    domain_str = domain_str_orig
                     http_endpoint_data_id = None
                     host = ip_addr
                     web_path_id = http_endpoint_obj.web_path_id
@@ -183,6 +155,7 @@ class PyshotScan(luigi.Task):
 
                         for http_endpoint_data_obj in http_endpoint_data_obj_list:
 
+                            domain_str = None
                             http_endpoint_data_id = http_endpoint_data_obj.id
                             domain_id = http_endpoint_data_obj.domain_id
                             if domain_id and domain_id in domain_map:
@@ -190,14 +163,20 @@ class PyshotScan(luigi.Task):
                                 domain_str = domain_obj.name
                                 host = domain_str
 
-                            futures.append(queue_scan(host, port_str, dir_path,
-                                                      secure, port_id, query_arg, domain_str, http_endpoint_data_id))
+                            future_inst = queue_scan(host, port_str, dir_path,
+                                                     secure, port_id, query_arg, domain_str, http_endpoint_data_id)
+                            if future_inst:
+                                futures.append(future_inst)
 
-                    futures.append(queue_scan(host, port_str, dir_path,
-                                              secure, port_id, query_arg, domain_str))
+                    future_inst = queue_scan(host, port_str, dir_path,
+                                             secure, port_id, query_arg, domain_str)
+                    if future_inst:
+                        futures.append(future_inst)
             else:
-                futures.append(queue_scan(ip_addr, port_str, dir_path,
-                                          secure, port_id, query_arg, domain_str))
+                future_inst = queue_scan(ip_addr, port_str, dir_path,
+                                         secure, port_id, query_arg, domain_str_orig)
+                if future_inst:
+                    futures.append(future_inst)
 
         # Wait for the tasks to complete and retrieve results
         for future in futures:
