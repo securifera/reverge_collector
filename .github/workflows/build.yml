@@ -16,7 +16,6 @@ jobs:
         sh ./install.sh
     - name: Test
       run: |
-        cd ~/
         sudo cp -r ./tests /opt/reverge_collector/
         cd /opt/reverge_collector
         source ~/venv/bin/activate
