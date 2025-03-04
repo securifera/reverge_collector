@@ -62,7 +62,7 @@ def test_masscan_success(recon_manager):
         output_file = "%s/masscan-outputs/mass_out_%s" % (output_dir, scan_id)
         assert os.path.exists(output_file) == True
 
-        # Check if port_list is in the file contents of input_conf
+        # Check if port_list is in  the file contents of input_conf
         with open(input_conf, 'r') as f:
             file_contents = f.read()
             assert port_list in file_contents
