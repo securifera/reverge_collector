@@ -2,7 +2,6 @@ import json
 import os
 import binascii
 import luigi
-import multiprocessing
 import traceback
 import hashlib
 import base64

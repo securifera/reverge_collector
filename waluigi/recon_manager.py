@@ -125,17 +125,18 @@ class ScheduledScan():
             self.selected_interface = scope_dict = scan_obj['interface']
 
         # Update scan status to running
-        self.update_status(ScanStatus.RUNNING.value)
+        self.update_scan_status(ScanStatus.RUNNING.value)
 
     # Update the scan status
-    def update_status(self, scan_status, err_msg=None):
+    def update_scan_status(self, scan_status, err_msg=None):
         # Send update to the server
         self.scan_thread.recon_manager.update_scan_status(
-            self.id, scan_status, err_msg)
+            self.id, scan_status)
 
-    def update_tool_status(self, tool_id, tool_status):
+    def update_tool_status(self, tool_id, tool_status, tool_status_msg=''):
         # Send update to the server
-        self.scan_thread.recon_manager.update_tool_status(tool_id, tool_status)
+        self.scan_thread.recon_manager.update_tool_status(
+            tool_id, tool_status, tool_status_msg)
 
         # Update in collection tool map
         if tool_id in self.collection_tool_map:
@@ -250,9 +251,16 @@ class ScheduledScanThread(threading.Thread):
                     logger.error(err_msg)
                     logger.debug(traceback.format_exc())
                     ret_status = CollectionToolStatus.ERROR.value
+                    break
                 finally:
+
+                    err_msg = ''
+                    if ScheduledScanThread.failed_task_exception:
+                        err_msg = f"{ScheduledScanThread.failed_task_exception[0]}\n{ScheduledScanThread.failed_task_exception[1]}"
+                        ScheduledScanThread.failed_task_exception = None
+
                     scheduled_scan_obj.update_tool_status(
-                        collection_tool_inst.id, ret_status)
+                        collection_tool_inst.id, ret_status, err_msg)
                     if self.connection_manager and self.connection_manager.connect_to_extender() == False:
                         err_msg = "Failed connecting to extender"
                         logger.error(err_msg)
@@ -272,16 +280,20 @@ class ScheduledScanThread(threading.Thread):
                 logger.error(err_msg)
                 logger.debug(traceback.format_exc())
                 ret_status = CollectionToolStatus.ERROR.value
+                break
+
             finally:
+
+                err_msg = ''
+                if ScheduledScanThread.failed_task_exception:
+                    err_msg = f"{ScheduledScanThread.failed_task_exception[0]}\n{ScheduledScanThread.failed_task_exception[1]}"
+                    ScheduledScanThread.failed_task_exception = None
+
                 scheduled_scan_obj.update_tool_status(
-                    collection_tool_inst.id, ret_status)
+                    collection_tool_inst.id, ret_status, err_msg)
 
             # Reset the current tool variable
             scheduled_scan_obj.current_tool = None
-
-        if ScheduledScanThread.failed_task_exception:
-            err_msg = f"{ScheduledScanThread.failed_task_exception[0]}\n{ScheduledScanThread.failed_task_exception[1]}"
-            ScheduledScanThread.failed_task_exception = None
 
         # Cleanup files
         if ret_status == CollectionToolStatus.COMPLETED.value:
@@ -333,7 +345,7 @@ class ScheduledScanThread(threading.Thread):
             logger.debug(traceback.format_exc())
 
         # Update scan status
-        scheduled_scan_obj.update_status(scan_status, err_msg)
+        scheduled_scan_obj.update_scan_status(scan_status)
         return
 
     def run(self):
@@ -966,7 +978,7 @@ class ReconManager:
         packet = cipher_aes.nonce + tag + ciphertext
 
         b64_val = base64.b64encode(packet).decode()
-        r = requests.post('%s/api/tool/%s' % (self.manager_url, tool_id),
+        r = requests.post('%s/api/tool/status/%s' % (self.manager_url, tool_id),
                           headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
             raise RuntimeError("[-] Error updating tool status.")
