@@ -1,9 +1,7 @@
 #!/usr/bin/env python
 
 
-
 from setuptools import setup, find_packages
-
 
 
 setup(name='waluigi',
@@ -21,7 +19,7 @@ setup(name='waluigi',
       packages=find_packages(),
 
       zip_safe=False,
-      
+
       install_requires=[
 
           'luigi',
@@ -30,8 +28,11 @@ setup(name='waluigi',
           'pyyaml',
           'tqdm',
           'python-libnmap',
-          'shodan'
+          'shodan',
+          'pytest',
+          'netaddr',
+          'selenium',
 
       ],
 
-     )
+      )

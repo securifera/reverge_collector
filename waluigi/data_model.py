@@ -157,7 +157,7 @@ class ImportToolXOutput(luigi.Task):
                 scheduled_scan_obj = self.scan_input
                 scheduled_scan_obj.scan_data.update(import_arr)
 
-            return True
+                return True
 
         return False
 
