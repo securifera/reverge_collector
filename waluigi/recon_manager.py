@@ -284,7 +284,7 @@ class ScheduledScanThread(threading.Thread):
 
             finally:
 
-                err_msg = ''
+                err_msg = None
                 if ScheduledScanThread.failed_task_exception:
                     err_msg = f"{ScheduledScanThread.failed_task_exception[0]}\n{ScheduledScanThread.failed_task_exception[1]}"
                     ScheduledScanThread.failed_task_exception = None
@@ -1034,11 +1034,11 @@ class ReconManager:
         if r.status_code != 200:
             raise RuntimeError("[-] Error importing ports to manager server.")
 
+        record_arr = []
         if r.content:
             try:
                 content = r.json()
                 data = self._decrypt_json(content)
-                record_arr = []
                 if data:
                     record_arr = json.loads(data)
             except Exception as e:
