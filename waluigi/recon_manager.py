@@ -17,6 +17,7 @@ import enum
 import functools
 import logging
 import luigi
+import zlib
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,17 @@ def tool_order_cmp(x, y):
         return -1
     else:
         return 0
+
+
+def encrypt_data(session_key, data):
+
+    compressed_data = zlib.compress(data)
+    cipher_aes = AES.new(session_key, AES.MODE_EAX)
+    ciphertext, tag = cipher_aes.encrypt_and_digest(compressed_data)
+    packet = cipher_aes.nonce + tag + ciphertext
+    b64_data = base64.b64encode(packet).decode()
+
+    return b64_data
 
 
 class ScanStatus(enum.Enum):
@@ -204,6 +216,7 @@ class ScheduledScanThread(threading.Thread):
             ret_status = CollectionToolStatus.RUNNING.value
 
             tool_obj = collection_tool_inst.collection_tool
+
             # Skip any tools that don't have a scan order
             if tool_obj.scan_order == None or collection_tool_inst.enabled == 0:
                 continue
@@ -334,9 +347,6 @@ class ScheduledScanThread(threading.Thread):
                 return False
 
             if err_msg is None:
-                # Remove scheduled scan
-                # self.recon_manager.remove_scheduled_scan(sched_scan_obj.id)
-
                 # Update scan status
                 scan_status = ScanStatus.COMPLETED.value
 
@@ -572,7 +582,9 @@ class ReconManager:
 
             cipher_aes = AES.new(self.session_key, AES.MODE_EAX, nonce)
             try:
-                data = cipher_aes.decrypt_and_verify(ciphertext, tag).decode()
+                compressed_data = cipher_aes.decrypt_and_verify(
+                    ciphertext, tag)
+                data = zlib.decompress(compressed_data)
             except Exception as e:
                 logger.error("Error decrypting response: %s" % str(e))
 
@@ -581,8 +593,9 @@ class ReconManager:
                 if session_key and session_key != self.session_key:
                     cipher_aes = AES.new(session_key, AES.MODE_EAX, nonce)
                     try:
-                        data = cipher_aes.decrypt_and_verify(
-                            ciphertext, tag).decode()
+                        compressed_data = cipher_aes.decrypt_and_verify(
+                            ciphertext, tag)
+                        data = zlib.decompress(compressed_data)
                         self.session_key = session_key
                         return data
                     except Exception as e:
@@ -904,11 +917,7 @@ class ReconManager:
 
         # Import the data to the manager
         json_data = json.dumps(collector_data).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
-
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/collector' % (self.manager_url),
                           headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
@@ -931,11 +940,8 @@ class ReconManager:
         # Import the data to the manager
         status_dict = {'status': status, 'error_message': err_msg}
         json_data = json.dumps(status_dict).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
 
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/scheduler/%s/' % (self.manager_url, schedule_scan_id),
                           headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
@@ -973,11 +979,8 @@ class ReconManager:
         # Import the data to the manager
         status_dict = {'status': status, 'status_message': status_message}
         json_data = json.dumps(status_dict).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
 
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/tool/status/%s' % (self.manager_url, tool_id),
                           headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
@@ -989,11 +992,8 @@ class ReconManager:
 
         # Import the data to the manager
         json_data = json.dumps(port_arr).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
 
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/ports' % self.manager_url,
                           headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
@@ -1005,11 +1005,7 @@ class ReconManager:
 
         # Import the data to the manager
         json_data = json.dumps(scan_results_dict).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
-
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/ports/ext' % self.manager_url,
                           headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
@@ -1024,11 +1020,7 @@ class ReconManager:
 
         # Import the data to the manager
         json_data = json.dumps(scan_results_dict).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
-
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/data/import' % self.manager_url,
                           headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
@@ -1051,11 +1043,7 @@ class ReconManager:
 
         # Import the data to the manager
         json_data = json.dumps(shodan_arr).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
-
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/integration/shodan/import/%s' % (self.manager_url,
                           str(scan_id)), headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
@@ -1069,11 +1057,7 @@ class ReconManager:
         obj_data = [data_dict]
 
         json_data = json.dumps(obj_data).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
-
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/screenshots' % self.manager_url, headers=self.headers, json={"data": b64_val},
                           verify=False)
         if r.status_code != 200:
