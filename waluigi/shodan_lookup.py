@@ -135,7 +135,6 @@ def shodan_host_query(api, ip):
             break
         except shodan.exception.APIError as e:
             err_msg = str(e).lower()
-
             if "limit reached" in err_msg:
                 time.sleep(1)
                 continue
@@ -269,7 +268,7 @@ class ShodanScan(luigi.Task):
         if shodan_key and len(shodan_key) > 0:
 
             # Do a test lookup to make sure our key is good and we have connectivity
-            result = shodan_wrapper(shodan_key, "8.8.8.8", 32)
+            result = shodan_wrapper(shodan_key, '8.8.8.8', 32)
             if result is not None:
 
                 futures = []
@@ -314,7 +313,7 @@ class ShodanScan(luigi.Task):
             raise Exception("No shodan API key provided")
 
 
-@ inherits(ShodanScan)
+@inherits(ShodanScan)
 class ImportShodanOutput(data_model.ImportToolXOutput):
 
     def requires(self):

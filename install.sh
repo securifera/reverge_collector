@@ -90,7 +90,7 @@ install_packages python3-pip
 pip3 config set global.trusted-host "pypi.org files.pythonhosted.org pypi.python.org" --trusted-host=pypi.python.org --trusted-host=pypi.org --trusted-host=files.pythonhosted.org
 
 # install luigi/waluigi
-python3 -m pip install luigi pycryptodomex netifaces setuptools
+python3 -m pip install luigi setuptools
 python3 -m pip install --upgrade requests
 
 # Create luigi config file
@@ -114,13 +114,6 @@ install_packages libssl-dev libpcap-dev masscan autoconf build-essential
 cd /opt
 sudo git clone -c http.sslVerify=false https://github.com/securifera/nmap.git
 cd nmap && sudo git checkout ssl_updates && sudo ./configure --without-ncat --without-zenmap --without-nping && sudo make && sudo make install
-
-# python modules
-python3 -m pip install netaddr
-python3 -m pip install python-libnmap
-python3 -m pip install tqdm
-python3 -m pip install shodan
-python3 -m pip install selenium
 
 # Install nuclei
 cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o nuclei*.zip; sudo mv nuclei /usr/local/bin/ ; sudo rm nuclei*.zip

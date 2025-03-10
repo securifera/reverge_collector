@@ -17,6 +17,7 @@ import enum
 import functools
 import logging
 import luigi
+import zlib
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,17 @@ def tool_order_cmp(x, y):
         return -1
     else:
         return 0
+
+
+def encrypt_data(session_key, data):
+
+    compressed_data = zlib.compress(data)
+    cipher_aes = AES.new(session_key, AES.MODE_EAX)
+    ciphertext, tag = cipher_aes.encrypt_and_digest(compressed_data)
+    packet = cipher_aes.nonce + tag + ciphertext
+    b64_data = base64.b64encode(packet).decode()
+
+    return b64_data
 
 
 class ScanStatus(enum.Enum):
@@ -125,17 +137,18 @@ class ScheduledScan():
             self.selected_interface = scope_dict = scan_obj['interface']
 
         # Update scan status to running
-        self.update_status(ScanStatus.RUNNING.value)
+        self.update_scan_status(ScanStatus.RUNNING.value)
 
     # Update the scan status
-    def update_status(self, scan_status, err_msg=None):
+    def update_scan_status(self, scan_status, err_msg=None):
         # Send update to the server
         self.scan_thread.recon_manager.update_scan_status(
-            self.id, scan_status, err_msg)
+            self.id, scan_status)
 
-    def update_tool_status(self, tool_id, tool_status):
+    def update_tool_status(self, tool_id, tool_status, tool_status_msg=''):
         # Send update to the server
-        self.scan_thread.recon_manager.update_tool_status(tool_id, tool_status)
+        self.scan_thread.recon_manager.update_tool_status(
+            tool_id, tool_status, tool_status_msg)
 
         # Update in collection tool map
         if tool_id in self.collection_tool_map:
@@ -203,6 +216,7 @@ class ScheduledScanThread(threading.Thread):
             ret_status = CollectionToolStatus.RUNNING.value
 
             tool_obj = collection_tool_inst.collection_tool
+
             # Skip any tools that don't have a scan order
             if tool_obj.scan_order == None or collection_tool_inst.enabled == 0:
                 continue
@@ -250,9 +264,16 @@ class ScheduledScanThread(threading.Thread):
                     logger.error(err_msg)
                     logger.debug(traceback.format_exc())
                     ret_status = CollectionToolStatus.ERROR.value
+                    break
                 finally:
+
+                    err_msg = ''
+                    if ScheduledScanThread.failed_task_exception:
+                        err_msg = f"{ScheduledScanThread.failed_task_exception[0]}\n{ScheduledScanThread.failed_task_exception[1]}"
+                        ScheduledScanThread.failed_task_exception = None
+
                     scheduled_scan_obj.update_tool_status(
-                        collection_tool_inst.id, ret_status)
+                        collection_tool_inst.id, ret_status, err_msg)
                     if self.connection_manager and self.connection_manager.connect_to_extender() == False:
                         err_msg = "Failed connecting to extender"
                         logger.error(err_msg)
@@ -272,16 +293,20 @@ class ScheduledScanThread(threading.Thread):
                 logger.error(err_msg)
                 logger.debug(traceback.format_exc())
                 ret_status = CollectionToolStatus.ERROR.value
+                break
+
             finally:
+
+                err_msg = None
+                if ScheduledScanThread.failed_task_exception:
+                    err_msg = f"{ScheduledScanThread.failed_task_exception[0]}\n{ScheduledScanThread.failed_task_exception[1]}"
+                    ScheduledScanThread.failed_task_exception = None
+
                 scheduled_scan_obj.update_tool_status(
-                    collection_tool_inst.id, ret_status)
+                    collection_tool_inst.id, ret_status, err_msg)
 
             # Reset the current tool variable
             scheduled_scan_obj.current_tool = None
-
-        if ScheduledScanThread.failed_task_exception:
-            err_msg = f"{ScheduledScanThread.failed_task_exception[0]}\n{ScheduledScanThread.failed_task_exception[1]}"
-            ScheduledScanThread.failed_task_exception = None
 
         # Cleanup files
         if ret_status == CollectionToolStatus.COMPLETED.value:
@@ -322,9 +347,6 @@ class ScheduledScanThread(threading.Thread):
                 return False
 
             if err_msg is None:
-                # Remove scheduled scan
-                # self.recon_manager.remove_scheduled_scan(sched_scan_obj.id)
-
                 # Update scan status
                 scan_status = ScanStatus.COMPLETED.value
 
@@ -333,7 +355,7 @@ class ScheduledScanThread(threading.Thread):
             logger.debug(traceback.format_exc())
 
         # Update scan status
-        scheduled_scan_obj.update_status(scan_status, err_msg)
+        scheduled_scan_obj.update_scan_status(scan_status)
         return
 
     def run(self):
@@ -560,7 +582,9 @@ class ReconManager:
 
             cipher_aes = AES.new(self.session_key, AES.MODE_EAX, nonce)
             try:
-                data = cipher_aes.decrypt_and_verify(ciphertext, tag).decode()
+                compressed_data = cipher_aes.decrypt_and_verify(
+                    ciphertext, tag)
+                data = zlib.decompress(compressed_data)
             except Exception as e:
                 logger.error("Error decrypting response: %s" % str(e))
 
@@ -569,8 +593,9 @@ class ReconManager:
                 if session_key and session_key != self.session_key:
                     cipher_aes = AES.new(session_key, AES.MODE_EAX, nonce)
                     try:
-                        data = cipher_aes.decrypt_and_verify(
-                            ciphertext, tag).decode()
+                        compressed_data = cipher_aes.decrypt_and_verify(
+                            ciphertext, tag)
+                        data = zlib.decompress(compressed_data)
                         self.session_key = session_key
                         return data
                     except Exception as e:
@@ -892,11 +917,7 @@ class ReconManager:
 
         # Import the data to the manager
         json_data = json.dumps(collector_data).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
-
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/collector' % (self.manager_url),
                           headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
@@ -919,11 +940,8 @@ class ReconManager:
         # Import the data to the manager
         status_dict = {'status': status, 'error_message': err_msg}
         json_data = json.dumps(status_dict).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
 
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/scheduler/%s/' % (self.manager_url, schedule_scan_id),
                           headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
@@ -961,12 +979,9 @@ class ReconManager:
         # Import the data to the manager
         status_dict = {'status': status, 'status_message': status_message}
         json_data = json.dumps(status_dict).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
 
-        b64_val = base64.b64encode(packet).decode()
-        r = requests.post('%s/api/tool/%s' % (self.manager_url, tool_id),
+        b64_val = encrypt_data(self.session_key, json_data)
+        r = requests.post('%s/api/tool/status/%s' % (self.manager_url, tool_id),
                           headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
             raise RuntimeError("[-] Error updating tool status.")
@@ -977,11 +992,8 @@ class ReconManager:
 
         # Import the data to the manager
         json_data = json.dumps(port_arr).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
 
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/ports' % self.manager_url,
                           headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
@@ -993,11 +1005,7 @@ class ReconManager:
 
         # Import the data to the manager
         json_data = json.dumps(scan_results_dict).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
-
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/ports/ext' % self.manager_url,
                           headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
@@ -1012,21 +1020,17 @@ class ReconManager:
 
         # Import the data to the manager
         json_data = json.dumps(scan_results_dict).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
-
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/data/import' % self.manager_url,
                           headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
             raise RuntimeError("[-] Error importing ports to manager server.")
 
+        record_arr = []
         if r.content:
             try:
                 content = r.json()
                 data = self._decrypt_json(content)
-                record_arr = []
                 if data:
                     record_arr = json.loads(data)
             except Exception as e:
@@ -1039,11 +1043,7 @@ class ReconManager:
 
         # Import the data to the manager
         json_data = json.dumps(shodan_arr).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
-
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/integration/shodan/import/%s' % (self.manager_url,
                           str(scan_id)), headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code != 200:
@@ -1057,11 +1057,7 @@ class ReconManager:
         obj_data = [data_dict]
 
         json_data = json.dumps(obj_data).encode()
-        cipher_aes = AES.new(self.session_key, AES.MODE_EAX)
-        ciphertext, tag = cipher_aes.encrypt_and_digest(json_data)
-        packet = cipher_aes.nonce + tag + ciphertext
-
-        b64_val = base64.b64encode(packet).decode()
+        b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/screenshots' % self.manager_url, headers=self.headers, json={"data": b64_val},
                           verify=False)
         if r.status_code != 200:
