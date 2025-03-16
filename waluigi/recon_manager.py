@@ -110,6 +110,7 @@ class ScheduledScan():
         self.collection_tool_map = {}
         for collection_tool in scheduled_scan.collection_tools:
 
+            wordlist_path = None
             # Only get wordlists for enabled tools
             if collection_tool.enabled == 1:
                 # Prepare wordlist if present
@@ -154,16 +155,14 @@ class ScheduledScan():
                         worlist_arr.extend(wordlist_json['words'])
 
                 # Prepare wordlist for scan
-                wordlist_path = None
                 if len(worlist_arr) > 0:
                     wordlist_path = os.path.join(
                         data_model.wordlist_path, str(collection_tool.id))
                     with open(wordlist_path, 'w') as f:
                         f.write("\n".join(worlist_arr) + "\n")
 
-                collection_tool.collection_tool.wordlist_path = wordlist_path
-
             # Add to map
+            collection_tool.collection_tool.wordlist_path = wordlist_path
             self.collection_tool_map[collection_tool.id] = collection_tool
 
         self.current_tool = None
