@@ -6,7 +6,6 @@ import luigi
 import traceback
 import socket
 import random
-import tempfile
 import hashlib
 import binascii
 import logging
@@ -95,16 +94,8 @@ class FeroxScan(luigi.Task):
             tool_args = tool_args.split(" ")
 
         scan_wordlist = None
-        # wordlist_arr = scan_target_dict['wordlist']
-        # if wordlist_arr and len(wordlist_arr) > 0:
-        #     # Create temp file
-        #     scan_wordlist_obj = tempfile.NamedTemporaryFile()
-        #     scan_wordlist = scan_wordlist_obj.name
-
-        #     output = "\n".join(wordlist_arr)
-        #     f = open(scan_wordlist, 'wb')
-        #     f.write(output.encode())
-        #     f.close()
+        if scheduled_scan_obj.current_tool.wordlist_path and os.path.exists(scheduled_scan_obj.current_tool.wordlist_path):
+            scan_wordlist = scheduled_scan_obj.current_tool.wordlist_path
 
         target_map = scheduled_scan_obj.scan_data.host_port_obj_map
         domain_host_id_map = scheduled_scan_obj.scan_data.domain_host_id_map

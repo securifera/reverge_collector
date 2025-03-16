@@ -109,6 +109,57 @@ class ScheduledScan():
 
         self.collection_tool_map = {}
         for collection_tool in scheduled_scan.collection_tools:
+
+            # Prepare wordlist if present
+            worlist_arr = []
+            for wordlist in collection_tool.collection_tool.wordlists:
+                wordlist_id = wordlist.id
+                wordlist_hash = wordlist.hash
+                wordlist_json = None
+
+                # Check in path wordlist_path to see if a file exists
+                file_path = os.path.join(
+                    data_model.wordlist_path, str(wordlist_id))
+                if not os.path.exists(file_path):
+                    wordlist_json = self.scan_thread.recon_manager.get_wordlist(
+                        wordlist_id)
+                    with open(file_path, 'w') as f:
+                        json.dump(wordlist_json, f)
+
+                else:
+                    try:
+                        with open(file_path, 'r') as f:
+                            wordlist_json = json.load(f)
+
+                        if 'hash' in wordlist_json:
+                            if wordlist_json['hash'] != wordlist_hash:
+                                wordlist_json = self.scan_thread.recon_manager.get_wordlist(
+                                    wordlist_id)
+                                with open(file_path, 'w') as f:
+                                    json.dump(wordlist_json, f)
+                        else:
+                            raise Exception("No hash field")
+
+                    except:
+                        os.remove(file_path)
+                        wordlist_json = self.scan_thread.recon_manager.get_wordlist(
+                            wordlist_id)
+                        with open(file_path, 'w') as f:
+                            json.dump(wordlist_json, f)
+
+                # Add words to wordlist
+                if wordlist_json and 'words' in wordlist_json:
+                    worlist_arr.extend(wordlist_json['words'])
+
+            # Prepare wordlist for scan
+            wordlist_path = None
+            if len(worlist_arr) > 0:
+                wordlist_path = os.path.join(
+                    data_model.wordlist_path, str(collection_tool.id))
+                with open(wordlist_path, 'w') as f:
+                    f.write("\n".join(worlist_arr) + "\n")
+
+            collection_tool.collection_tool.wordlist_path = wordlist_path
             self.collection_tool_map[collection_tool.id] = collection_tool
 
         self.current_tool = None
@@ -213,100 +264,106 @@ class ScheduledScanThread(threading.Thread):
         for collection_tool_inst in sorted_list:
 
             # Return value for tool
-            ret_status = CollectionToolStatus.RUNNING.value
+            try:
+                ret_status = CollectionToolStatus.RUNNING.value
 
-            tool_obj = collection_tool_inst.collection_tool
+                tool_obj = collection_tool_inst.collection_tool
 
-            # Skip any tools that don't have a scan order
-            if tool_obj.scan_order == None or collection_tool_inst.enabled == 0:
-                continue
+                # Skip any tools that don't have a scan order
+                if tool_obj.scan_order == None or collection_tool_inst.enabled == 0:
+                    continue
 
-            if collection_tool_inst.args_override:
-                tool_obj.args = collection_tool_inst.args_override
+                if collection_tool_inst.args_override:
+                    tool_obj.args = collection_tool_inst.args_override
 
-            # Set the tool obj
-            scheduled_scan_obj.current_tool = tool_obj
+                # Set the tool obj
+                scheduled_scan_obj.current_tool = tool_obj
 
-            # Check if scan is cancelled
-            scan_status = self.recon_manager.get_scan_status(
-                scheduled_scan_obj.scan_id)
-            if scan_status is None or scan_status == ScanStatus.CANCELLED.value:
-                err_msg = "Scan cancelled or doesn't exist"
-                logger.debug(err_msg)
-                return err_msg
-
-            # Check if load balanced
-            # skip_load_balance_ports = self.recon_manager.is_load_balanced()
-
-            # If the tool is active then connect to the target and run the scan
-            if tool_obj.tool_type == 2:
-
-                if self.connection_manager and self.connection_manager.connect_to_target() == False:
-                    err_msg = "Failed connecting to target"
-                    logger.error(err_msg)
+                # Check if scan is cancelled
+                scan_status = self.recon_manager.get_scan_status(
+                    scheduled_scan_obj.scan_id)
+                if scan_status is None or scan_status == ScanStatus.CANCELLED.value:
+                    err_msg = "Scan cancelled or doesn't exist"
+                    logger.debug(err_msg)
                     return err_msg
 
+                # Check if load balanced
+                # skip_load_balance_ports = self.recon_manager.is_load_balanced()
+
+                # If the tool is active then connect to the target and run the scan
+                if tool_obj.tool_type == 2:
+
+                    if self.connection_manager and self.connection_manager.connect_to_target() == False:
+                        err_msg = "Failed connecting to target"
+                        logger.error(err_msg)
+                        return err_msg
+
+                    try:
+
+                        # Update to running
+                        scheduled_scan_obj.update_tool_status(
+                            collection_tool_inst.id, CollectionToolStatus.RUNNING.value)
+
+                        # Execute scan func
+                        if self.recon_manager.scan_func(scheduled_scan_obj) == False:
+                            err_msg = "Scan function failed"
+                            logger.debug(err_msg)
+                            ret_status = CollectionToolStatus.ERROR.value
+                            break
+
+                    except Exception as e:
+                        err_msg = "Error calling scan function: %s" % str(e)
+                        logger.error(err_msg)
+                        logger.debug(traceback.format_exc())
+                        ret_status = CollectionToolStatus.ERROR.value
+                        break
+                    finally:
+
+                        err_msg = ''
+                        if ScheduledScanThread.failed_task_exception:
+                            err_msg = f"{ScheduledScanThread.failed_task_exception[0]}\n{ScheduledScanThread.failed_task_exception[1]}"
+                            ScheduledScanThread.failed_task_exception = None
+
+                        scheduled_scan_obj.update_tool_status(
+                            collection_tool_inst.id, ret_status, err_msg)
+                        if self.connection_manager and self.connection_manager.connect_to_extender() == False:
+                            err_msg = "Failed connecting to extender"
+                            logger.error(err_msg)
+                            return err_msg
+
+                # Import results
                 try:
-
-                    # Update to running
-                    scheduled_scan_obj.update_tool_status(
-                        collection_tool_inst.id, CollectionToolStatus.RUNNING.value)
-
-                    # Execute scan func
-                    if self.recon_manager.scan_func(scheduled_scan_obj) == False:
-                        err_msg = "Scan function failed"
+                    if self.recon_manager.import_func(scheduled_scan_obj) == False:
+                        err_msg = "Import function failed"
                         logger.debug(err_msg)
                         ret_status = CollectionToolStatus.ERROR.value
                         break
-
+                    else:
+                        ret_status = CollectionToolStatus.COMPLETED.value
                 except Exception as e:
-                    err_msg = "Error calling scan function: %s" % str(e)
+                    err_msg = "Error calling import function: %s" % str(e)
                     logger.error(err_msg)
                     logger.debug(traceback.format_exc())
                     ret_status = CollectionToolStatus.ERROR.value
                     break
+
                 finally:
 
-                    err_msg = ''
+                    err_msg = None
                     if ScheduledScanThread.failed_task_exception:
                         err_msg = f"{ScheduledScanThread.failed_task_exception[0]}\n{ScheduledScanThread.failed_task_exception[1]}"
                         ScheduledScanThread.failed_task_exception = None
 
                     scheduled_scan_obj.update_tool_status(
                         collection_tool_inst.id, ret_status, err_msg)
-                    if self.connection_manager and self.connection_manager.connect_to_extender() == False:
-                        err_msg = "Failed connecting to extender"
-                        logger.error(err_msg)
-                        return err_msg
-
-            # Import results
-            try:
-                if self.recon_manager.import_func(scheduled_scan_obj) == False:
-                    err_msg = "Import function failed"
-                    logger.debug(err_msg)
-                    ret_status = CollectionToolStatus.ERROR.value
-                    break
-                else:
-                    ret_status = CollectionToolStatus.COMPLETED.value
-            except Exception as e:
-                err_msg = "Error calling import function: %s" % str(e)
-                logger.error(err_msg)
-                logger.debug(traceback.format_exc())
-                ret_status = CollectionToolStatus.ERROR.value
-                break
-
             finally:
 
-                err_msg = None
-                if ScheduledScanThread.failed_task_exception:
-                    err_msg = f"{ScheduledScanThread.failed_task_exception[0]}\n{ScheduledScanThread.failed_task_exception[1]}"
-                    ScheduledScanThread.failed_task_exception = None
+                # Remove the wordlist file
+                if scheduled_scan_obj.current_tool.wordlist_path and os.path.exists(scheduled_scan_obj.current_tool.wordlist_path):
+                    os.remove(scheduled_scan_obj.current_tool.wordlist_path)
 
-                scheduled_scan_obj.update_tool_status(
-                    collection_tool_inst.id, ret_status, err_msg)
-
-            # Reset the current tool variable
-            scheduled_scan_obj.current_tool = None
+                # Reset the current tool variable
+                scheduled_scan_obj.current_tool = None
 
         # Cleanup files
         if ret_status == CollectionToolStatus.COMPLETED.value:
@@ -321,8 +378,7 @@ class ScheduledScanThread(threading.Thread):
 
             if 'poll_interval' in collector_settings:
                 poll_interval = int(collector_settings['poll_interval'])
-                if poll_interval > 0 and poll_interval < 3600:
-                    logger.debug("Setting poll interval to %d" % poll_interval)
+                if self.checkin_interval != poll_interval and poll_interval > 0 and poll_interval < 3600:
                     # Set the poll interval
                     self.checkin_interval = poll_interval
 
@@ -690,6 +746,29 @@ class ReconManager:
                     subnets.append(subnet_inst)
 
         return subnets
+
+    def get_wordlist(self, wordlist_id):
+
+        wordlist = None
+        r = requests.get('%s/api/wordlist/%s' % (self.manager_url,
+                         wordlist_id), headers=self.headers, verify=False)
+        if r.status_code == 404:
+            return wordlist
+        if r.status_code != 200:
+            logger.error("Unknown Error retrieving wordlist")
+            return wordlist
+
+        if r.content:
+            try:
+                content = r.json()
+                data = self._decrypt_json(content)
+                wordlist = json.loads(data)
+            except Exception as e:
+                logger.error("Error retrieving wordlist: %s" % str(e))
+                logger.debug(traceback.format_exc())
+                return wordlist
+
+        return wordlist
 
     def get_target(self, scan_id):
 

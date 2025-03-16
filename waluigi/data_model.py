@@ -31,6 +31,10 @@ waluigi_tools = [
     # ('waluigi.divvycloud_lookup', 'Divvycloud')
 ]
 
+wordlist_path = "/tmp/reverge_wordlist"
+if not os.path.exists(wordlist_path):
+    os.mkdir(wordlist_path)
+
 
 def get_tool_classes():
     tool_classes = []
