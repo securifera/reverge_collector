@@ -110,56 +110,60 @@ class ScheduledScan():
         self.collection_tool_map = {}
         for collection_tool in scheduled_scan.collection_tools:
 
-            # Prepare wordlist if present
-            worlist_arr = []
-            for wordlist in collection_tool.collection_tool.wordlists:
-                wordlist_id = wordlist.id
-                wordlist_hash = wordlist.hash
-                wordlist_json = None
+            # Only get wordlists for enabled tools
+            if collection_tool.enabled == 1:
+                # Prepare wordlist if present
+                worlist_arr = []
+                for wordlist in collection_tool.collection_tool.wordlists:
+                    wordlist_id = wordlist.id
+                    wordlist_hash = wordlist.hash
+                    wordlist_json = None
 
-                # Check in path wordlist_path to see if a file exists
-                file_path = os.path.join(
-                    data_model.wordlist_path, str(wordlist_id))
-                if not os.path.exists(file_path):
-                    wordlist_json = self.scan_thread.recon_manager.get_wordlist(
-                        wordlist_id)
-                    with open(file_path, 'w') as f:
-                        json.dump(wordlist_json, f)
-
-                else:
-                    try:
-                        with open(file_path, 'r') as f:
-                            wordlist_json = json.load(f)
-
-                        if 'hash' in wordlist_json:
-                            if wordlist_json['hash'] != wordlist_hash:
-                                wordlist_json = self.scan_thread.recon_manager.get_wordlist(
-                                    wordlist_id)
-                                with open(file_path, 'w') as f:
-                                    json.dump(wordlist_json, f)
-                        else:
-                            raise Exception("No hash field")
-
-                    except:
-                        os.remove(file_path)
+                    # Check in path wordlist_path to see if a file exists
+                    file_path = os.path.join(
+                        data_model.wordlist_path, str(wordlist_id))
+                    if not os.path.exists(file_path):
                         wordlist_json = self.scan_thread.recon_manager.get_wordlist(
                             wordlist_id)
                         with open(file_path, 'w') as f:
                             json.dump(wordlist_json, f)
 
-                # Add words to wordlist
-                if wordlist_json and 'words' in wordlist_json:
-                    worlist_arr.extend(wordlist_json['words'])
+                    else:
+                        try:
+                            with open(file_path, 'r') as f:
+                                wordlist_json = json.load(f)
 
-            # Prepare wordlist for scan
-            wordlist_path = None
-            if len(worlist_arr) > 0:
-                wordlist_path = os.path.join(
-                    data_model.wordlist_path, str(collection_tool.id))
-                with open(wordlist_path, 'w') as f:
-                    f.write("\n".join(worlist_arr) + "\n")
+                            if 'hash' in wordlist_json:
+                                if wordlist_json['hash'] != wordlist_hash:
+                                    wordlist_json = self.scan_thread.recon_manager.get_wordlist(
+                                        wordlist_id)
+                                    with open(file_path, 'w') as f:
+                                        json.dump(wordlist_json, f)
+                            else:
+                                raise Exception("No hash field")
 
-            collection_tool.collection_tool.wordlist_path = wordlist_path
+                        except:
+                            os.remove(file_path)
+                            wordlist_json = self.scan_thread.recon_manager.get_wordlist(
+                                wordlist_id)
+                            with open(file_path, 'w') as f:
+                                json.dump(wordlist_json, f)
+
+                    # Add words to wordlist
+                    if wordlist_json and 'words' in wordlist_json:
+                        worlist_arr.extend(wordlist_json['words'])
+
+                # Prepare wordlist for scan
+                wordlist_path = None
+                if len(worlist_arr) > 0:
+                    wordlist_path = os.path.join(
+                        data_model.wordlist_path, str(collection_tool.id))
+                    with open(wordlist_path, 'w') as f:
+                        f.write("\n".join(worlist_arr) + "\n")
+
+                collection_tool.collection_tool.wordlist_path = wordlist_path
+
+            # Add to map
             self.collection_tool_map[collection_tool.id] = collection_tool
 
         self.current_tool = None
@@ -206,8 +210,15 @@ class ScheduledScan():
             tool_obj = self.collection_tool_map[tool_id]
             tool_obj.status = tool_status
 
-    # This is necessary because luigi hashes input parameters and dictionaries won't work
+    def cleanup(self):
 
+        collection_tools = self.collection_tool_map.values()
+        for collection_tool_inst in collection_tools:
+            # Remove the wordlist file
+            if collection_tool_inst.collection_tool.wordlist_path and os.path.exists(collection_tool_inst.collection_tool.wordlist_path):
+                os.remove(collection_tool_inst.collection_tool.wordlist_path)
+
+    # This is necessary because luigi hashes input parameters and dictionaries won't work
     def __hash__(self):
         return 0
 
@@ -356,12 +367,8 @@ class ScheduledScanThread(threading.Thread):
 
                     scheduled_scan_obj.update_tool_status(
                         collection_tool_inst.id, ret_status, err_msg)
+
             finally:
-
-                # Remove the wordlist file
-                if scheduled_scan_obj.current_tool.wordlist_path and os.path.exists(scheduled_scan_obj.current_tool.wordlist_path):
-                    os.remove(scheduled_scan_obj.current_tool.wordlist_path)
-
                 # Reset the current tool variable
                 scheduled_scan_obj.current_tool = None
 
@@ -412,6 +419,8 @@ class ScheduledScanThread(threading.Thread):
 
         # Update scan status
         scheduled_scan_obj.update_scan_status(scan_status)
+        # Remove temporary files
+        scheduled_scan_obj.cleanup()
         return
 
     def run(self):
@@ -452,9 +461,9 @@ class ScheduledScanThread(threading.Thread):
                                     collector_settings)
 
                             sched_scan_obj_arr = recon_manager.get_scheduled_scans()
-                            if sched_scan_obj_arr and len(sched_scan_obj_arr) > 0:
-                                sched_scan_obj = sched_scan_obj_arr[0]
+                            for sched_scan_obj in sched_scan_obj_arr:
                                 self.process_scan_obj(sched_scan_obj)
+
                         except requests.exceptions.ConnectionError as e:
                             logger.error("Unable to connect to server.")
                             pass
