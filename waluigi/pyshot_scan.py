@@ -49,11 +49,11 @@ def pyshot_wrapper(ip_addr, port, dir_path, ssl_val, port_id, query_arg="", doma
 
     ret_msg = ""
     try:
-        domain_str = ''
-        if domain:
-            domain_str = domain
-        logger.debug("[+] Running Pyshot scan on %s:%s%s (%s)" %
-                     (ip_addr, port, query_arg, domain_str))
+        # domain_str = ''
+        # if domain:
+        #    domain_str = domain
+        # logger.debug("[+] Running Pyshot scan on %s:%s%s (%s)" %
+        #             (ip_addr, port, query_arg, domain_str))
         pyshot_lib.take_screenshot(host=ip_addr, port_arg=port, query_arg=query_arg,
                                    dest_dir=dir_path, secure=ssl_val, port_id=port_id, domain=domain, endpoint_id=http_endpoint_data_id)
     except Exception as e:

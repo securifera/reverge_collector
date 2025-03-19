@@ -83,8 +83,8 @@ def update_host_port_obj_map(scan_data, port_id, host_port_obj_map):
                     'host_obj': host_obj, 'port_obj': port_obj}
                 host_port_obj_map[domain_port_str] = host_port_entry
 
-    else:
-        logger.debug("Host not found in map: %s" % host_id)
+    # else:
+    #    logger.debug("Host not found in map: %s" % host_id)
 
 
 class CollectorType(enum.Enum):
@@ -165,7 +165,6 @@ class ImportToolXOutput(luigi.Task):
 
         return False
 
-    @scan_utils.execution_time
     def import_results(self, scheduled_scan_obj, obj_arr):
 
         scan_id = scheduled_scan_obj.scan_id
@@ -208,7 +207,6 @@ class ImportToolXOutput(luigi.Task):
             scheduled_scan_obj.scan_data.update(updated_import_arr)
 
 
-@scan_utils.execution_time
 def update_scope_array(record_map, updated_record_map=None):
 
     # Update the record map with those from the database
@@ -307,7 +305,6 @@ class ScanData():
 
         return list(endpoint_urls)
 
-    @scan_utils.execution_time
     def update(self, record_map):
 
         # Parse the data

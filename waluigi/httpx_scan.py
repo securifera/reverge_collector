@@ -504,7 +504,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
 
                 endpoint_domain_id = None
                 if cert_obj and domain_used in cert_obj.domain_name_id_map:
-                    logger.debug("Found domain in cert: %s" % domain_used)
+                    # logger.debug("Found domain in cert: %s" % domain_used)
                     endpoint_domain_id = cert_obj.domain_name_id_map[domain_used]
 
                 # Add http component

@@ -2,8 +2,10 @@ from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_OAEP
 from types import SimpleNamespace
 from threading import Event
-from waluigi import scan_cleanup
+from waluigi import scan_cleanup, scan_utils
 from waluigi import data_model
+from collections import OrderedDict
+from functools import partial
 
 import requests
 import base64
@@ -60,6 +62,33 @@ def encrypt_data(session_key, data):
     b64_data = base64.b64encode(packet).decode()
 
     return b64_data
+
+
+class DictQueue:
+    def __init__(self):
+        self.queue = OrderedDict()
+
+    def enqueue(self, key, value):
+        if key not in self.queue:
+            self.queue[key] = value
+        else:
+            logger.debug("Key already exists in queue.")
+
+    def get_next(self):
+        if self.queue:
+            first_key = next(iter(self.queue))
+            return first_key, self.queue[first_key]
+        return None
+
+    def remove(self, key):
+        if key in self.queue:
+            del self.queue[key]
+
+    def __contains__(self, key):
+        return key in self.queue
+
+    def __len__(self):
+        return len(self.queue)
 
 
 class ScanStatus(enum.Enum):
@@ -236,6 +265,9 @@ class ScheduledScanThread(threading.Thread):
         self.connection_manager = connection_manager
         self.exit_event = Event()
         self.checkin_interval = 60
+        self.scan_queue = DictQueue()
+        self.current_scan_thread_future = None
+        self.log_queue = None
 
     # Event handler to catch luigi task failures
     @luigi.Task.event_handler(luigi.Event.FAILURE)
@@ -420,6 +452,11 @@ class ScheduledScanThread(threading.Thread):
         scheduled_scan_obj.update_scan_status(scan_status)
         # Remove temporary files
         scheduled_scan_obj.cleanup()
+        # Set thread future to None
+        self.scan_queue.remove(sched_scan_obj.id)
+
+        # self.current_scan_thread_future = None
+
         return
 
     def run(self):
@@ -436,7 +473,7 @@ class ScheduledScanThread(threading.Thread):
 
                     self.exit_event.wait(self.checkin_interval)
                     if self._enabled:
-                        logger.debug("Checking for any scheduled scans")
+                        # logger.debug("Checking for any scheduled scans")
                         lock_val = None
                         try:
 
@@ -453,15 +490,35 @@ class ScheduledScanThread(threading.Thread):
                                         "Connection lock is currently held. Retrying later")
                                     continue
 
+                            result_str = None
+                            result_list = []
+                            while not self.log_queue.empty() and len(result_list) < 100:
+                                result_list.append(
+                                    self.log_queue.get())
+                            if len(result_list) > 0:
+                                result_str = "\n".join(result_list)
+
                             # Update any collector settings
-                            collector_settings = recon_manager.get_collector_settings()
+                            collector_settings = recon_manager.collector_poll(
+                                result_str)
                             if collector_settings:
                                 self.process_collector_settings(
                                     collector_settings)
 
                             sched_scan_obj_arr = recon_manager.get_scheduled_scans()
                             for sched_scan_obj in sched_scan_obj_arr:
-                                self.process_scan_obj(sched_scan_obj)
+                                scheduled_scan_id = sched_scan_obj.id
+                                if scheduled_scan_id not in self.scan_queue:
+                                    self.scan_queue.enqueue(
+                                        scheduled_scan_id, sched_scan_obj)
+
+                            # Check if any of the scheduled scans have been cancelled
+                            if self.current_scan_thread_future is None or self.current_scan_thread_future.done():
+                                sched_scan_obj_tuple = self.scan_queue.get_next()
+                                if sched_scan_obj_tuple:
+                                    sched_scan_obj = sched_scan_obj_tuple[1]
+                                    self.current_scan_thread_future = scan_utils.executor.submit(partial(
+                                        self.process_scan_obj, sched_scan_obj))
 
                         except requests.exceptions.ConnectionError as e:
                             logger.error("Unable to connect to server.")
@@ -682,7 +739,7 @@ class ReconManager:
             with open("session", "r") as file_fd:
                 hex_session = file_fd.read().strip()
 
-            logger.debug("Session Key File Exists. Key: %s" % hex_session)
+            # logger.debug("Session Key File Exists. Key: %s" % hex_session)
 
             session_key = binascii.unhexlify(hex_session)
 
@@ -884,11 +941,15 @@ class ReconManager:
 
         return sched_scan_arr
 
-    def get_collector_settings(self):
+    def collector_poll(self, log_str):
 
         settings = None
-        r = requests.get('%s/api/collector/settings' %
-                         (self.manager_url), headers=self.headers, verify=False)
+        status_dict = {'logs': log_str}
+        json_data = json.dumps(status_dict).encode()
+        b64_val = encrypt_data(self.session_key, json_data)
+
+        r = requests.post('%s/api/collector/poll' %
+                          (self.manager_url), headers=self.headers, json={"data": b64_val}, verify=False)
         if r.status_code == 404:
             return settings
         elif r.status_code != 200:

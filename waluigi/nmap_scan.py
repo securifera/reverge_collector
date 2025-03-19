@@ -600,8 +600,8 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                                                                         if "," in dns_name:
                                                                             dns_name = dns_name.split(",")[
                                                                                 0]
-                                                                        logger.debug(
-                                                                            "Adding SAN: %s" % dns_name)
+                                                                        # logger.debug(
+                                                                        #    "Adding SAN: %s" % dns_name)
                                                                         domain_obj = cert_obj.add_domain(
                                                                             host_id, dns_name)
                                                                         if domain_obj:

@@ -4,6 +4,7 @@ import argparse
 import time
 import sys
 import logging
+import queue
 
 local_extender_port = 33333
 
@@ -19,23 +20,45 @@ def print_usage():
     print("")
 
 
+class QueueHandler(logging.Handler):
+    def __init__(self, log_queue):
+        super().__init__()
+        self.log_queue = log_queue
+
+    def emit(self, record):
+        try:
+            self.log_queue.put_nowait(self.format(record))
+        except Exception:
+            self.handleError(record)
+
+
 def setup_logging():
 
     # Setup logging
     log_level = logging.DEBUG
-    logging.basicConfig(level=log_level, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                        datefmt='%Y-%m-%d_%H:%M:%S')
+    log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    date_format = '%Y-%m-%d_%H:%M:%S'
+    formatter = logging.Formatter(log_format, datefmt=date_format)
 
-    # Setting up file handler
-    file_handler = logging.FileHandler('waluigi.log')
+    logging.basicConfig(level=log_level, format=log_format,
+                        datefmt=date_format)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-    # Add handlers
-    logger.addHandler(file_handler)
+    log_queue = queue.Queue()
+    queue_handler = QueueHandler(log_queue)
+    queue_handler.setLevel(log_level)
+    queue_handler.setFormatter(formatter)
+
+    logger = logging.getLogger()
+    logger.addHandler(queue_handler)
+
+    return log_queue
 
 
 def main(args):
 
     # Create connection manager thread
+    log_queue = setup_logging()
     scan_thread = None
     debug = False
     exit_loop = False
@@ -47,6 +70,7 @@ def main(args):
 
             # Create the scheduled scan thread
             scan_thread = recon_manager.ScheduledScanThread(recon_manager_inst)
+            scan_thread.log_queue = log_queue
             scan_thread.start()
 
             # interactive console
@@ -99,9 +123,6 @@ if __name__ == "__main__":
     parser.add_argument('-t', dest='test',
                         help='Test flag', action='store_true')
     args = parser.parse_args()
-
-    setup_logging()
-
     if args.test:
         print("[*] Test successful")
         sys.exit(0)
