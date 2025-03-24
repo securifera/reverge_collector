@@ -103,8 +103,10 @@ class PyshotScan(luigi.Task):
 
     def run(self):
 
+        global url_set
         # Ensure output folder exists
         dir_path = os.path.dirname(self.output().path)
+        url_set = set()
 
         scheduled_scan_obj = self.scan_input
 
@@ -113,6 +115,11 @@ class PyshotScan(luigi.Task):
         web_path_map = scheduled_scan_obj.scan_data.path_map
         domain_map = scheduled_scan_obj.scan_data.domain_map
         endpoint_data_endpoint_id_map = scheduled_scan_obj.scan_data.endpoint_data_endpoint_id_map
+
+        # logger.debug("[+] Running Pyshot scan on %s" %
+        #             str(target_map))
+        # logger.debug("[+] Running Pyshot scan on %s" %
+        #             str(domain_map))
 
         futures = []
         for target_key in target_map:
