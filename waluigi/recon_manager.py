@@ -1,10 +1,11 @@
+import time
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_OAEP
 from types import SimpleNamespace
 from threading import Event
 from waluigi import scan_cleanup, scan_utils
 from waluigi import data_model
-from collections import OrderedDict
+# from collections import OrderedDict
 from functools import partial
 
 import requests
@@ -62,33 +63,6 @@ def encrypt_data(session_key, data):
     b64_data = base64.b64encode(packet).decode()
 
     return b64_data
-
-
-class DictQueue:
-    def __init__(self):
-        self.queue = OrderedDict()
-
-    def enqueue(self, key, value):
-        if key not in self.queue:
-            self.queue[key] = value
-        else:
-            logger.debug("Key already exists in queue.")
-
-    def get_next(self):
-        if self.queue:
-            first_key = next(iter(self.queue))
-            return first_key, self.queue[first_key]
-        return None
-
-    def remove(self, key):
-        if key in self.queue:
-            del self.queue[key]
-
-    def __contains__(self, key):
-        return key in self.queue
-
-    def __len__(self):
-        return len(self.queue)
 
 
 class ScanStatus(enum.Enum):
@@ -264,8 +238,8 @@ class ScheduledScanThread(threading.Thread):
         self.recon_manager = recon_manager
         self.connection_manager = connection_manager
         self.exit_event = Event()
-        self.checkin_interval = 60
-        self.scan_queue = DictQueue()
+        self.checkin_interval = 30
+        self.scan_thread_lock = threading.Lock()
         self.current_scan_thread_future = None
         self.log_queue = None
 
@@ -327,6 +301,8 @@ class ScheduledScanThread(threading.Thread):
                 if scan_status is None or scan_status == ScanStatus.CANCELLED.value:
                     err_msg = "Scan cancelled or doesn't exist"
                     logger.debug(err_msg)
+                    # Clean up the directory
+                    scan_cleanup.scan_cleanup_func(scheduled_scan_obj.scan_id)
                     return err_msg
 
                 # Check if load balanced
@@ -452,10 +428,9 @@ class ScheduledScanThread(threading.Thread):
         scheduled_scan_obj.update_scan_status(scan_status)
         # Remove temporary files
         scheduled_scan_obj.cleanup()
-        # Set thread future to None
-        self.scan_queue.remove(sched_scan_obj.id)
 
-        # self.current_scan_thread_future = None
+        with self.scan_thread_lock:
+            self.current_scan_thread_future = None
 
         return
 
@@ -505,18 +480,11 @@ class ScheduledScanThread(threading.Thread):
                                 self.process_collector_settings(
                                     collector_settings)
 
+                            # Submit the next scan job
                             sched_scan_obj_arr = recon_manager.get_scheduled_scans()
-                            for sched_scan_obj in sched_scan_obj_arr:
-                                scheduled_scan_id = sched_scan_obj.id
-                                if scheduled_scan_id not in self.scan_queue:
-                                    self.scan_queue.enqueue(
-                                        scheduled_scan_id, sched_scan_obj)
-
-                            # Check if any of the scheduled scans have been cancelled
-                            if self.current_scan_thread_future is None or self.current_scan_thread_future.done():
-                                sched_scan_obj_tuple = self.scan_queue.get_next()
-                                if sched_scan_obj_tuple:
-                                    sched_scan_obj = sched_scan_obj_tuple[1]
+                            with self.scan_thread_lock:
+                                if len(sched_scan_obj_arr) > 0 and (self.current_scan_thread_future is None or self.current_scan_thread_future.done()):
+                                    sched_scan_obj = sched_scan_obj_arr[0]
                                     self.current_scan_thread_future = scan_utils.executor.submit(partial(
                                         self.process_scan_obj, sched_scan_obj))
 

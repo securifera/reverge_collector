@@ -19,7 +19,7 @@ class Subfinder(data_model.WaluigiTool):
 
     def __init__(self):
         self.name = 'subfinder'
-        self.collector_type = data_model.CollectorType.ACTIVE.value
+        self.collector_type = data_model.CollectorType.PASSIVE.value
         self.scan_order = 1
         self.args = "-all"
         self.scan_func = Subfinder.subfinder_lookup
