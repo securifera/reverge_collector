@@ -5,7 +5,6 @@ from types import SimpleNamespace
 from threading import Event
 from waluigi import scan_cleanup, scan_utils
 from waluigi import data_model
-# from collections import OrderedDict
 from functools import partial
 
 import requests
@@ -281,13 +280,14 @@ class ScheduledScanThread(threading.Thread):
 
             # Return value for tool
             try:
-                ret_status = CollectionToolStatus.RUNNING.value
-
                 tool_obj = collection_tool_inst.collection_tool
 
                 # Skip any tools that don't have a scan order
                 if tool_obj.scan_order == None or collection_tool_inst.enabled == 0:
                     continue
+
+                # Intentially after the continue given the status check at the bottom of this loop
+                ret_status = CollectionToolStatus.RUNNING.value
 
                 if collection_tool_inst.args_override:
                     tool_obj.args = collection_tool_inst.args_override
@@ -424,12 +424,13 @@ class ScheduledScanThread(threading.Thread):
             logger.error("Error executing scan job")
             logger.debug(traceback.format_exc())
 
-        # Update scan status
-        scheduled_scan_obj.update_scan_status(scan_status)
         # Remove temporary files
         scheduled_scan_obj.cleanup()
 
         with self.scan_thread_lock:
+            # Update scan status with a small delay to make sure the db flushes on the server side
+            scheduled_scan_obj.update_scan_status(scan_status)
+            time.sleep(3)
             self.current_scan_thread_future = None
 
         return
@@ -481,8 +482,8 @@ class ScheduledScanThread(threading.Thread):
                                     collector_settings)
 
                             # Submit the next scan job
-                            sched_scan_obj_arr = recon_manager.get_scheduled_scans()
                             with self.scan_thread_lock:
+                                sched_scan_obj_arr = recon_manager.get_scheduled_scans()
                                 if len(sched_scan_obj_arr) > 0 and (self.current_scan_thread_future is None or self.current_scan_thread_future.done()):
                                     sched_scan_obj = sched_scan_obj_arr[0]
                                     self.current_scan_thread_future = scan_utils.executor.submit(partial(
@@ -827,33 +828,33 @@ class ReconManager:
 
         return target_obj
 
-    def get_tool_scope(self, scan_id, tool_id, load_balanced=False):
+    # def get_tool_scope(self, scan_id, tool_id, load_balanced=False):
 
-        target_obj = None
-        target_url = '%s/api/scan/%s/scope/%s' % (
-            self.manager_url, scan_id, tool_id)
-        if load_balanced:
-            target_url += "?load_balanced=True"
+    #     target_obj = None
+    #     target_url = '%s/api/scan/%s/scope/%s' % (
+    #         self.manager_url, scan_id, tool_id)
+    #     if load_balanced:
+    #         target_url += "?load_balanced=True"
 
-        r = requests.get(target_url, headers=self.headers, verify=False)
-        if r.status_code == 404:
-            return target_obj
-        if r.status_code != 200:
-            logger.error("Error retrieving tool scope.")
-            return target_obj
+    #     r = requests.get(target_url, headers=self.headers, verify=False)
+    #     if r.status_code == 404:
+    #         return target_obj
+    #     if r.status_code != 200:
+    #         logger.error("Error retrieving tool scope.")
+    #         return target_obj
 
-        if r.content:
-            try:
-                content = r.json()
-                data = self._decrypt_json(content)
-                if len(data) > 0:
-                    target_obj = json.loads(data)
-            except Exception as e:
-                logger.error("Error retrieving tool scope: %s" % str(e))
-                logger.debug(traceback.format_exc())
-                return target_obj
+    #     if r.content:
+    #         try:
+    #             content = r.json()
+    #             data = self._decrypt_json(content)
+    #             if len(data) > 0:
+    #                 target_obj = json.loads(data)
+    #         except Exception as e:
+    #             logger.error("Error retrieving tool scope: %s" % str(e))
+    #             logger.debug(traceback.format_exc())
+    #             return target_obj
 
-        return target_obj
+    #     return target_obj
 
     def get_urls(self, scan_id):
 

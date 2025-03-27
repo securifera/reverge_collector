@@ -364,10 +364,10 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
                     # Add port
                     ret_arr.append(port_obj)
 
-                    org_str = service['org']
-                    timestamp = service['timestamp']
-                    last_updated = int(
-                        datetime.fromisoformat(timestamp).timestamp())
+                    # org_str = service['org']
+                    # timestamp = service['timestamp']
+                    # last_updated = int(
+                    #    datetime.fromisoformat(timestamp).timestamp())
 
                     # Non HTTP SSL ports
                     if 'ssl' in service:
