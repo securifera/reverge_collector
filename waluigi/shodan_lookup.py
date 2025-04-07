@@ -204,7 +204,8 @@ def reduce_subnets(ip_subnets):
         net_inst = netaddr.IPNetwork(subnet.strip())
 
         # Skip private IPs
-        if net_inst.network.is_private():
+        ip_network = ipaddress.ip_network(subnet.strip())
+        if ip_network.is_private:
             continue
 
         net_ip = str(net_inst.network)
