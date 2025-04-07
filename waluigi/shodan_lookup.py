@@ -204,7 +204,7 @@ def reduce_subnets(ip_subnets):
         net_inst = netaddr.IPNetwork(subnet.strip())
 
         # Skip private IPs
-        if net_inst.is_private():
+        if net_inst.network.is_private():
             continue
 
         net_ip = str(net_inst.network)
@@ -364,10 +364,10 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
                     # Add port
                     ret_arr.append(port_obj)
 
-                    org_str = service['org']
-                    timestamp = service['timestamp']
-                    last_updated = int(
-                        datetime.fromisoformat(timestamp).timestamp())
+                    # org_str = service['org']
+                    # timestamp = service['timestamp']
+                    # last_updated = int(
+                    #    datetime.fromisoformat(timestamp).timestamp())
 
                     # Non HTTP SSL ports
                     if 'ssl' in service:
