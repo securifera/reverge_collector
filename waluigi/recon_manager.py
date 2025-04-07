@@ -308,6 +308,10 @@ class ScheduledScanThread(threading.Thread):
                 # Check if load balanced
                 # skip_load_balance_ports = self.recon_manager.is_load_balanced()
 
+                # Update to running
+                scheduled_scan_obj.update_tool_status(
+                    collection_tool_inst.id, CollectionToolStatus.RUNNING.value)
+
                 # If the tool is active then connect to the target and run the scan
                 if tool_obj.tool_type == 2:
 
@@ -317,10 +321,6 @@ class ScheduledScanThread(threading.Thread):
                         return err_msg
 
                     try:
-
-                        # Update to running
-                        scheduled_scan_obj.update_tool_status(
-                            collection_tool_inst.id, CollectionToolStatus.RUNNING.value)
 
                         # Execute scan func
                         if self.recon_manager.scan_func(scheduled_scan_obj) == False:
