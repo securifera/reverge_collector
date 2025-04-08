@@ -56,7 +56,6 @@ class ShodanScope(luigi.ExternalTask):
 
         scope_obj = scheduled_scan_obj.scan_data
         target_list = []
-        domain_set = set()
         subnet_map = scope_obj.subnet_map
         for subnet_id in subnet_map:
             subnet_obj = subnet_map[subnet_id]
@@ -70,19 +69,9 @@ class ShodanScope(luigi.ExternalTask):
             host_str = "%s/32" % (host_obj.ipv4_addr)
             target_list.append(host_str)
 
-        domain_list = scope_obj.get_domains(
-            [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
-
-        for domain_obj in domain_list:
-            domain_str = domain_obj.name
-            domain_set.add(domain_str)
-
         logger.debug("[+] Retrieved %d subnets from database" %
                      len(target_list))
-        logger.debug("[+] Retrieved %d domain from database" %
-                     len(domain_set))
-        imput_data = {'host_list': target_list,
-                      'domain_list': list(domain_set)}
+        imput_data = {'host_list': target_list}
         json_data = json.dumps(imput_data)
 
         with open(shodan_ip_file, 'w') as shodan_fd:
@@ -107,25 +96,23 @@ def shodan_dns_query(api, domain):
             if "invalid api key" in err_msg:
                 raise e
             if "no information" not in err_msg:
-                logger.error("Shodan API Error: %s" % err_msg)
+                logger.error("Shodan API Error DNS: %s" % err_msg)
             break
 
     # Grab the host information for any IP records that were returned
     results = []
     if info:
-        ips = [record['value']
-               for record in info['data'] if record['type'] in ['A', 'AAAA']]
-        ips = set(ips)
-
-        results = []
-        for ip in ips:
-            results.extend(shodan_host_query(api, ip))
+        ip_arr = [record['value']
+                  for record in info['data'] if record['type'] in ['A', 'AAAA']]
+        ip_set = set(ip_arr)
+        results = list(ip_set)
 
     return results
 
 
 def shodan_host_query(api, ip):
 
+    # logger.error("Shodan Host Query: %s" % ip)
     service_list = []
     while True:
         try:
@@ -141,7 +128,7 @@ def shodan_host_query(api, ip):
             if "invalid api key" in err_msg:
                 raise e
             if "no information" not in err_msg:
-                logger.error("Shodan API Error: %s" % err_msg)
+                logger.error("Shodan API Error Host: %s" % err_msg)
             break
 
     return service_list
@@ -168,7 +155,7 @@ def shodan_subnet_query(api, subnet, cidr):
             if "invalid api key" in err_msg:
                 raise e
             if "no information" not in err_msg:
-                logger.error("[-] Shodan API Error: %s" % err_msg)
+                logger.error("[-] Shodan API Error Subnet: %s" % err_msg)
             break
 
     return service_list
@@ -252,32 +239,48 @@ class ShodanScan(luigi.Task):
         with shodan_input_file.open() as file_fd:
             input_data = json.loads(file_fd.read())
 
-        ip_subnets = input_data['host_list']
-        # Attempt to consolidate subnets to reduce the number of shodan calls
-        logger.debug("Consolidating subnets queried by Shodan")
-
-        if len(ip_subnets) > 50:
-            logger.debug("CIDRS Before: %d" % len(ip_subnets))
-            ip_subnets = reduce_subnets(ip_subnets)
-            logger.debug("CIDRS After: %d" % len(ip_subnets))
-
-        # Get the shodan key
-        logger.debug("Retrieving Shodan data")
-
         # Write the output
         shodan_key = scheduled_scan_obj.current_tool.api_key
         if shodan_key and len(shodan_key) > 0:
 
+            output_arr = []
             # Do a test lookup to make sure our key is good and we have connectivity
             result = shodan_wrapper(shodan_key, '8.8.8.8', 32)
             if result is not None:
 
-                futures = []
-                domains = input_data['domain_list']
-                for domain in domains:
-                    futures.append(scan_utils.executor.submit(
-                        shodan_wrapper, shodan_key=shodan_key, domain=domain))
+                # futures = []
+                # domain_set = set()
+                # domains = input_data['domain_list']
+                # for domain in domains:
 
+                #     # Ensure no duplicates
+                #     if domain not in domain_set:
+                #         futures.append(scan_utils.executor.submit(
+                #             shodan_wrapper, shodan_key=shodan_key, domain=domain))
+                #         domain_set.add(domain)
+
+                # dns_ip_arr = set()
+                # for future in futures:
+                #     result = future.result()
+                #     dns_ip_arr.update(result)
+
+                ip_subnets = input_data['host_list']
+
+                # # Add the DNS IPs to the list
+                # ip_subnets.extend(dns_ip_arr)
+
+                # Attempt to consolidate subnets to reduce the number of shodan calls
+                logger.debug("Consolidating subnets queried by Shodan")
+
+                if len(ip_subnets) > 50:
+                    logger.debug("CIDRS Before: %d" % len(ip_subnets))
+                    ip_subnets = reduce_subnets(ip_subnets)
+                    logger.debug("CIDRS After: %d" % len(ip_subnets))
+
+                # Get the shodan key
+                logger.debug("Retrieving Shodan data")
+
+                futures = []
                 for subnet in ip_subnets:
 
                     # Get the subnet
@@ -298,16 +301,15 @@ class ShodanScan(luigi.Task):
                         shodan_wrapper, shodan_key=shodan_key, ip=ip, cidr=cidr))
 
                 # Wait for the tasks to complete and retrieve results
-                output_arr = []
                 for future in futures:
                     result = future.result()
                     output_arr.extend(result)
 
-                # Open output file and write json of output
-                outfile = self.output().path
-                output_data = {"data": output_arr}
-                with open(outfile, 'w') as f:
-                    f.write(json.dumps(output_data))
+            # Open output file and write json of output
+            outfile = self.output().path
+            output_data = {"data": output_arr}
+            with open(outfile, 'w') as f:
+                f.write(json.dumps(output_data))
 
         else:
             logger.error("No shodan API key provided.")
