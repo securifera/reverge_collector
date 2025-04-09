@@ -3,7 +3,7 @@ import time
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_OAEP
 from types import SimpleNamespace
-from threading import Event
+from threading import Event, Thread
 from waluigi import scan_cleanup, scan_utils
 from waluigi import data_model
 from functools import partial
@@ -561,8 +561,9 @@ class ScheduledScanThread(threading.Thread):
                                             self, sched_scan_obj)
                                         self.scheduled_scan_map[sched_scan_obj.id] = scheduled_scan_obj
 
-                                        scan_utils.executor.submit(
-                                            partial(self.process_scan_obj, scheduled_scan_obj))
+                                        # Don't use the executor here as we don't want to have to wait on other jobs
+                                        Thread(target=partial(
+                                            self.process_scan_obj, scheduled_scan_obj)).start()
 
                                     else:
 
