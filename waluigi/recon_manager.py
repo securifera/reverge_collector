@@ -251,18 +251,18 @@ class ScheduledScan():
                 if tool_id_list else self.tool_executor_map.values()
             )
 
-            print(tool_executor_map_list)
             # Terminate processes and cancel threads
             for executor in tool_executor_map_list:
                 for pid in executor.get_process_pids():
-                    print("Killing PID: %s" % pid)
                     try:
                         os.kill(pid, signal.SIGKILL)
                     except:
                         pass
                 for future in executor.get_thread_futures():
-                    print("Cancelling future: %s" % future)
-                    future.cancel()
+                    try:
+                        future.cancel()
+                    except:
+                        pass
 
             # Cleanup tool_executor_map
             if tool_id_list:
@@ -366,12 +366,9 @@ class ScheduledScanThread(threading.Thread):
                     scan_cleanup.scan_cleanup_func(scheduled_scan_obj.id)
                     return err_msg
 
-                tool_status_map = scan_status.tool_status
-                if collection_tool_inst.id in tool_status_map:
-                    tool_status = tool_status_map[collection_tool_inst.id]
-                    if tool_status == CollectionToolStatus.CANCELLED.value:
-                        logger.debug("Tool job cancelled, skipping")
-                        continue
+                cancelled_tool_ids = scan_status.cancelled_tool_ids
+                if collection_tool_inst.id in cancelled_tool_ids:
+                    continue
 
                 # Check if load balanced
                 # skip_load_balance_ports = self.recon_manager.is_load_balanced()
@@ -578,17 +575,14 @@ class ScheduledScanThread(threading.Thread):
                                             logger.debug("Scan cancelled")
                                             scheduled_scan_obj.kill_scan_processes()
                                         else:
-                                            cancel_tool_ids = []
+
                                             # Check if any tools are cancelled
-                                            tool_status_list = status_obj.tool_status
-                                            for tool_inst in tool_status_list:
-                                                if tool_inst.status == CollectionToolStatus.CANCELLED.value:
-                                                    cancel_tool_ids.append(
-                                                        tool_inst.tool_id)
+                                            cancelled_tool_ids = status_obj.cancelled_tool_ids
+
                                             # Kill processes
-                                            if len(cancel_tool_ids) > 0:
+                                            if len(cancelled_tool_ids) > 0:
                                                 scheduled_scan_obj.kill_scan_processes(
-                                                    cancel_tool_ids)
+                                                    cancelled_tool_ids)
 
                         except requests.exceptions.ConnectionError as e:
                             logger.error("Unable to connect to server.")
