@@ -82,7 +82,7 @@ class BadSecretsScan(luigi.Task):
     def output(self):
 
         scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.scan_id
+        scan_id = scheduled_scan_obj.id
 
         # Init directory
         tool_name = scheduled_scan_obj.current_tool.name

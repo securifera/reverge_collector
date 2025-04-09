@@ -72,7 +72,7 @@ class SecTrailsIPLookupScan(luigi.Task):
     def output(self):
 
         scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.scan_id
+        scan_id = scheduled_scan_obj.id
 
         # Init directory
         tool_name = scheduled_scan_obj.current_tool.name
@@ -111,6 +111,11 @@ class SecTrailsIPLookupScan(luigi.Task):
                 for ip_addr in ip_to_host_dict_map:
                     futures.append(scan_utils.executor.submit(
                         request_wrapper, ip_addr=ip_addr, api_key=api_key))
+
+                # Register futures
+                scan_proc_inst = data_model.ToolExecutor(futures)
+                scheduled_scan_obj.register_tool_executor(
+                    scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
                 # Loop through thread function calls and update progress
                 for future in futures:

@@ -1,3 +1,4 @@
+from functools import partial
 import netifaces as ni
 import re
 import os
@@ -84,7 +85,7 @@ def get_default_gateway():
 def get_masscan_input(scheduled_scan_obj):
 
     masscan_conf = {}
-    scan_id = scheduled_scan_obj.scan_id
+    scan_id = scheduled_scan_obj.id
     tool_name = scheduled_scan_obj.current_tool.name
 
     # Get the scan inputs
@@ -150,7 +151,7 @@ class MasscanScan(luigi.Task):
     def output(self):
 
         scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.scan_id
+        scan_id = scheduled_scan_obj.id
         tool_name = scheduled_scan_obj.current_tool.name
 
         # Init output directory
@@ -211,8 +212,11 @@ class MasscanScan(luigi.Task):
             command.extend(command_arr)
 
             # Execute process
+            callback_with_tool_id = partial(
+                scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
+
             future = scan_utils.executor.submit(
-                scan_utils.process_wrapper, cmd_args=command)
+                scan_utils.process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id)
             # Wait for the process to finish
             future.result()
 

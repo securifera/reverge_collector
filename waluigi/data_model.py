@@ -2,7 +2,6 @@ import base64
 import binascii
 import enum
 import hashlib
-import time
 import uuid
 import netaddr
 import luigi
@@ -100,6 +99,19 @@ class CollectorType(enum.Enum):
             return None
 
 
+class ToolExecutor():
+
+    def __init__(self, thread_future_array=[], proc_pids=set()):
+        self.thread_future_array = thread_future_array
+        self.proc_pids = proc_pids
+
+    def get_thread_futures(self):
+        return self.thread_future_array
+
+    def get_process_pids(self):
+        return self.proc_pids
+
+
 class RecordTag(enum.Enum):
     LOCAL = 1
     REMOTE = 2
@@ -169,9 +181,7 @@ class ImportToolXOutput(luigi.Task):
 
         scan_id = scheduled_scan_obj.scan_id
         recon_manager = scheduled_scan_obj.scan_thread.recon_manager
-
-        tool_obj = scheduled_scan_obj.current_tool
-        tool_id = tool_obj.id
+        tool_id = scheduled_scan_obj.current_tool.id
 
         if len(obj_arr) > 0:
 

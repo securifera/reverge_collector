@@ -90,7 +90,7 @@ class PyshotScan(luigi.Task):
     def output(self):
 
         scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.scan_id
+        scan_id = scheduled_scan_obj.id
 
         # Init directory
         tool_name = scheduled_scan_obj.current_tool.name
@@ -183,6 +183,10 @@ class PyshotScan(luigi.Task):
                                          secure, port_id, query_arg, domain_str_orig)
                 if future_inst:
                     futures.append(future_inst)
+
+        scan_proc_inst = data_model.ToolExecutor(futures)
+        scheduled_scan_obj.register_tool_executor(
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
         # Wait for the tasks to complete and retrieve results
         for future in futures:

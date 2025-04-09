@@ -1,3 +1,4 @@
+import signal
 import time
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_OAEP
@@ -89,6 +90,7 @@ class CollectionToolStatus(enum.Enum):
     RUNNING = 2
     COMPLETED = 3
     ERROR = 4
+    CANCELLED = 5
 
     def __str__(self):
         if (self == CollectionToolStatus.CREATED):
@@ -99,6 +101,8 @@ class CollectionToolStatus(enum.Enum):
             return "COMPLETED"
         elif (self == CollectionToolStatus.ERROR):
             return "ERROR"
+        elif (self == CollectionToolStatus.CANCELLED):
+            return "CANCELLED"
 
 
 class ScheduledScan():
@@ -108,6 +112,8 @@ class ScheduledScan():
         self.target_id = scheduled_scan.target_id
         self.scan_id = scheduled_scan.scan_id
         self.id = scheduled_scan.id
+        self.tool_executor_map = {}
+        self.tool_executor_lock = threading.Lock()
 
         self.collection_tool_map = {}
         for collection_tool in scheduled_scan.collection_tools:
@@ -168,6 +174,7 @@ class ScheduledScan():
             self.collection_tool_map[collection_tool.id] = collection_tool
 
         self.current_tool = None
+        self.current_tool_instance_id = None
         self.selected_interface = None
 
         # Create a scan id if it does not exist
@@ -211,6 +218,59 @@ class ScheduledScan():
             tool_obj = self.collection_tool_map[tool_id]
             tool_obj.status = tool_status
 
+    def register_tool_executor(self, tool_id, tool_executor):
+        """
+        Register any PIDs or futures for the tool so they can be cancelled
+        """
+        with self.tool_executor_lock:
+            thread_future_array = tool_executor.get_thread_futures()
+            proc_pids = tool_executor.get_process_pids()
+
+            if tool_id in self.tool_executor_map:
+                tool_executor_map_main = self.tool_executor_map[tool_id]
+            else:
+                tool_executor_map_main = data_model.ToolExecutor()
+                self.tool_executor_map[tool_id] = tool_executor_map_main
+
+            # Update the values
+            tool_executor_map_main.thread_future_array.extend(
+                thread_future_array)
+            tool_executor_map_main.proc_pids.update(proc_pids)
+
+    def kill_scan_processes(self, tool_id_list=[]):
+        """
+        Cancel the scan by killing the process
+        """
+
+        with self.tool_executor_lock:
+
+            # Get the list of tool executors to process
+            tool_executor_map_list = (
+                [self.tool_executor_map[tool_id]
+                    for tool_id in tool_id_list if tool_id in self.tool_executor_map]
+                if tool_id_list else self.tool_executor_map.values()
+            )
+
+            print(tool_executor_map_list)
+            # Terminate processes and cancel threads
+            for executor in tool_executor_map_list:
+                for pid in executor.get_process_pids():
+                    print("Killing PID: %s" % pid)
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except:
+                        pass
+                for future in executor.get_thread_futures():
+                    print("Cancelling future: %s" % future)
+                    future.cancel()
+
+            # Cleanup tool_executor_map
+            if tool_id_list:
+                self.tool_executor_map = {
+                    k: v for k, v in self.tool_executor_map.items() if k not in tool_id_list}
+            else:
+                self.tool_executor_map.clear()
+
     def cleanup(self):
 
         collection_tools = self.collection_tool_map.values()
@@ -239,8 +299,8 @@ class ScheduledScanThread(threading.Thread):
         self.exit_event = Event()
         self.checkin_interval = 30
         self.scan_thread_lock = threading.Lock()
-        self.current_scan_thread_future = None
         self.log_queue = None
+        self.scheduled_scan_map = {}
 
     # Event handler to catch luigi task failures
     @luigi.Task.event_handler(luigi.Event.FAILURE)
@@ -294,16 +354,24 @@ class ScheduledScanThread(threading.Thread):
 
                 # Set the tool obj
                 scheduled_scan_obj.current_tool = tool_obj
+                scheduled_scan_obj.current_tool_instance_id = collection_tool_inst.id
 
                 # Check if scan is cancelled
                 scan_status = self.recon_manager.get_scan_status(
                     scheduled_scan_obj.scan_id)
-                if scan_status is None or scan_status == ScanStatus.CANCELLED.value:
+                if scan_status is None or scan_status.scan_status == ScanStatus.CANCELLED.value:
                     err_msg = "Scan cancelled or doesn't exist"
                     logger.debug(err_msg)
                     # Clean up the directory
-                    scan_cleanup.scan_cleanup_func(scheduled_scan_obj.scan_id)
+                    scan_cleanup.scan_cleanup_func(scheduled_scan_obj.id)
                     return err_msg
+
+                tool_status_map = scan_status.tool_status
+                if collection_tool_inst.id in tool_status_map:
+                    tool_status = tool_status_map[collection_tool_inst.id]
+                    if tool_status == CollectionToolStatus.CANCELLED.value:
+                        logger.debug("Tool job cancelled, skipping")
+                        continue
 
                 # Check if load balanced
                 # skip_load_balance_ports = self.recon_manager.is_load_balanced()
@@ -378,6 +446,7 @@ class ScheduledScanThread(threading.Thread):
             finally:
                 # Reset the current tool variable
                 scheduled_scan_obj.current_tool = None
+                scheduled_scan_obj.current_tool_instance_id = None
 
         # Cleanup files
         if ret_status == CollectionToolStatus.COMPLETED.value:
@@ -400,11 +469,10 @@ class ScheduledScanThread(threading.Thread):
             logger.error("Error: %s" % str(e))
             logger.debug(traceback.format_exc())
 
-    def process_scan_obj(self, sched_scan_obj):
+    def process_scan_obj(self, scheduled_scan_obj):
 
         # Create scan object
         err_msg = None
-        scheduled_scan_obj = ScheduledScan(self, sched_scan_obj)
 
         # Execute scan jobs
         scan_status = ScanStatus.ERROR.value
@@ -420,18 +488,17 @@ class ScheduledScanThread(threading.Thread):
                 # Update scan status
                 scan_status = ScanStatus.COMPLETED.value
 
+                # Remove temporary files
+                scheduled_scan_obj.cleanup()
+
         except Exception as e:
             logger.error("Error executing scan job")
             logger.debug(traceback.format_exc())
 
-        # Remove temporary files
-        scheduled_scan_obj.cleanup()
-
         with self.scan_thread_lock:
             # Update scan status with a small delay to make sure the db flushes on the server side
             scheduled_scan_obj.update_scan_status(scan_status)
-            time.sleep(3)
-            self.current_scan_thread_future = None
+            del self.scheduled_scan_map[scheduled_scan_obj.id]
 
         return
 
@@ -484,10 +551,43 @@ class ScheduledScanThread(threading.Thread):
                             # Submit the next scan job
                             with self.scan_thread_lock:
                                 sched_scan_obj_arr = recon_manager.get_scheduled_scans()
-                                if len(sched_scan_obj_arr) > 0 and (self.current_scan_thread_future is None or self.current_scan_thread_future.done()):
-                                    sched_scan_obj = sched_scan_obj_arr[0]
-                                    self.current_scan_thread_future = scan_utils.executor.submit(partial(
-                                        self.process_scan_obj, sched_scan_obj))
+                                for sched_scan_obj in sched_scan_obj_arr:
+
+                                    # Check if the scan has been cancelled
+                                    if sched_scan_obj.id not in self.scheduled_scan_map:
+
+                                        # Create a new scheduled scan obj
+                                        scheduled_scan_obj = ScheduledScan(
+                                            self, sched_scan_obj)
+                                        self.scheduled_scan_map[sched_scan_obj.id] = scheduled_scan_obj
+
+                                        scan_utils.executor.submit(
+                                            partial(self.process_scan_obj, scheduled_scan_obj))
+
+                                    else:
+
+                                        scheduled_scan_obj = self.scheduled_scan_map[sched_scan_obj.id]
+                                        status_obj = self.recon_manager.get_scan_status(
+                                            scheduled_scan_obj.scan_id)
+
+                                        scan_status = status_obj.scan_status
+
+                                        # Check if scan is cancelled
+                                        if scan_status == ScanStatus.CANCELLED.value:
+                                            logger.debug("Scan cancelled")
+                                            scheduled_scan_obj.kill_scan_processes()
+                                        else:
+                                            cancel_tool_ids = []
+                                            # Check if any tools are cancelled
+                                            tool_status_list = status_obj.tool_status
+                                            for tool_inst in tool_status_list:
+                                                if tool_inst.status == CollectionToolStatus.CANCELLED.value:
+                                                    cancel_tool_ids.append(
+                                                        tool_inst.tool_id)
+                                            # Kill processes
+                                            if len(cancel_tool_ids) > 0:
+                                                scheduled_scan_obj.kill_scan_processes(
+                                                    cancel_tool_ids)
 
                         except requests.exceptions.ConnectionError as e:
                             logger.error("Unable to connect to server.")
@@ -535,7 +635,6 @@ class ReconManager:
         tool_name_inst_map = {}
         for tool_class in tool_classes:
             tool_inst = tool_class()
-            # self.register_tool(tool_class)
             tool_name_inst_map[tool_inst.name] = tool_inst
 
         # Send collector data to server
@@ -573,8 +672,7 @@ class ReconManager:
 
         # Get the tool
         ret_val = False
-        tool_obj = scan_input.current_tool
-        tool_id = tool_obj.id
+        tool_id = scan_input.current_tool.id
         if tool_id in self.waluigi_tool_map:
             tool_inst = self.waluigi_tool_map[tool_id]
 
@@ -590,8 +688,7 @@ class ReconManager:
 
         ret_val = False
         # Get the tool
-        tool_obj = scan_input.current_tool
-        tool_id = tool_obj.id
+        tool_id = scan_input.current_tool.id
         if tool_id in self.waluigi_tool_map:
             tool_inst = self.waluigi_tool_map[tool_id]
 
@@ -975,9 +1072,8 @@ class ReconManager:
             try:
                 content = r.json()
                 data = self._decrypt_json(content)
-                scan_status_dict = json.loads(data)
-                if 'status' in scan_status_dict:
-                    scan_status = scan_status_dict['status']
+                scan_status = json.loads(
+                    data, object_hook=lambda d: SimpleNamespace(**d))
             except Exception as e:
                 logger.error("Error retrieving scan status: %s" % str(e))
                 logger.debug(traceback.format_exc())

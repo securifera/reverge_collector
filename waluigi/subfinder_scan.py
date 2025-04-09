@@ -1,3 +1,4 @@
+from functools import partial
 import json
 import os
 import netaddr
@@ -42,11 +43,15 @@ class Subfinder(data_model.WaluigiTool):
         return True
 
 
-def subfinder_wrapper(scan_output_file_path, command, use_shell, my_env):
+def subfinder_wrapper(scheduled_scan_obj, scan_output_file_path, command, use_shell, my_env):
 
     ret_list = []
     # Call subfinder process
-    scan_utils.process_wrapper(command, use_shell, my_env)
+    callback_with_tool_id = partial(
+        scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
+
+    scan_utils.process_wrapper(
+        command, use_shell, my_env, callback_with_tool_id)
 
     # Parse the output
     obj_arr = scan_utils.parse_json_blob_file(scan_output_file_path)
@@ -60,7 +65,7 @@ def subfinder_wrapper(scan_output_file_path, command, use_shell, my_env):
 
 def get_subfinder_input(scheduled_scan_obj):
 
-    scan_id = scheduled_scan_obj.scan_id
+    scan_id = scheduled_scan_obj.id
     tool_name = scheduled_scan_obj.current_tool.name
     dir_path = scan_utils.init_tool_folder(tool_name, 'inputs', scan_id)
     dns_url_file = dir_path + os.path.sep + "dns_urls_" + scan_id
@@ -161,7 +166,7 @@ class SubfinderScan(luigi.Task):
     def output(self):
 
         scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.scan_id
+        scan_id = scheduled_scan_obj.id
 
         # Init directory
         tool_name = scheduled_scan_obj.current_tool.name
@@ -242,7 +247,12 @@ class SubfinderScan(luigi.Task):
                         command.extend(tool_args)
 
                     futures.append(scan_utils.executor.submit(
-                        subfinder_wrapper, scan_output_file_path, command, use_shell, my_env))
+                        subfinder_wrapper, scheduled_scan_obj, scan_output_file_path, command, use_shell, my_env))
+
+            # Register futures
+            scan_proc_inst = data_model.ToolExecutor(futures)
+            scheduled_scan_obj.register_tool_executor(
+                scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
             for future in futures:
                 temp_list = future.result()

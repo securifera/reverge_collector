@@ -1,3 +1,4 @@
+from functools import partial
 import json
 import os
 import shutil
@@ -52,7 +53,7 @@ class NmapScan(luigi.Task):
     def output(self):
 
         scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.scan_id
+        scan_id = scheduled_scan_obj.id
 
         # scan_target_dict = scheduled_scan_obj.scan_target_dict
         mod_str = ''
@@ -332,16 +333,19 @@ class NmapScan(luigi.Task):
             # Add to meta data
             nmap_scan_inst['nmap_command'] = command
             nmap_scan_inst['output_file'] = nmap_output_xml_file
-
-            # Add module id if it exists
-            # if module_id:
-            #    nmap_scan_inst['module_id'] = module_id
-
             nmap_scan_cmd_list.append(nmap_scan_inst)
 
+            callback_with_tool_id = partial(
+                scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
+
             futures.append(scan_utils.executor.submit(
-                scan_utils.process_wrapper, cmd_args=command))
+                scan_utils.process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id))
             counter += 1
+
+        # Register futures
+        scan_proc_inst = data_model.ToolExecutor(futures)
+        scheduled_scan_obj.register_tool_executor(
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
         # Wait for the tasks to complete and retrieve results
         for future in futures:

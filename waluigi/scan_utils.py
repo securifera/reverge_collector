@@ -16,6 +16,8 @@ from enum import Enum
 from concurrent.futures import ThreadPoolExecutor, Future
 from urllib.parse import urlparse
 
+from waluigi.data_model import ToolExecutor
+
 NOT_WHITESPACE = re.compile(r'\S')
 logger = logging.getLogger(__name__)
 
@@ -263,11 +265,16 @@ def init_tool_folder(tool_name, desc, scan_id):
     return dir_path
 
 
-def process_wrapper(cmd_args, use_shell=False, my_env=None, print_output=False):
+def process_wrapper(cmd_args, use_shell=False, my_env=None, print_output=False, pid_callback=None):
 
     logger.debug("Executing '%s'" % str(cmd_args))
     p = subprocess.Popen(cmd_args, shell=use_shell, stdin=subprocess.PIPE,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=my_env)
+
+    # If a callback is provided, call it with the process ID
+    if pid_callback:
+        scan_proc_inst = ToolExecutor(proc_pids=set([p.pid]))
+        pid_callback(scan_proc_inst)
 
     stdout_reader = ProcessStreamReader(
         ProcessStreamReader.StreamType.STDOUT, p.stdout, print_output)
@@ -284,8 +291,6 @@ def process_wrapper(cmd_args, use_shell=False, my_env=None, print_output=False):
     ret_data = {"exit_code": exit_code, "stdout": stdout_reader.get_output(
     ), "stderr": stderr_reader.get_output()}
     return ret_data
-
-# Parse a file that contains multiple JSON blogs and return a list of objects
 
 
 def parse_json_blob_file(output_file):

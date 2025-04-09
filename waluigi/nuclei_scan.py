@@ -1,3 +1,4 @@
+from functools import partial
 import json
 import os
 import luigi
@@ -48,7 +49,7 @@ class NucleiScan(luigi.Task):
     def output(self):
 
         scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.scan_id
+        scan_id = scheduled_scan_obj.id
 
         #  Init directory
         tool_name = scheduled_scan_obj.current_tool.name
@@ -176,8 +177,11 @@ class NucleiScan(luigi.Task):
             command_inner.extend(template_arr)
             command.extend(command_inner)
 
+            callback_with_tool_id = partial(
+                scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
+
             future_inst = scan_utils.executor.submit(
-                scan_utils.process_wrapper, cmd_args=command, use_shell=use_shell, my_env=my_env)
+                scan_utils.process_wrapper, cmd_args=command, use_shell=use_shell, my_env=my_env, pid_callback=callback_with_tool_id)
 
             # Wait for it to finish
             future_inst.result()
@@ -203,8 +207,7 @@ class ImportNucleiOutput(data_model.ImportToolXOutput):
         scope_obj = scheduled_scan_obj.scan_data
 
         # Import the ports to the manager
-        tool_obj = scheduled_scan_obj.current_tool
-        tool_id = tool_obj.id
+        tool_id = scheduled_scan_obj.current_tool.id
 
         nuclei_output_file = self.input().path
         with open(nuclei_output_file, 'r') as file_fd:
