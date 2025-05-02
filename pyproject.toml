@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "waluigi"
+version = "1.0"
+description = "Scan automation pipeline"
+authors = [
+  { name = "Ryan Wincey (b0yd)", email = "rwincey@securifera.com" }
+]
+readme = "README.md"
+requires-python = ">=3.7"
+license = { text = "MIT" }
+dependencies = [
+  "luigi",
+  "pycryptodomex",
+  "netifaces",
+  "pyyaml",
+  "tqdm",
+  "python-libnmap",
+  "shodan",
+  "pytest",
+  "netaddr",
+  "selenium",
+]
+urls = { Homepage = "https://www.securifera.com" }
+
+[tool.setuptools]
+packages = ["waluigi"]
