@@ -571,7 +571,7 @@ class ScheduledScanThread(threading.Thread):
                                         scan_status = status_obj.scan_status
 
                                         # Check if scan is cancelled
-                                        if scan_status == ScanStatus.CANCELLED.value:
+                                        if scan_status is None or scan_status == ScanStatus.CANCELLED.value:
                                             logger.debug("Scan cancelled")
                                             scheduled_scan_obj.kill_scan_processes()
                                         else:
