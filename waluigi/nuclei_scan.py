@@ -255,7 +255,7 @@ class ImportNucleiOutput(data_model.ImportToolXOutput):
                                     # Add vuln
                                     vuln_obj = data_model.Vuln(
                                         parent_id=port_id)
-                                    vuln_obj.name = template_id
+                                    vuln_obj.name = template_id.upper()
                                     ret_arr.append(vuln_obj)
 
                                 module_args = None
