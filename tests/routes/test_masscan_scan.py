@@ -11,13 +11,14 @@ import json
 def test_masscan_success(recon_manager):
 
     scan_id = 'f35c684c61da412c8aaf7d386540f661'
+    scheduled_scan_id = 'f35c684c61da412c8aaf7d386540f663'
     tool_inst = {'id': 'a9866b94f7104754bd161c1ab7cbf0cd', 'collection_tool': {'wordlists': [], 'name': 'masscan', 'args':
                                                                                '--rate 1000', 'tool_type': 2, 'scan_order': 2, 'api_key': None, 'id': 'f35c684c61da412c8aaf7d386540f661'}, 'args_override': None,
                  'enabled': 1, 'status': 0, 'status_message': None, 'collection_tool_id': 'f35c684c61da412c8aaf7d386540f661',
                  'scheduled_scan_id': 'f00e34cffce546edb2701096fc66da65', 'owner_id': '94cb514e85da4abea6ee227730328619'}
 
     scheduler_inst_object = {
-        "id": 'f35c684c61da412c8aaf7d386540f663',
+        "id": scheduled_scan_id,
         "scan_id": scan_id,
         "target_id": 1234,
         'collection_tools': [tool_inst], }
@@ -53,13 +54,16 @@ def test_masscan_success(recon_manager):
 
         result = recon_manager.scan_func(scheduled_scan_obj)
         assert result == True
-        output_dir = "/tmp/%s" % scan_id
+        output_dir = "/tmp/%s" % scheduled_scan_id
         assert os.path.exists(output_dir) == True
-        input_conf = "%s/masscan-inputs/mass_conf_%s" % (output_dir, scan_id)
+        input_conf = "%s/masscan-inputs/mass_conf_%s" % (
+            output_dir, scheduled_scan_id)
         assert os.path.exists(input_conf) == True
-        target_conf = "%s/masscan-inputs/mass_ips_%s" % (output_dir, scan_id)
+        target_conf = "%s/masscan-inputs/mass_ips_%s" % (
+            output_dir, scheduled_scan_id)
         assert os.path.exists(target_conf) == True
-        output_file = "%s/masscan-outputs/mass_out_%s" % (output_dir, scan_id)
+        output_file = "%s/masscan-outputs/mass_out_%s" % (
+            output_dir, scheduled_scan_id)
         assert os.path.exists(output_file) == True
 
         # Check if port_list is in the  file contents of input_conf
