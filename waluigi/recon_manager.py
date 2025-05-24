@@ -447,7 +447,7 @@ class ScheduledScanThread(threading.Thread):
 
         # Cleanup files
         if ret_status == CollectionToolStatus.COMPLETED.value:
-            scan_cleanup.scan_cleanup_func(scheduled_scan_obj.scan_id)
+            scan_cleanup.scan_cleanup_func(scheduled_scan_obj.id)
             err_msg = None
 
         return err_msg

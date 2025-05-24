@@ -375,10 +375,13 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                     header_dict = httpx_scan['header']
                     if 'last_modified' in header_dict:
                         last_modified_str = header_dict['last_modified']
-                        timestamp_datetime = datetime.strptime(
-                            last_modified_str, "%a, %d %b %Y %H:%M:%S GMT")
-                        last_modified = int(time.mktime(
-                            timestamp_datetime.timetuple()))
+                        try:
+                            timestamp_datetime = datetime.strptime(
+                                last_modified_str, "%A, %d-%b-%Y %H:%M:%S GMT")
+                            last_modified = int(time.mktime(
+                                timestamp_datetime.timetuple()))
+                        except:
+                            pass
 
                 favicon_hash = None
                 tmp_fav_hash = None
