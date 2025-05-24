@@ -952,8 +952,10 @@ class Vuln(Record):
     def from_jsonsable(self, input_data_dict):
         try:
             self.name = input_data_dict['name']
-            self.vuln_details = input_data_dict['vuln_details']
-            self.endpoint_id = input_data_dict['endpoint_id']
+            if 'vuln_details' in input_data_dict:
+                self.vuln_details = input_data_dict['vuln_details']
+            if 'endpoint_id' in input_data_dict:
+                self.endpoint_id = input_data_dict['endpoint_id']
         except Exception as e:
             raise Exception('Invalid vuln object: %s' % str(e))
 
