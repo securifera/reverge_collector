@@ -203,10 +203,14 @@ class HttpXScan(luigi.Task):
         futures = []
         for port_str in port_target_list_map:
 
+            # Split the input into chunks or httpx will run out of memory
+            # and crash the collector
             ip_list = list(port_target_list_map[port_str])
-            chunk_size = 200
+            chunk_size = 100
             num_chunks = (len(ip_list) + chunk_size - 1) // chunk_size
 
+            logger.debug("Splitting %s IPs into %s chunks" %
+                         (len(ip_list), num_chunks))
             for chunk_idx in range(num_chunks):
                 chunk = ip_list[chunk_idx *
                                 chunk_size: (chunk_idx + 1) * chunk_size]
