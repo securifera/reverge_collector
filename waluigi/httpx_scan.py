@@ -24,7 +24,7 @@ class Httpx(data_model.WaluigiTool):
         self.name = 'httpx'
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 4
-        self.args = "-favicon -td"
+        self.args = "-favicon -td -t 20"
         self.scan_func = Httpx.httpx_scan_func
         self.import_func = Httpx.httpx_import
 
@@ -225,8 +225,6 @@ class HttpXScan(luigi.Task):
                 "-irr",  # Return response so Headers can be parsed
                 # "-ss", Removed from default because it is too memory/cpu intensive for small collectors
                 "-fhr",
-                "-t",
-                "100",
                 "-nf",
                 "-l",
                 scan_input_file_path,
