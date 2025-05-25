@@ -1,5 +1,3 @@
-import threading
-import os
 import recon_manager
 import traceback
 import argparse
@@ -34,18 +32,6 @@ class QueueHandler(logging.Handler):
             self.handleError(record)
 
 
-def tail_supervisor_log(log_queue, path="/var/log/supervisor/supervisord.log"):
-    if os.path.exists(path):
-        with open(path, "r") as f:
-            f.seek(0, 2)
-            while True:
-                line = f.readline()
-                if not line:
-                    time.sleep(0.1)
-                    continue
-                log_queue.put(line.strip())
-
-
 def setup_logging():
 
     # Setup logging
@@ -65,10 +51,6 @@ def setup_logging():
 
     logger = logging.getLogger()
     logger.addHandler(queue_handler)
-
-    # Tail the supervisor log and add to queu
-    threading.Thread(target=tail_supervisor_log,
-                     args=(log_queue,), daemon=True).start()
 
     return log_queue
 
