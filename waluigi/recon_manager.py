@@ -918,34 +918,6 @@ class ReconManager:
 
         return target_obj
 
-    # def get_tool_scope(self, scan_id, tool_id, load_balanced=False):
-
-    #     target_obj = None
-    #     target_url = '%s/api/scan/%s/scope/%s' % (
-    #         self.manager_url, scan_id, tool_id)
-    #     if load_balanced:
-    #         target_url += "?load_balanced=True"
-
-    #     r = requests.get(target_url, headers=self.headers, verify=False)
-    #     if r.status_code == 404:
-    #         return target_obj
-    #     if r.status_code != 200:
-    #         logger.error("Error retrieving tool scope.")
-    #         return target_obj
-
-    #     if r.content:
-    #         try:
-    #             content = r.json()
-    #             data = self._decrypt_json(content)
-    #             if len(data) > 0:
-    #                 target_obj = json.loads(data)
-    #         except Exception as e:
-    #             logger.error("Error retrieving tool scope: %s" % str(e))
-    #             logger.debug(traceback.format_exc())
-    #             return target_obj
-
-    #     return target_obj
-
     def get_urls(self, scan_id):
 
         urls = []
