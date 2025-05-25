@@ -26,7 +26,7 @@ class ThreadExecutorWrapper():
 
     def __init__(self, max_workers=10):
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
-        self.results = []
+        # self.results = []
         self.exceptions = []
         self.futures_map = {}
         self.lock = threading.Lock()
@@ -43,8 +43,8 @@ class ThreadExecutorWrapper():
 
         try:
             result = future.result()
-            with self.lock:
-                self.results.append((task_id, result))
+            # with self.lock:
+            #    self.results.append((task_id, result))
             # logger.debug(f"Task {task_id} completed with result: {result}")
             logger.debug(f"Task {task_id} completed")
 
