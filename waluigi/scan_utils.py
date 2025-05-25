@@ -26,8 +26,9 @@ class ThreadExecutorWrapper():
 
     def __init__(self, max_workers=10):
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        # Currently not used
         # self.results = []
-        self.exceptions = []
+        # self.exceptions = []
         self.futures_map = {}
         self.lock = threading.Lock()
         self.task_counter = 0
@@ -50,8 +51,8 @@ class ThreadExecutorWrapper():
 
         except Exception as e:
             tb = traceback.format_exc()
-            with self.lock:
-                self.exceptions.append((task_id, e, tb))
+            # with self.lock:
+            #    self.exceptions.append((task_id, e, tb))
             logger.debug(f"Task {task_id} raised an exception: {e}")
             logger.debug(f"Traceback:\n{tb}")
 
