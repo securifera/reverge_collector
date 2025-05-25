@@ -223,6 +223,8 @@ class HttpXScan(luigi.Task):
                 "-json",
                 "-irr",  # Return response so Headers can be parsed
                 # "-ss", Removed from default because it is too memory/cpu intensive for small collectors
+                "-s",  # Stream mode
+                "-sd",  # Disable dedupe
                 "-fhr",
                 "-nf",
                 "-l",
