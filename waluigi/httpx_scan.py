@@ -24,7 +24,7 @@ class Httpx(data_model.WaluigiTool):
         self.name = 'httpx'
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 4
-        self.args = "-favicon -td -t 20 -timeout 3 -maxhr 5"
+        self.args = "-favicon -td -t 50 -timeout 3 -maxhr 5 -rstr 10000"
         self.scan_func = Httpx.httpx_scan_func
         self.import_func = Httpx.httpx_import
 
@@ -203,51 +203,63 @@ class HttpXScan(luigi.Task):
         futures = []
         for port_str in port_target_list_map:
 
-            scan_output_file_path = output_dir + os.path.sep + "httpx_out_" + port_str
-            output_file_list.append(scan_output_file_path)
+            ip_list = list(port_target_list_map[port_str])
+            chunk_size = 200
+            num_chunks = (len(ip_list) + chunk_size - 1) // chunk_size
 
-            ip_list = port_target_list_map[port_str]
+            for chunk_idx in range(num_chunks):
+                chunk = ip_list[chunk_idx *
+                                chunk_size: (chunk_idx + 1) * chunk_size]
 
-            # Write ips to file
-            scan_input_file_path = output_dir + os.path.sep + "httpx_in_" + port_str
-            with open(scan_input_file_path, 'w') as file_fd:
-                for ip in ip_list:
-                    file_fd.write(ip + "\n")
+                scan_output_file_path = (
+                    output_dir + os.path.sep +
+                    f"httpx_out_{port_str}_{chunk_idx}"
+                )
+                output_file_list.append(scan_output_file_path)
 
-            command = []
-            if os.name != 'nt':
-                command.append("sudo")
+                # Write ips to file
+                scan_input_file_path = (
+                    output_dir + os.path.sep +
+                    f"httpx_in_{port_str}_{chunk_idx}"
+                )
+                with open(scan_input_file_path, 'w') as file_fd:
+                    for ip in chunk:
+                        file_fd.write(ip + "\n")
 
-            command_arr = [
-                "httpx",
-                "-json",
-                "-silent",
-                "-irr",  # Return response so Headers can be parsed
-                # "-ss", Removed from default because it is too memory/cpu intensive for small collectors
-                "-s",  # Stream mode
-                "-sd",  # Disable dedupe
-                "-fhr",
-                "-nf",
-                "-l",
-                scan_input_file_path,
-                "-p",
-                port_str,
-                "-o",
-                scan_output_file_path
-            ]
+                command = []
+                if os.name != 'nt':
+                    command.append("sudo")
 
-            command.extend(command_arr)
+                command_arr = [
+                    "httpx",
+                    "-json",
+                    "-silent",
+                    "-irr",  # Return response so Headers can be parsed
+                    # "-ss", Removed from default because it is too memory/cpu intensive for small collectors
+                    "-s",  # Stream mode
+                    "-sd",  # Disable dedupe
+                    "-fhr",
+                    "-nf",
+                    "-l",
+                    scan_input_file_path,
+                    "-p",
+                    port_str,
+                    "-o",
+                    scan_output_file_path
+                ]
 
-            # Add script args
-            if script_args and len(script_args) > 0:
-                command.extend(script_args)
+                command.extend(command_arr)
 
-            callback_with_tool_id = partial(
-                scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
+                # Add script args
+                if script_args and len(script_args) > 0:
+                    command.extend(script_args)
 
-            # Add process dict to process array
-            futures.append(scan_utils.executor.submit(
-                scan_utils.process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id))
+                callback_with_tool_id = partial(
+                    scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
+
+                # Add process dict to process array
+                futures.append(scan_utils.executor.submit(
+                    scan_utils.process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id))
 
         # Register futures
         scan_proc_inst = data_model.ToolExecutor(futures)
