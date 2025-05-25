@@ -26,7 +26,7 @@ class ThreadExecutorWrapper():
 
     def __init__(self, max_workers=10):
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
-        # Currently not used
+        # Currently
         # self.results = []
         # self.exceptions = []
         self.futures_map = {}
@@ -85,7 +85,7 @@ class ProcessStreamReader(Thread):
         STDOUT = 1
         STDERR = 2
 
-    def __init__(self, pipe_type, pipe_stream, print_output=False, store_output=False):
+    def __init__(self, pipe_type, pipe_stream, print_output=False):
         Thread.__init__(self)
         self.pipe_type = pipe_type
         self.pipe_stream = pipe_stream
@@ -93,7 +93,6 @@ class ProcessStreamReader(Thread):
         self._daemon = True
         self.daemon = True
         self.print_output = print_output
-        self.store_output = store_output
 
     def queue(self, data):
         self.output_queue.put(data)
@@ -105,12 +104,12 @@ class ProcessStreamReader(Thread):
             with pipe:
                 for line in iter(pipe.readline, b''):
                     if self.print_output:
-                        print(line.decode())
+                        logger.debug(line.decode())
 
-                    if self.store_output:
-                        self.queue(line)
+                    self.queue(line)
+
         except Exception as e:
-            print("[-] Exception: " + str(e))
+            logger.error("Exception: " + str(e))
             pass
         finally:
             self.queue(None)
@@ -271,28 +270,37 @@ def init_tool_folder(tool_name, desc, scan_id):
 def process_wrapper(cmd_args, use_shell=False, my_env=None, print_output=False, store_output=False, pid_callback=None):
 
     logger.debug("Executing '%s'" % str(cmd_args))
+    pipe_type = subprocess.DEVNULL
+    if store_output:
+        pipe_type = subprocess.PIPE
+
     p = subprocess.Popen(cmd_args, shell=use_shell, stdin=subprocess.PIPE,
-                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=my_env)
+                         stdout=pipe_type, stderr=pipe_type, env=my_env)
 
     # If a callback is provided, call it with the process ID
     if pid_callback:
         scan_proc_inst = ToolExecutor(proc_pids=set([p.pid]))
         pid_callback(scan_proc_inst)
 
-    stdout_reader = ProcessStreamReader(
-        ProcessStreamReader.StreamType.STDOUT, p.stdout, print_output, store_output)
-    stderr_reader = ProcessStreamReader(
-        ProcessStreamReader.StreamType.STDERR, p.stderr, print_output, store_output)
-
     p.stdin.close()
 
-    stdout_reader.start()
-    stderr_reader.start()
+    if store_output:
+        stdout_reader = ProcessStreamReader(
+            ProcessStreamReader.StreamType.STDOUT, p.stdout, print_output)
+        stderr_reader = ProcessStreamReader(
+            ProcessStreamReader.StreamType.STDERR, p.stderr, print_output)
+
+        stdout_reader.start()
+        stderr_reader.start()
 
     exit_code = p.wait()
 
-    ret_data = {"exit_code": exit_code, "stdout": stdout_reader.get_output(
-    ), "stderr": stderr_reader.get_output()}
+    ret_data = {"exit_code": exit_code}
+
+    if store_output:
+        ret_data["stdout"] = stdout_reader.get_output()
+        ret_data["stderr"] = stderr_reader.get_output()
+
     return ret_data
 
 

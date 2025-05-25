@@ -258,6 +258,10 @@ class HttpXScan(luigi.Task):
         for future in futures:
             future.result()  # This blocks until the individual task is complete
 
+            # Remove the future from the executor
+            scheduled_scan_obj.remove_future(
+                scheduled_scan_obj.current_tool_instance_id, future)
+
         results_dict = {  # 'port_to_id_map': port_to_id_map,
             'output_file_list': output_file_list}
 

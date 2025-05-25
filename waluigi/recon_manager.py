@@ -218,6 +218,7 @@ class ScheduledScan():
             tool_obj = self.collection_tool_map[tool_id]
             tool_obj.status = tool_status
 
+    # This has a massive memory leak
     def register_tool_executor(self, tool_id, tool_executor):
         """
         Register any PIDs or futures for the tool so they can be cancelled
@@ -233,9 +234,24 @@ class ScheduledScan():
                 self.tool_executor_map[tool_id] = tool_executor_map_main
 
             # Update the values
-            tool_executor_map_main.thread_future_array.extend(
-                thread_future_array)
+            if len(thread_future_array) > 0:
+                logger.debug("Adding %d thread futures to %s" %
+                             len(thread_future_array), tool_id)
+                tool_executor_map_main.thread_future_array.extend(
+                    thread_future_array)
             tool_executor_map_main.proc_pids.update(proc_pids)
+
+    # This has a massive memory leak
+    def remove_future(self, tool_id, thread_future):
+        """
+        Remove the future
+        """
+        with self.tool_executor_lock:
+
+            if tool_id in self.tool_executor_map:
+                tool_executor_map_main = self.tool_executor_map[tool_id]
+                tool_executor_map_main.thread_future_array.remove(
+                    thread_future)
 
     def kill_scan_processes(self, tool_id_list=[]):
         """
