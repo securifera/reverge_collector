@@ -221,7 +221,6 @@ class HttpXScan(luigi.Task):
             command_arr = [
                 "httpx",
                 "-json",
-                "-tls-probe",
                 "-irr",  # Return response so Headers can be parsed
                 # "-ss", Removed from default because it is too memory/cpu intensive for small collectors
                 "-fhr",
