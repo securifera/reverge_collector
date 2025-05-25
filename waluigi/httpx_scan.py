@@ -24,7 +24,7 @@ class Httpx(data_model.WaluigiTool):
         self.name = 'httpx'
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 4
-        self.args = "-favicon -td -t 20"
+        self.args = "-favicon -td -t 10 -timeout 3 -maxhr 5"
         self.scan_func = Httpx.httpx_scan_func
         self.import_func = Httpx.httpx_import
 

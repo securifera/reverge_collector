@@ -568,10 +568,8 @@ class ScheduledScanThread(threading.Thread):
                                         status_obj = self.recon_manager.get_scan_status(
                                             scheduled_scan_obj.scan_id)
 
-                                        scan_status = status_obj.scan_status
-
                                         # Check if scan is cancelled
-                                        if scan_status is None or scan_status == ScanStatus.CANCELLED.value:
+                                        if status_obj is None or status_obj.scan_status == ScanStatus.CANCELLED.value:
                                             logger.debug("Scan cancelled")
                                             scheduled_scan_obj.kill_scan_processes()
                                         else:
