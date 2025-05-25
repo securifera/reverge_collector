@@ -51,7 +51,7 @@ def get_mac_address(ip_address):
     arp_cmd = ["arp", "-n", ip_address]
 
     future = scan_utils.executor.submit(
-        scan_utils.process_wrapper, cmd_args=arp_cmd)
+        scan_utils.process_wrapper, cmd_args=arp_cmd, store_output=True)
     output_json = future.result()
     output = output_json['stdout']
 

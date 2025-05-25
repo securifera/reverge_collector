@@ -84,7 +84,7 @@ class ProcessStreamReader(Thread):
         STDOUT = 1
         STDERR = 2
 
-    def __init__(self, pipe_type, pipe_stream, print_output=False):
+    def __init__(self, pipe_type, pipe_stream, print_output=False, store_output=False):
         Thread.__init__(self)
         self.pipe_type = pipe_type
         self.pipe_stream = pipe_stream
@@ -92,6 +92,7 @@ class ProcessStreamReader(Thread):
         self._daemon = True
         self.daemon = True
         self.print_output = print_output
+        self.store_output = store_output
 
     def queue(self, data):
         self.output_queue.put(data)
@@ -105,7 +106,8 @@ class ProcessStreamReader(Thread):
                     if self.print_output:
                         print(line.decode())
 
-                    self.queue(line)
+                    if self.store_output:
+                        self.queue(line)
         except Exception as e:
             print("[-] Exception: " + str(e))
             pass
@@ -265,7 +267,7 @@ def init_tool_folder(tool_name, desc, scan_id):
     return dir_path
 
 
-def process_wrapper(cmd_args, use_shell=False, my_env=None, print_output=False, pid_callback=None):
+def process_wrapper(cmd_args, use_shell=False, my_env=None, print_output=False, store_output=False, pid_callback=None):
 
     logger.debug("Executing '%s'" % str(cmd_args))
     p = subprocess.Popen(cmd_args, shell=use_shell, stdin=subprocess.PIPE,
@@ -277,9 +279,9 @@ def process_wrapper(cmd_args, use_shell=False, my_env=None, print_output=False, 
         pid_callback(scan_proc_inst)
 
     stdout_reader = ProcessStreamReader(
-        ProcessStreamReader.StreamType.STDOUT, p.stdout, print_output)
+        ProcessStreamReader.StreamType.STDOUT, p.stdout, print_output, store_output)
     stderr_reader = ProcessStreamReader(
-        ProcessStreamReader.StreamType.STDERR, p.stderr, print_output)
+        ProcessStreamReader.StreamType.STDERR, p.stderr, print_output, store_output)
 
     p.stdin.close()
 
