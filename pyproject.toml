@@ -13,16 +13,15 @@ readme = "README.md"
 requires-python = ">=3.7"
 license = { text = "MIT" }
 dependencies = [
-  "luigi",
-  "pycryptodomex",
-  "netifaces",
-  "pyyaml",
-  "tqdm",
-  "python-libnmap",
-  "shodan",
-  "pytest",
-  "netaddr",
-  "selenium",
+  "luigi==3.6.0",
+  "pycryptodomex==3.23.0",
+  "netifaces==0.11.0",
+  "pyyaml==6.0.2",
+  "python-libnmap==0.7.3",
+  "shodan==1.31.0",
+  "pytest==8.3.5",
+  "netaddr==1.3.0",
+  "selenium==4.33.0",
 ]
 urls = { Homepage = "https://www.securifera.com" }
 

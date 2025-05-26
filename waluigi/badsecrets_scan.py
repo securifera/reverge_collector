@@ -8,7 +8,6 @@ import time
 import socket
 
 from luigi.util import inherits
-from tqdm import tqdm
 from multiprocessing.pool import ThreadPool
 from waluigi import scan_utils
 from waluigi import data_model
@@ -183,7 +182,7 @@ class BadSecretsScan(luigi.Task):
             pool.close()
 
             # Loop through thread function calls and update progress
-            for thread_obj in tqdm(thread_list):
+            for thread_obj in thread_list:
                 ret_obj = thread_obj.get()
                 if ret_obj:
                     output_file_list.append(ret_obj)
