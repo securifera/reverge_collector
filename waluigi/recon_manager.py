@@ -241,8 +241,6 @@ class ScheduledScan():
 
             # Update the values
             if len(thread_future_array) > 0:
-                logger.debug("Adding %d thread futures to %s" %
-                             (len(thread_future_array), tool_id))
                 tool_executor_map_main.thread_future_array.extend(
                     thread_future_array)
             tool_executor_map_main.proc_pids.update(proc_pids)
