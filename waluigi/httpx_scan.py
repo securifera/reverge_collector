@@ -94,6 +94,9 @@ class HttpXScan(luigi.Task):
                 break
 
         if mass_scan_ran:
+
+            # If there a domains in the scope they aren't scanned by httpx currently
+
             # Create scan jobs for each port and only scan the IPs mapped to that port
             target_map = scheduled_scan_obj.scan_data.host_port_obj_map
             for target_key in target_map:
@@ -114,6 +117,15 @@ class HttpXScan(luigi.Task):
 
                 # Add IP to list
                 ip_set.add(ip_addr)
+
+                # Get domains
+                host_id = host_obj.id
+                if host_id in scope_obj.domain_host_id_map:
+                    temp_domain_list = scope_obj.domain_host_id_map[host_id]
+                    for domain_obj in temp_domain_list:
+
+                        domain_name = domain_obj.name
+                        ip_set.add(domain_name)
 
         else:
 
