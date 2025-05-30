@@ -76,7 +76,6 @@ def queue_scan(host, port_str, dir_path, secure, port_id, query_arg="", domain_s
         target_str = domain_str
 
     url = scan_utils.construct_url(target_str, port_str, secure, query_arg)
-
     if url not in url_set:
         url_set.add(url)
         return scan_utils.executor.submit(pyshot_wrapper, host, port_str,
@@ -110,11 +109,12 @@ class PyshotScan(luigi.Task):
 
         scheduled_scan_obj = self.scan_input
 
-        target_map = scheduled_scan_obj.scan_data.host_port_obj_map
-        http_endpoint_port_id_map = scheduled_scan_obj.scan_data.http_endpoint_port_id_map
-        web_path_map = scheduled_scan_obj.scan_data.path_map
-        domain_map = scheduled_scan_obj.scan_data.domain_map
-        endpoint_data_endpoint_id_map = scheduled_scan_obj.scan_data.endpoint_data_endpoint_id_map
+        scope_obj = scheduled_scan_obj.scan_data
+        target_map = scope_obj.host_port_obj_map
+        http_endpoint_port_id_map = scope_obj.http_endpoint_port_id_map
+        web_path_map = scope_obj.path_map
+        domain_map = scope_obj.domain_map
+        endpoint_data_endpoint_id_map = scope_obj.endpoint_data_endpoint_id_map
 
         # logger.debug("[+] Running Pyshot scan on %s" %
         #             str(target_map))
@@ -133,6 +133,7 @@ class PyshotScan(luigi.Task):
             secure = port_obj.secure
 
             host_obj = target_obj_dict['host_obj']
+            host_id = host_obj.id
             ip_addr = host_obj.ipv4_addr
 
             # Add domain if it is different from the IP
@@ -142,7 +143,6 @@ class PyshotScan(luigi.Task):
                 domain_str_orig = target_arr[0]
 
             if port_id in http_endpoint_port_id_map:
-
                 http_endpoint_obj_list = http_endpoint_port_id_map[port_id]
                 for http_endpoint_obj in http_endpoint_obj_list:
 
@@ -168,6 +168,16 @@ class PyshotScan(luigi.Task):
                                 domain_obj = domain_map[domain_id]
                                 domain_str = domain_obj.name
                                 host = domain_str
+                            elif host_id in scope_obj.domain_host_id_map:
+
+                                # Take screenshots for any domains associated with the host
+                                temp_domain_list = scope_obj.domain_host_id_map[host_id]
+                                for domain_obj in temp_domain_list:
+                                    domain_name = domain_obj.name
+                                    future_inst = queue_scan(domain_name, port_str, dir_path,
+                                                             secure, port_id, query_arg, domain_name)
+                                    if future_inst:
+                                        futures.append(future_inst)
 
                             future_inst = queue_scan(host, port_str, dir_path,
                                                      secure, port_id, query_arg, domain_str, http_endpoint_data_id)
@@ -179,10 +189,23 @@ class PyshotScan(luigi.Task):
                     if future_inst:
                         futures.append(future_inst)
             else:
+
+                # Add for IP address
                 future_inst = queue_scan(ip_addr, port_str, dir_path,
                                          secure, port_id, query_arg, domain_str_orig)
                 if future_inst:
                     futures.append(future_inst)
+
+                # Add for domains in the scope
+                if host_id in scope_obj.domain_host_id_map:
+                    temp_domain_list = scope_obj.domain_host_id_map[host_id]
+                    for domain_obj in temp_domain_list:
+
+                        domain_name = domain_obj.name
+                        future_inst = queue_scan(domain_name, port_str, dir_path,
+                                                 secure, port_id, query_arg, domain_name)
+                        if future_inst:
+                            futures.append(future_inst)
 
         scan_proc_inst = data_model.ToolExecutor(futures)
         scheduled_scan_obj.register_tool_executor(

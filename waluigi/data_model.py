@@ -215,6 +215,8 @@ class ImportToolXOutput(luigi.Task):
 
             # Update the scan scope
             scheduled_scan_obj.scan_data.update(updated_import_arr)
+        else:
+            logger.debug("No objects to import for scan %s" % scan_id)
 
 
 def update_scope_array(record_map, updated_record_map=None):
