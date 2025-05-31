@@ -28,6 +28,8 @@ class Badsecrets(data_model.WaluigiTool):
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 10
         self.args = ""
+        self.description = 'A pure python library for identifying the use of known or very weak cryptographic secrets across a variety of web application platforms.'
+        self.project_url = "https://github.com/blacklanternsecurity/badsecrets"
         self.scan_func = Badsecrets.badsecrets_scan_func
         self.import_func = Badsecrets.badsecrets_import
 

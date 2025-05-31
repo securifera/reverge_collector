@@ -14,6 +14,8 @@ class Module(data_model.WaluigiTool):
 
     def __init__(self):
         self.name = 'module'
+        self.description = "The module tool is used to run nmap and nuclei modules based on associated mappings in reverge"
+        self.project_url = "https://github.com/securifera/reverge_collector"
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 9
         self.args = ""

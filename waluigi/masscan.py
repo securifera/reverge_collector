@@ -21,6 +21,8 @@ class Masscan(data_model.WaluigiTool):
 
     def __init__(self):
         self.name = 'masscan'
+        self.description = 'Masscan is a fast port scanner that can scan the entire Internet in under 6 minutes, transmitting 10 million packets per second. It is designed to be used for large-scale network scanning and is capable of scanning large ranges of IP addresses quickly.'
+        self.project_url = "https://github.com/robertdavidgraham/masscan"
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 2
         self.args = "--rate 1000"

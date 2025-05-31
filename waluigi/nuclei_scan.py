@@ -19,9 +19,11 @@ class Nuclei(data_model.WaluigiTool):
 
     def __init__(self):
         self.name = 'nuclei'
+        self.description = 'Nuclei is a fast and flexible vulnerability scanner based on simple YAML based DSL. It allows users to create custom templates for scanning various protocols and services.'
+        self.project_url = 'https://github.com/projectdiscovery/nuclei'
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 7
-        self.args = "http/technologies/fingerprinthub-web-fingerprints.yaml"
+        self.args = "-ni -pt http -rl 50 -t http/technologies/fingerprinthub-web-fingerprints.yaml"
         self.scan_func = Nuclei.nuclei_scan_func
         self.import_func = Nuclei.nuclei_import
 
@@ -76,7 +78,7 @@ class NucleiScan(luigi.Task):
             use_shell = True
         else:
             my_env["HOME"] = "/opt"
-            nuclei_template_root = '/opt'
+            # nuclei_template_root = '/opt'
 
         # Get output file path
         output_file_path = self.output().path
@@ -86,7 +88,10 @@ class NucleiScan(luigi.Task):
         endpoint_port_obj_map = {}
         nuclei_output_file = None
 
-        template_path_list = [scheduled_scan_obj.current_tool.args]
+        custom_args = scheduled_scan_obj.current_tool.args
+        if custom_args:
+            custom_args = custom_args.split(" ")
+
         target_map = scheduled_scan_obj.scan_data.host_port_obj_map
 
         for target_key in target_map:
@@ -117,22 +122,22 @@ class NucleiScan(luigi.Task):
                     endpoint_port_obj_map[url_str] = port_obj_instance
                     total_endpoint_set.add(url_str)
 
-        template_arr = []
-        for template_path in template_path_list:
+        # template_arr = []
+        # for template_path in template_path_list:
 
-            if template_path:
-                template_path = template_path.replace("/", os.path.sep)
+        #     if template_path:
+        #         template_path = template_path.replace("/", os.path.sep)
 
-                nuclei_template_path = nuclei_template_root + os.path.sep + "nuclei-templates"
-                full_template_path = nuclei_template_path + os.path.sep + template_path
-                if os.path.exists(full_template_path) == False:
-                    logger.error(
-                        "Nuclei template path '%s' does not exist" % full_template_path)
-                    raise FileNotFoundError(errno.ENOENT, os.strerror(
-                        errno.ENOENT), full_template_path)
+        #         nuclei_template_path = nuclei_template_root + os.path.sep + "nuclei-templates"
+        #         full_template_path = nuclei_template_path + os.path.sep + template_path
+        #         if os.path.exists(full_template_path) == False:
+        #             logger.error(
+        #                 "Nuclei template path '%s' does not exist" % full_template_path)
+        #             raise FileNotFoundError(errno.ENOENT, os.strerror(
+        #                 errno.ENOENT), full_template_path)
 
-                template_arr.append("-t")
-                template_arr.append(full_template_path)
+        #         template_arr.append("-t")
+        #         template_arr.append(full_template_path)
 
         # Write to nuclei input file if endpoints exist
         counter = 0
@@ -162,26 +167,27 @@ class NucleiScan(luigi.Task):
                 "nuclei",
                 "-jsonl",
                 "-duc",
-                "-ni",
-                "-pt",  # Limit to HTTP currently
-                "http",
-                "-rl",  # Rate limit 50
-                "50",
+                # "-ni",
+                # "-pt",  # Limit to HTTP currently
+                # "http",
+                # "-rl",  # Rate limit 50
+                # "50",
                 "-l",
                 nuclei_scan_input_file_path,
                 "-o",
                 nuclei_output_file,
             ]
 
-            # Add templates
-            command_inner.extend(template_arr)
+            # Add custom args
+            command_inner.extend(custom_args)
+
             command.extend(command_inner)
 
             callback_with_tool_id = partial(
                 scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
 
             future_inst = scan_utils.executor.submit(
-                scan_utils.process_wrapper, cmd_args=command, use_shell=use_shell, my_env=my_env, pid_callback=callback_with_tool_id)
+                scan_utils.process_wrapper, cmd_args=command, use_shell=use_shell, my_env=my_env, pid_callback=callback_with_tool_id, store_output=True)
 
             # Wait for it to finish
             future_inst.result()

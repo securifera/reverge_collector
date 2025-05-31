@@ -123,8 +123,8 @@ cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/nuclei/release
 sudo chmod +x /usr/local/bin/nuclei
 
 # Install nuclei templates
-cd /opt
-sudo git clone -c http.sslVerify=false https://github.com/securifera/nuclei-templates.git
+#cd /opt
+#sudo git clone -c http.sslVerify=false https://github.com/securifera/nuclei-templates.git
 
 # Screenshot dependencies
 install_packages fonts-liberation libgbm1 libappindicator3-1 openssl libasound2

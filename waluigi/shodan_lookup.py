@@ -22,6 +22,8 @@ class Shodan(data_model.WaluigiTool):
 
     def __init__(self):
         self.name = 'shodan'
+        self.description = "Shodan is a search engine for Internet-connected devices"
+        self.project_url = 'https://www.shodan.io/'
         self.collector_type = data_model.CollectorType.PASSIVE.value
         self.scan_order = 3
         self.args = ""

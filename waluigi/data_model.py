@@ -135,6 +135,8 @@ class WaluigiTool():
         self.collector_type = None
         self.scan_order = None
         self.args = None
+        self.description = None
+        self.project_url = None
         self.scope_func = None
         self.scan_func = None
         self.import_func = None
@@ -145,6 +147,8 @@ class WaluigiTool():
         ret_dict['tool_type'] = self.collector_type
         ret_dict['scan_order'] = self.scan_order
         ret_dict['args'] = self.args
+        ret_dict['description'] = self.description
+        ret_dict['project_url'] = self.project_url
         return ret_dict
 
 
