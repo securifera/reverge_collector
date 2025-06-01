@@ -812,7 +812,7 @@ class Record():
                 obj.from_jsonsable(record_data)
 
         except Exception as e:
-            logger.debug(traceback.format_exc())
+            logger.error(traceback.format_exc())
             raise Exception('Invalid scan object: %s' % str(e))
 
         return obj

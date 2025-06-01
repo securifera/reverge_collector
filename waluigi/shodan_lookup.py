@@ -275,12 +275,12 @@ class ShodanScan(luigi.Task):
                 logger.debug("Consolidating subnets queried by Shodan")
 
                 if len(ip_subnets) > 50:
-                    logger.debug("CIDRS Before: %d" % len(ip_subnets))
+                    # logger.debug("CIDRS Before: %d" % len(ip_subnets))
                     ip_subnets = reduce_subnets(ip_subnets)
-                    logger.debug("CIDRS After: %d" % len(ip_subnets))
+                    # logger.debug("CIDRS After: %d" % len(ip_subnets))
 
                 # Get the shodan key
-                logger.debug("Retrieving Shodan data")
+                # logger.debug("Retrieving Shodan data")
 
                 futures = []
                 for subnet in ip_subnets:

@@ -3,8 +3,11 @@ import shutil
 import luigi
 import traceback
 import shutil
+import logging
 
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 
 def scan_cleanup_func(scan_id):
@@ -64,7 +67,8 @@ class ScanCleanup(luigi.ExternalTask):
                 shutil.rmtree(dir_path)
 
             except Exception as e:
-                print("[-] Error deleting output directory: %s" % str(e))
+                logger.error(
+                    "[-] Error deleting output directory: %s" % str(e))
                 pass
 
         return luigi.LocalTarget(archive_zip_file)

@@ -86,8 +86,8 @@ def request_wrapper(url_obj):
             if count > 2:
                 break
 
-    if output:
-        logger.debug("Output for URL %s: %s" % (url, output))
+    # if output:
+    #    logger.debug("Output for URL %s: %s" % (url, output))
 
     url_obj['output'] = output
     return url_obj

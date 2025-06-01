@@ -72,7 +72,7 @@ class Module(data_model.WaluigiTool):
                         scheduled_scan_obj)
 
                 if not ret:
-                    print("[-] Module Scan Failed")
+                    logger.error("[-] Module Scan Failed")
                     ret_val = False
 
                 # Reset values
@@ -134,7 +134,7 @@ class Module(data_model.WaluigiTool):
                     ret = nuclei_scan.Nuclei.nuclei_import(scheduled_scan_obj)
 
                 if not ret:
-                    print("[-] Module Import Failed")
+                    logger.error("Module Import Failed")
                     ret_val = False
 
                 # Reset values
