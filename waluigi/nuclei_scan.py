@@ -166,12 +166,6 @@ class NucleiScan(luigi.Task):
             command_inner = [
                 "nuclei",
                 "-jsonl",
-                "-duc",
-                # "-ni",
-                # "-pt",  # Limit to HTTP currently
-                # "http",
-                # "-rl",  # Rate limit 50
-                # "50",
                 "-l",
                 nuclei_scan_input_file_path,
                 "-o",
