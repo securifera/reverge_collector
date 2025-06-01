@@ -402,7 +402,6 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
             if len(json_input) > 0:
                 nmap_scan_obj = json.loads(json_input)
                 nmap_json_arr = nmap_scan_obj['nmap_scan_list']
-                # print(nmap_scan_obj)
 
                 for nmap_scan_entry in nmap_json_arr:
 
@@ -412,8 +411,9 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                     try:
                         nmap_report = NmapParser.parse_fromfile(nmap_out)
                     except Exception as e:
-                        print("[-] Failed parsing nmap output: %s" % nmap_out)
-                        print(traceback.format_exc())
+                        logger.error(
+                            "Failed parsing nmap output: %s" % nmap_out)
+                        logger.error(traceback.format_exc())
 
                         try:
                             dir_path = os.path.dirname(meta_file)
@@ -500,9 +500,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                                     service_name = svc.service_dict['name']
                                     if service_name:
                                         component_name = service_name.lower().strip()
-                                        # print("[*] Service name: %s" % component_name)
                                         if len(component_name) > 0 and component_name != "unknown":
-                                            # svc_dict['name'] = ''
                                             component_obj = data_model.WebComponent(
                                                 parent_id=port_id)
 
@@ -626,7 +624,6 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
 
                                     # Iterate over script entries
                                     for script_out in script_res:
-                                        # print(script_out)
                                         if 'id' in script_out and 'output' in script_out:
 
                                             script_id = script_out['id']

@@ -15,7 +15,7 @@ from waluigi import data_model
 
 
 logger = logging.getLogger(__name__)
-url_set = set()
+future_map = {}
 
 
 class Pyshot(data_model.WaluigiTool):
@@ -51,37 +51,44 @@ def pyshot_wrapper(ip_addr, port, dir_path, ssl_val, port_id, query_arg="", doma
 
     ret_msg = ""
     try:
-        # domain_str = ''
-        # if domain:
-        #    domain_str = domain
-        # logger.debug("[+] Running Pyshot scan on %s:%s%s (%s)" %
-        #             (ip_addr, port, query_arg, domain_str))
+        domain_str = ''
+        if domain:
+            domain_str = domain
+        logger.debug("[+] Running Pyshot scan on %s:%s%s (%s)" %
+                     (ip_addr, port, query_arg, domain_str))
         pyshot_lib.take_screenshot(host=ip_addr, port_arg=port, query_arg=query_arg,
                                    dest_dir=dir_path, secure=ssl_val, port_id=port_id, domain=domain, endpoint_id=http_endpoint_data_id)
     except Exception as e:
-        # Here we add some debugging help. If multiprocessing's
-        # debugging is on, it will arrange to log the traceback
         ret_msg += "[-] Pyshot scan thread exception."
         ret_msg += str(traceback.format_exc())
-        # Re-raise the original exception so the Pool worker can
-        # clean up
 
     return ret_msg
 
 
 def queue_scan(host, port_str, dir_path, secure, port_id, query_arg="", domain_str=None, http_endpoint_data_id=None):
 
-    global url_set
+    global future_map
 
     target_str = host
     if domain_str:
         target_str = domain_str
 
     url = scan_utils.construct_url(target_str, port_str, secure, query_arg)
-    if url not in url_set:
-        url_set.add(url)
-        return scan_utils.executor.submit(pyshot_wrapper, host, port_str,
-                                          dir_path, secure, port_id, query_arg, domain_str, http_endpoint_data_id)
+    if url in future_map:
+        prev_http_endpoint_data_id, scan_tuple = future_map[url]
+        # the previous http endoint is None then switch it out to avoid duplicates
+        if http_endpoint_data_id is not None and prev_http_endpoint_data_id is None:
+            scan_tuple = (pyshot_wrapper, host, port_str, dir_path, secure,
+                          port_id, query_arg, domain_str, http_endpoint_data_id)
+            future_map[url] = (http_endpoint_data_id, scan_tuple)
+            return
+
+    else:
+        scan_tuple = (pyshot_wrapper, host, port_str, dir_path, secure,
+                      port_id, query_arg, domain_str, http_endpoint_data_id)
+        future_map[url] = (http_endpoint_data_id, scan_tuple)
+
+    return
 
 
 class PyshotScan(luigi.Task):
@@ -104,10 +111,9 @@ class PyshotScan(luigi.Task):
 
     def run(self):
 
-        global url_set
+        global future_map
         # Ensure output folder exists
         dir_path = os.path.dirname(self.output().path)
-        url_set = set()
 
         scheduled_scan_obj = self.scan_input
 
@@ -123,7 +129,7 @@ class PyshotScan(luigi.Task):
         # logger.debug("[+] Running Pyshot scan on %s" %
         #             str(domain_map))
 
-        futures = []
+        future_map = {}
         for target_key in target_map:
 
             query_arg = ""
@@ -176,27 +182,21 @@ class PyshotScan(luigi.Task):
                                 temp_domain_list = scope_obj.domain_host_id_map[host_id]
                                 for domain_obj in temp_domain_list:
                                     domain_name = domain_obj.name
-                                    future_inst = queue_scan(domain_name, port_str, dir_path,
-                                                             secure, port_id, query_arg, domain_name)
-                                    if future_inst:
-                                        futures.append(future_inst)
+                                    queue_scan(domain_name, port_str, dir_path,
+                                               secure, port_id, query_arg, domain_name, http_endpoint_data_id)
 
-                            future_inst = queue_scan(host, port_str, dir_path,
-                                                     secure, port_id, query_arg, domain_str, http_endpoint_data_id)
-                            if future_inst:
-                                futures.append(future_inst)
+                            queue_scan(host, port_str, dir_path,
+                                       secure, port_id, query_arg, domain_str, http_endpoint_data_id)
 
-                    future_inst = queue_scan(host, port_str, dir_path,
-                                             secure, port_id, query_arg, domain_str)
-                    if future_inst:
-                        futures.append(future_inst)
+                    else:
+                        queue_scan(
+                            host, port_str, dir_path, secure, port_id, query_arg, domain_str)
+
             else:
 
                 # Add for IP address
-                future_inst = queue_scan(ip_addr, port_str, dir_path,
-                                         secure, port_id, query_arg, domain_str_orig)
-                if future_inst:
-                    futures.append(future_inst)
+                queue_scan(ip_addr, port_str, dir_path,
+                           secure, port_id, query_arg, domain_str_orig)
 
                 # Add for domains in the scope
                 if host_id in scope_obj.domain_host_id_map:
@@ -204,10 +204,19 @@ class PyshotScan(luigi.Task):
                     for domain_obj in temp_domain_list:
 
                         domain_name = domain_obj.name
-                        future_inst = queue_scan(domain_name, port_str, dir_path,
-                                                 secure, port_id, query_arg, domain_name)
-                        if future_inst:
-                            futures.append(future_inst)
+                        queue_scan(domain_name, port_str, dir_path,
+                                   secure, port_id, query_arg, domain_name)
+
+        # Submit the tuples
+        futures = []
+        for url, (http_endpoint_data_id, scan_tuple) in future_map.items():
+            # Unpack the tuple
+            func, host, port_str, dir_path, secure, port_id, query_arg, domain_str, http_endpoint_data_id = scan_tuple
+
+            # Submit the scan task
+            future_inst = scan_utils.executor.submit(
+                func, host, port_str, dir_path, secure, port_id, query_arg, domain_str, http_endpoint_data_id)
+            futures.append(future_inst)
 
         scan_proc_inst = data_model.ToolExecutor(futures)
         scheduled_scan_obj.register_tool_executor(

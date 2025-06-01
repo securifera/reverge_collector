@@ -821,7 +821,6 @@ class ReconManager:
         # Generate temp RSA keys to encrypt session key
         key = RSA.generate(2048)
         private_key = key.export_key(format='DER')
-        # print("Length: %d" % len(private_key))
         public_key = key.publickey().export_key(format='DER')
 
         session_key = None

@@ -330,7 +330,7 @@ def parse_json_blob_file(output_file):
                 try:
                     obj, pos = decoder.raw_decode(data, pos)
                 except JSONDecodeError:
-                    print("[-] JSON decoding error")
+                    logger.error("JSON decoding error")
                     break
 
                 # Add object
