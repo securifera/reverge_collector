@@ -122,23 +122,6 @@ class NucleiScan(luigi.Task):
                     endpoint_port_obj_map[url_str] = port_obj_instance
                     total_endpoint_set.add(url_str)
 
-        # template_arr = []
-        # for template_path in template_path_list:
-
-        #     if template_path:
-        #         template_path = template_path.replace("/", os.path.sep)
-
-        #         nuclei_template_path = nuclei_template_root + os.path.sep + "nuclei-templates"
-        #         full_template_path = nuclei_template_path + os.path.sep + template_path
-        #         if os.path.exists(full_template_path) == False:
-        #             logger.error(
-        #                 "Nuclei template path '%s' does not exist" % full_template_path)
-        #             raise FileNotFoundError(errno.ENOENT, os.strerror(
-        #                 errno.ENOENT), full_template_path)
-
-        #         template_arr.append("-t")
-        #         template_arr.append(full_template_path)
-
         # Write to nuclei input file if endpoints exist
         counter = 0
         if len(total_endpoint_set) > 0:
