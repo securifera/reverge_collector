@@ -50,17 +50,13 @@ class Pyshot(data_model.WaluigiTool):
 def pyshot_wrapper(ip_addr, port, dir_path, ssl_val, port_id, query_arg="", domain=None, http_endpoint_data_id=None):
 
     ret_msg = ""
-    try:
-        domain_str = ''
-        if domain:
-            domain_str = domain
-        logger.debug("[+] Running Pyshot scan on %s:%s%s (%s)" %
-                     (ip_addr, port, query_arg, domain_str))
-        pyshot_lib.take_screenshot(host=ip_addr, port_arg=port, query_arg=query_arg,
-                                   dest_dir=dir_path, secure=ssl_val, port_id=port_id, domain=domain, endpoint_id=http_endpoint_data_id)
-    except Exception as e:
-        ret_msg += "[-] Pyshot scan thread exception."
-        ret_msg += str(traceback.format_exc())
+    domain_str = ''
+    if domain:
+        domain_str = domain
+    logger.debug("Running Pyshot scan on %s:%s%s (%s)" %
+                 (ip_addr, port, query_arg, domain_str))
+    pyshot_lib.take_screenshot(host=ip_addr, port_arg=port, query_arg=query_arg,
+                               dest_dir=dir_path, secure=ssl_val, port_id=port_id, domain=domain, endpoint_id=http_endpoint_data_id)
 
     return ret_msg
 
