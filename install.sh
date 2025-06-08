@@ -134,7 +134,7 @@ cd /tmp
 sudo git clone -c http.sslVerify=false https://github.com/securifera/pyshot.git
 cd pyshot 
 tar -C /tmp -xvf phantomjs-2.1.1-linux-x86_64.tar.gz
-sudo cp /tmp/phantomjs /usr/bin
+sudo mv /tmp/phantomjs /usr/bin
 python3 -m build
 python3 -m pip install dist/pyshot*.whl
 
