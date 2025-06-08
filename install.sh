@@ -129,21 +129,14 @@ sudo chmod +x /usr/local/bin/nuclei
 # Screenshot dependencies
 install_packages fonts-liberation libgbm1 libappindicator3-1 openssl libasound2
 
-# Pyshot
+# Pyshot & PhantomJs
 cd /opt
 sudo git clone -c http.sslVerify=false https://github.com/securifera/pyshot.git
-cd pyshot && python3 setup.py install
-
-# PhantomJs
-if [ "$arch" = "linux_amd64" ]
-then
-  cd /opt
-  wget --no-check-certificate -O /tmp/phantomjs-2.1.1.tar.bz2 https://bitbucket.org/ariya/phantomjs/downloads/phantomjs-2.1.1-linux-x86_64.tar.bz2
-  tar -C /tmp -xvf /tmp/phantomjs-2.1.1.tar.bz2
-  sudo cp /tmp/phantomjs-2.1.1-linux-x86_64/bin/phantomjs /usr/bin
-else
-  echo "No phantom JS release for arch $arch. Consider building from source."
-fi
+cd pyshot 
+tar -C /tmp -xvf phantomjs-2.1.1-linux-x86_64.tar.gz
+sudo cp /tmp/phantomjs /usr/bin
+python3 -m build
+python3 -m pip install dist/pyshot*.whl
 
 # Install HTTPX
 cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/httpx/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o httpx*.zip; sudo mv httpx /usr/local/bin/ ; sudo rm httpx*.zip
