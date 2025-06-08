@@ -99,9 +99,10 @@ echo "[worker]" | sudo tee /opt/collector/luigi.cfg
 echo "no_install_shutdown_handler=True" | sudo tee -a /opt/collector/luigi.cfg
 
 sudo mkdir /opt/reverge_collector
-sudo cp ./setup.py /opt/reverge_collector/
-sudo cp -r ./waluigi /opt/reverge_collector/
-sudo cp ./pyproject.toml /opt/reverge_collector/
+chmod -R 777 /opt/reverge_collector
+cp ./setup.py /opt/reverge_collector/
+cp -r ./waluigi /opt/reverge_collector/
+cp ./pyproject.toml /opt/reverge_collector/
 cd /opt/reverge_collector 
 python3 -m build
 python3 -m pip install dist/waluigi*.whl
