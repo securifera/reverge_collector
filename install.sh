@@ -99,9 +99,9 @@ echo "[worker]" | sudo tee /opt/collector/luigi.cfg
 echo "no_install_shutdown_handler=True" | sudo tee -a /opt/collector/luigi.cfg
 
 sudo mkdir /opt/reverge_collector
-sudo cp ./setup.py /opt/reverge_collector/
-sudo cp -r ./waluigi /opt/reverge_collector/
-sudo cp ./pyproject.toml /opt/reverge_collector/
+cp -r ./waluigi /opt/reverge_collector/
+cp ./pyproject.toml /opt/reverge_collector/
+sudo chmod -R 777 /opt/reverge_collector
 cd /opt/reverge_collector 
 python3 -m build
 python3 -m pip install dist/waluigi*.whl
@@ -130,11 +130,11 @@ sudo chmod +x /usr/local/bin/nuclei
 install_packages fonts-liberation libgbm1 libappindicator3-1 openssl libasound2
 
 # Pyshot & PhantomJs
-cd /opt
-sudo git clone -c http.sslVerify=false https://github.com/securifera/pyshot.git
+cd /tmp
+git clone -c http.sslVerify=false https://github.com/securifera/pyshot.git
 cd pyshot 
 tar -C /tmp -xvf phantomjs-2.1.1-linux-x86_64.tar.gz
-sudo cp /tmp/phantomjs /usr/bin
+sudo mv /tmp/phantomjs /usr/bin
 python3 -m build
 python3 -m pip install dist/pyshot*.whl
 
