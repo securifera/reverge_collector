@@ -190,10 +190,8 @@ class SubfinderScan(luigi.Task):
         # Ensure output folder exists
         meta_file_path = self.output().path
         dir_path = os.path.dirname(meta_file_path)
-        scan_output_file_path = dir_path + os.path.sep + "subfinder_results"
 
         # Write out meta data file
-        output_fd = open(meta_file_path, 'w')
         ret_list = []
 
         subfinder_domain_list = dns_scan_obj['input_path']
@@ -211,10 +209,6 @@ class SubfinderScan(luigi.Task):
         update_config_file(
             list(scheduled_scan_obj.collection_tool_map.values()), my_env)
 
-        # Add threads for large targets
-        # pool = ThreadPool(processes=10)
-        # thread_list = []
-
         futures = []
 
         # Add the domains from the wildcards
@@ -223,12 +217,17 @@ class SubfinderScan(luigi.Task):
 
         # Add the lines
         domain_set = set()
+        counter = 0
         if len(sub_lines) > 0:
             for line in sub_lines:
                 domain_str = line.strip()
-                if len(domain_str) > 0:
+                if len(domain_str) > 0 and domain_str not in domain_set:
 
+                    # Add to the set
                     domain_set.add(domain_str)
+                    # Create unique output file path
+                    scan_output_file_path = dir_path + os.path.sep + \
+                        "subfinder_results_" + str(counter) + ".json"
 
                     command = []
                     command_arr = [
@@ -251,6 +250,8 @@ class SubfinderScan(luigi.Task):
                     futures.append(scan_utils.executor.submit(
                         subfinder_wrapper, scheduled_scan_obj, scan_output_file_path, command, use_shell, my_env))
 
+                    counter += 1
+
             # Register futures
             scan_proc_inst = data_model.ToolExecutor(futures)
             scheduled_scan_obj.register_tool_executor(
@@ -263,11 +264,13 @@ class SubfinderScan(luigi.Task):
         # Reset the API keys
         update_config_file(None, my_env)
 
+        # Resolve the parent domains too
         if len(domain_set) > 0:
             ret_list.extend(dns_wrapper(domain_set))
 
-        output_fd.write(json.dumps({'domain_list': ret_list}))
-        output_fd.close()
+        # Write the output file
+        with open(meta_file_path, 'w') as output_fd:
+            output_fd.write(json.dumps({'domain_list': ret_list}))
 
 
 @inherits(SubfinderScan)
