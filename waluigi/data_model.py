@@ -26,7 +26,8 @@ waluigi_tools = [
     ('waluigi.httpx_scan', 'Httpx'),
     ('waluigi.sectrails_ip_lookup', 'Sectrails'),
     ('waluigi.module_scan', 'Module'),
-    ('waluigi.badsecrets_scan', 'Badsecrets')
+    ('waluigi.badsecrets_scan', 'Badsecrets'),
+    ('waluigi.webcap_scan', 'Webcap')
     # ('waluigi.divvycloud_lookup', 'Divvycloud')
 ]
 
@@ -335,42 +336,24 @@ class ScanData():
 
         self._post_process()
 
-        # logger.debug("Component Map: %s" % str(self.component_map))
-
     def _post_process(self):
 
         for port_id in self.port_map:
             update_host_port_obj_map(self, port_id, self.host_port_obj_map)
 
-        # Debug
-        # print("Ports")
-        # for obj in self.port_map.values():
-        #     print(obj.to_jsonable())
-        # print("Hosts")
-        # for obj in self.host_map.values():
-        #     print(obj.to_jsonable())
-        # print("Domains")
-        # for obj in self.domain_map.values():
-        #     print(obj.to_jsonable())
-        # print("Endpoints")
-        # for obj in self.http_endpoint_map.values():
-        #     print(obj.to_jsonable())
-        # print("Subnets")
-        # for obj in self.subnet_map.values():
-        #     print(obj.to_jsonable())
-
     def _process_data(self, obj_list, record_tags=set()):
 
         for obj in obj_list:
             if not isinstance(obj, Record):
-                # logger.debug("Processing object: %s" % str(obj))
-                record_obj = Record.from_jsonsable(
+                record_obj = Record.static_from_jsonsable(
                     input_dict=obj, scan_data=self, record_tags=record_tags)
                 if record_obj is None:
                     continue
             else:
                 record_obj = obj
 
+            # logging.getLogger(__name__).warning(
+            #    "Processing record of type %s" % type(record_obj))
             if isinstance(record_obj, Host):
 
                 # Get IP as unique index for map
@@ -753,8 +736,13 @@ class Record():
 
         return ret
 
+    def from_jsonsable(self, input_data_dict):
+        logging.getLogger(__name__).error(
+            f"from_jsonsable called on type: {type(self)}")
+        raise Exception('No jsonable method defined for the child object.')
+
     @staticmethod
-    def from_jsonsable(input_dict, scan_data=None, record_tags=set()):
+    def static_from_jsonsable(input_dict, scan_data=None, record_tags=set()):
         obj = None
         record_tags_inst = set(record_tags)
 
@@ -786,8 +774,8 @@ class Record():
             elif record_type == 'httpendpointdata':
                 obj = HttpEndpointData(
                     id=obj_id, parent_id=parent_id)
-            # elif record_type == 'screenshot':
-            #    obj = Screenshot(id=obj_id)
+            elif record_type == 'screenshot':
+                obj = Screenshot(id=obj_id)
             elif record_type == 'webcomponent':
                 obj = WebComponent(id=obj_id, parent_id=parent_id)
             elif record_type == 'vuln':
@@ -1005,6 +993,18 @@ class Screenshot(Record):
     def _data_to_jsonable(self):
         return {'screenshot': self.screenshot,
                 'image_hash': self.image_hash}
+
+    def from_jsonsable(self, input_data_dict):
+        try:
+
+            if 'screenshot' in input_data_dict:
+                self.screenshot = input_data_dict['screenshot']
+
+            if 'image_hash' in input_data_dict:
+                self.image_hash = input_data_dict['image_hash']
+
+        except Exception as e:
+            raise Exception('Invalid screenshot object: %s' % str(e))
 
 
 class HttpEndpoint(Record):

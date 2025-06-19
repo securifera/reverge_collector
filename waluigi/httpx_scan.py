@@ -442,8 +442,8 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                         screenshot_obj = screenshot_hash_map[image_hash_str]
                     else:
                         screenshot_obj = data_model.Screenshot()
-                        screenshot_obj.data = screenshot_bytes_b64
-                        screenshot_obj.data_hash = image_hash_str
+                        screenshot_obj.screenshot = screenshot_bytes_b64
+                        screenshot_obj.image_hash = image_hash_str
 
                         # Add to map and the object list
                         screenshot_hash_map[image_hash_str] = screenshot_obj

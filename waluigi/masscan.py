@@ -54,8 +54,13 @@ def get_mac_address(ip_address):
 
     future = scan_utils.executor.submit(
         scan_utils.process_wrapper, cmd_args=arp_cmd, store_output=True)
-    output_json = future.result()
-    output = output_json['stdout']
+
+    output = None
+    try:
+        output_json = future.result()
+        output = output_json['stdout']
+    except Exception:
+        pass
 
     if output:
         # Use regular expression to extract the MAC address

@@ -128,7 +128,7 @@ class PyshotScan(luigi.Task):
         future_map = {}
         for target_key in target_map:
 
-            query_arg = ""
+            query_arg = "/"
             target_obj_dict = target_map[target_key]
             port_obj = target_obj_dict['port_obj']
 
@@ -150,7 +150,7 @@ class PyshotScan(luigi.Task):
                 http_endpoint_obj_list = http_endpoint_port_id_map[port_id]
                 for http_endpoint_obj in http_endpoint_obj_list:
 
-                    query_arg = ""
+                    query_arg = "/"
                     domain_str = domain_str_orig
                     http_endpoint_data_id = None
                     host = ip_addr

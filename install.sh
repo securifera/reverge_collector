@@ -79,7 +79,7 @@ else
 fi 
 
 # install initial tools
-install_packages ca-certificates wget curl net-tools git screen jq unzip supervisor
+install_packages ca-certificates wget curl net-tools git screen jq unzip supervisor gnupg apt-transport-https
 
 openssl s_client -showcerts -connect google.com:443 < /dev/null | sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' > ca.crt
 sudo cp ca.crt /usr/local/share/ca-certificates/
@@ -122,10 +122,6 @@ cd nmap && sudo git checkout ssl_updates && sudo ./configure --without-ncat --wi
 cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o nuclei*.zip; sudo mv nuclei /usr/local/bin/ ; sudo rm nuclei*.zip
 sudo chmod +x /usr/local/bin/nuclei
 
-# Install nuclei templates
-#cd /opt
-#sudo git clone -c http.sslVerify=false https://github.com/securifera/nuclei-templates.git
-
 # Screenshot dependencies
 install_packages fonts-liberation libgbm1 libappindicator3-1 openssl libasound2
 
@@ -160,3 +156,15 @@ sudo git clone -c http.sslVerify=false https://github.com/danielmiessler/SecList
 
 # Badsecrets
 python3 -m pip install badsecrets
+
+# Install Google Chrome
+wget -O /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+apt-get install -y /tmp/google-chrome-stable_current_amd64.deb
+rm -f /tmp/google-chrome-stable_current_amd64.deb
+
+# Install Webcap
+cd /tmp
+git clone -c http.sslVerify=false https://github.com/securifera/webcap.git
+cd webcap 
+python3 -m build
+python3 -m pip install dist/webcap*.whl
