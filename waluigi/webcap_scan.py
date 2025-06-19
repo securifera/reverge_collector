@@ -61,11 +61,13 @@ async def webcap_asyncio(future_map):
 
         # take a screenshot
         webscreenshot = await browser.screenshot(url)
-        url_entry['url'] = url
-        url_entry['image_data'] = base64.b64encode(webscreenshot.blob).decode()
-        url_entry['status_code'] = webscreenshot.status_code
-        url_entry['title'] = webscreenshot.title
-        ret_list.append(url_entry)
+        if webscreenshot:
+            url_entry['url'] = url
+            url_entry['image_data'] = base64.b64encode(
+                webscreenshot.blob).decode()
+            url_entry['status_code'] = webscreenshot.status_code
+            url_entry['title'] = webscreenshot.title
+            ret_list.append(url_entry)
 
     # stop the browser
     await browser.stop()
