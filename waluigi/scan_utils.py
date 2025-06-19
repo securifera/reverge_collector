@@ -39,22 +39,23 @@ class ThreadExecutorWrapper():
             task_id = self.futures_map.pop(future, None)
 
         if task_id is None:
-            logger.warning("Future not found in the map.")
+            logging.getLogger(__name__).warning("Future not found in the map.")
             return
 
         try:
             result = future.result()
             # with self.lock:
             #    self.results.append((task_id, result))
-            # logger.debug(f"Task {task_id} completed with result: {result}")
-            logger.debug(f"Task {task_id} completed")
+            # logging.getLogger(__name__).debug(f"Task {task_id} completed with result: {result}")
+            logging.getLogger(__name__).debug(f"Task {task_id} completed")
 
         except Exception as e:
             tb = traceback.format_exc()
             # with self.lock:
             #    self.exceptions.append((task_id, e, tb))
-            logger.debug(f"Task {task_id} raised an exception: {e}")
-            logger.debug(f"Traceback:\n{tb}")
+            logging.getLogger(__name__).debug(
+                f"Task {task_id} raised an exception: {e}")
+            logging.getLogger(__name__).debug(f"Traceback:\n{tb}")
 
     def submit(self, fn, *args, **kwargs):
 
@@ -76,7 +77,7 @@ class ThreadExecutorWrapper():
         :param wait: If True, wait for all pending futures to finish.
         """
         self.executor.shutdown(wait=wait)
-        logger.debug("Executor has been shut down.")
+        logging.getLogger(__name__).debug("Executor has been shut down.")
 
 
 class ProcessStreamReader(Thread):
@@ -104,12 +105,12 @@ class ProcessStreamReader(Thread):
             with pipe:
                 for line in iter(pipe.readline, b''):
                     if self.print_output:
-                        logger.debug(line.decode())
+                        logging.getLogger(__name__).debug(line.decode())
 
                     self.queue(line)
 
         except Exception as e:
-            logger.error("Exception: " + str(e))
+            logging.getLogger(__name__).error("Exception: " + str(e))
             pass
         finally:
             self.queue(None)
@@ -124,7 +125,8 @@ class ProcessStreamReader(Thread):
 
             output_str = output_bytes.decode()
         except Exception as e:
-            logger.error("Error getting process output: %s" % str(e))
+            logging.getLogger(__name__).error(
+                "Error getting process output: %s" % str(e))
 
         return output_str
 
@@ -135,7 +137,7 @@ def execution_time(f):
         start_time = int(time.time())
         result = f(*args, **kwargs)
         end_time = int(time.time())
-        logger.debug(
+        logging.getLogger(__name__).debug(
             f"Execution time of '{f.__name__}': {end_time-start_time} seconds")
         return result
 
@@ -156,7 +158,7 @@ def get_url_port(url):
 
         return port_int
     except Exception as e:
-        logger.error("Invalid URL")
+        logging.getLogger(__name__).error("Invalid URL")
         return port_int
 
 
@@ -269,7 +271,7 @@ def init_tool_folder(tool_name, desc, scan_id):
 
 def process_wrapper(cmd_args, use_shell=False, my_env=None, print_output=False, store_output=False, pid_callback=None):
 
-    logger.debug("Executing '%s'" % str(cmd_args))
+    logging.getLogger(__name__).debug("Executing '%s'" % str(cmd_args))
     pipe_type = subprocess.DEVNULL
     if store_output:
         pipe_type = subprocess.PIPE
@@ -330,7 +332,7 @@ def parse_json_blob_file(output_file):
                 try:
                     obj, pos = decoder.raw_decode(data, pos)
                 except JSONDecodeError:
-                    logger.error("JSON decoding error")
+                    logging.getLogger(__name__).error("JSON decoding error")
                     break
 
                 # Add object

@@ -72,14 +72,15 @@ class Module(data_model.WaluigiTool):
                         scheduled_scan_obj)
 
                 if not ret:
-                    logger.error("[-] Module Scan Failed")
+                    logging.getLogger(__name__).error("[-] Module Scan Failed")
                     ret_val = False
 
                 # Reset values
                 scheduled_scan_obj.current_tool = module_tool
 
             else:
-                logger.error("Tool id not found %s" % tool_id)
+                logging.getLogger(__name__).error(
+                    "Tool id not found %s" % tool_id)
 
         # Restore scope object
         scheduled_scan_obj.scan_data = scope_obj
@@ -119,7 +120,7 @@ class Module(data_model.WaluigiTool):
                 scheduled_scan_obj.current_tool = tool_obj
 
                 # tool_name = tool_obj.name
-                logger.debug("Tool name: %s" % tool_name)
+                logging.getLogger(__name__).debug("Tool name: %s" % tool_name)
 
                 ret = None
                 scheduled_scan_obj.current_tool = tool_obj
@@ -134,7 +135,7 @@ class Module(data_model.WaluigiTool):
                     ret = nuclei_scan.Nuclei.nuclei_import(scheduled_scan_obj)
 
                 if not ret:
-                    logger.error("Module Import Failed")
+                    logging.getLogger(__name__).error("Module Import Failed")
                     ret_val = False
 
                 # Reset values

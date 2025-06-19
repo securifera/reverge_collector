@@ -23,8 +23,6 @@ import luigi
 import zlib
 
 
-logger = logging.getLogger(__name__)
-
 # User Agent
 custom_user_agent = "Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; AS; rv:11.0) like Gecko"
 
@@ -319,10 +317,10 @@ class ScheduledScanThread(threading.Thread):
 
         if self._enabled:
             self._enabled = False
-            logger.debug("Scan poller disabled.")
+            logging.getLogger(__name__).debug("Scan poller disabled.")
         else:
             self._enabled = True
-            logger.debug("Scan poller enabled.")
+            logging.getLogger(__name__).debug("Scan poller enabled.")
 
     def execute_scan_jobs(self, scheduled_scan_obj: ScheduledScan):
 
@@ -340,7 +338,7 @@ class ScheduledScanThread(threading.Thread):
         # Connect to extender to see if scan has been cancelled and get tool scope
         if self.connection_manager and self.connection_manager.connect_to_extender() == False:
             err_msg = "Failed connecting to extender"
-            logger.error(err_msg)
+            logging.getLogger(__name__).error(err_msg)
             return err_msg
 
         ret_status = None
@@ -369,7 +367,7 @@ class ScheduledScanThread(threading.Thread):
                     scheduled_scan_obj.scan_id)
                 if scan_status is None or scan_status.scan_status == ScanStatus.CANCELLED.value:
                     err_msg = "Scan cancelled or doesn't exist"
-                    logger.debug(err_msg)
+                    logging.getLogger(__name__).debug(err_msg)
                     # Clean up the directory
                     scan_cleanup.scan_cleanup_func(scheduled_scan_obj.id)
                     return err_msg
@@ -390,7 +388,7 @@ class ScheduledScanThread(threading.Thread):
 
                     if self.connection_manager and self.connection_manager.connect_to_target() == False:
                         err_msg = "Failed connecting to target"
-                        logger.error(err_msg)
+                        logging.getLogger(__name__).error(err_msg)
                         return err_msg
 
                     try:
@@ -398,14 +396,15 @@ class ScheduledScanThread(threading.Thread):
                         # Execute scan func
                         if self.recon_manager.scan_func(scheduled_scan_obj) == False:
                             err_msg = "Scan function failed"
-                            logger.debug(err_msg)
+                            logging.getLogger(__name__).debug(err_msg)
                             ret_status = CollectionToolStatus.ERROR.value
                             break
 
                     except Exception as e:
                         err_msg = "Error calling scan function: %s" % str(e)
-                        logger.error(err_msg)
-                        logger.debug(traceback.format_exc())
+                        logging.getLogger(__name__).error(err_msg)
+                        logging.getLogger(__name__).debug(
+                            traceback.format_exc())
                         ret_status = CollectionToolStatus.ERROR.value
                         break
                     finally:
@@ -419,22 +418,22 @@ class ScheduledScanThread(threading.Thread):
                             collection_tool_inst.id, ret_status, err_msg)
                         if self.connection_manager and self.connection_manager.connect_to_extender() == False:
                             err_msg = "Failed connecting to extender"
-                            logger.error(err_msg)
+                            logging.getLogger(__name__).error(err_msg)
                             return err_msg
 
                 # Import results
                 try:
                     if self.recon_manager.import_func(scheduled_scan_obj) == False:
                         err_msg = "Import function failed"
-                        logger.debug(err_msg)
+                        logging.getLogger(__name__).debug(err_msg)
                         ret_status = CollectionToolStatus.ERROR.value
                         break
                     else:
                         ret_status = CollectionToolStatus.COMPLETED.value
                 except Exception as e:
                     err_msg = "Error calling import function: %s" % str(e)
-                    logger.error(err_msg)
-                    logger.debug(traceback.format_exc())
+                    logging.getLogger(__name__).error(err_msg)
+                    logging.getLogger(__name__).debug(traceback.format_exc())
                     ret_status = CollectionToolStatus.ERROR.value
                     break
 
@@ -471,8 +470,8 @@ class ScheduledScanThread(threading.Thread):
                     self.checkin_interval = poll_interval
 
         except Exception as e:
-            logger.error("Error: %s" % str(e))
-            logger.debug(traceback.format_exc())
+            logging.getLogger(__name__).error("Error: %s" % str(e))
+            logging.getLogger(__name__).debug(traceback.format_exc())
 
     def process_scan_obj(self, scheduled_scan_obj):
 
@@ -486,7 +485,8 @@ class ScheduledScanThread(threading.Thread):
 
             # Set status
             if self.connection_manager and self.connection_manager.connect_to_extender() == False:
-                logger.error("Failed connecting to extender")
+                logging.getLogger(__name__).error(
+                    "Failed connecting to extender")
                 return False
 
             if err_msg is None:
@@ -497,8 +497,8 @@ class ScheduledScanThread(threading.Thread):
                 scheduled_scan_obj.cleanup()
 
         except Exception as e:
-            logger.error("Error executing scan job")
-            logger.debug(traceback.format_exc())
+            logging.getLogger(__name__).error("Error executing scan job")
+            logging.getLogger(__name__).debug(traceback.format_exc())
 
         with self.scan_thread_lock:
             # Update scan status with a small delay to make sure the db flushes on the server side
@@ -521,7 +521,7 @@ class ScheduledScanThread(threading.Thread):
 
                     self.exit_event.wait(self.checkin_interval)
                     if self._enabled:
-                        # logger.debug("Checking for any scheduled scans")
+                        # logging.getLogger(__name__).debug("Checking for any scheduled scans")
                         lock_val = None
                         try:
 
@@ -530,11 +530,11 @@ class ScheduledScanThread(threading.Thread):
                                 if lock_val:
                                     ret_val = self.connection_manager.connect_to_extender()
                                     if ret_val == False:
-                                        logger.error(
+                                        logging.getLogger(__name__).error(
                                             "Failed connecting to extender")
                                         continue
                                 else:
-                                    logger.debug(
+                                    logging.getLogger(__name__).debug(
                                         "Connection lock is currently held. Retrying later")
                                     continue
 
@@ -578,7 +578,8 @@ class ScheduledScanThread(threading.Thread):
 
                                         # Check if scan is cancelled
                                         if status_obj is None or status_obj.scan_status == ScanStatus.CANCELLED.value:
-                                            logger.debug("Scan cancelled")
+                                            logging.getLogger(__name__).debug(
+                                                "Scan cancelled")
                                             scheduled_scan_obj.kill_scan_processes()
                                         else:
 
@@ -591,10 +592,12 @@ class ScheduledScanThread(threading.Thread):
                                                     cancelled_tool_ids)
 
                         except requests.exceptions.ConnectionError as e:
-                            logger.error("Unable to connect to server.")
+                            logging.getLogger(__name__).error(
+                                "Unable to connect to server.")
                             pass
                         except Exception as e:
-                            logger.debug(traceback.format_exc())
+                            logging.getLogger(__name__).debug(
+                                traceback.format_exc())
                             pass
                         finally:
                             # Release the lock if we have it
@@ -650,7 +653,7 @@ class ReconManager:
         # Send interfaces & tools
         ret_obj = self.update_collector(collector_data)
         if ret_obj:
-            # logger.debug("Collector data: %s" % ret_obj)
+            # logging.getLogger(__name__).debug("Collector data: %s" % ret_obj)
             if 'tool_name_id_map' in ret_obj:
                 tool_name_id_map = ret_obj['tool_name_id_map']
                 if len(tool_name_id_map) > 0:
@@ -660,7 +663,7 @@ class ReconManager:
                         if tool_name in tool_name_inst_map:
                             self.waluigi_tool_map[tool_id_hex] = tool_name_inst_map[tool_name]
                         else:
-                            logger.debug(
+                            logging.getLogger(__name__).debug(
                                 "%s tool not found in tool name instance map." % tool_name)
                     return
 
@@ -681,7 +684,8 @@ class ReconManager:
             ret_val = tool_inst.scan_func(scan_input)
 
         else:
-            logger.debug("%s tool does not exist in table." % tool_id)
+            logging.getLogger(__name__).warning(
+                "%s tool does not exist in table." % tool_id)
 
         return ret_val
 
@@ -697,7 +701,8 @@ class ReconManager:
             ret_val = tool_inst.import_func(scan_input)
 
         else:
-            logger.debug(f"Error: {tool_id} tool does not exist in table.")
+            logging.getLogger(__name__).debug(
+                f"Error: {tool_id} tool does not exist in table.")
 
         return ret_val
 
@@ -774,7 +779,8 @@ class ReconManager:
                     ciphertext, tag)
                 data = zlib.decompress(compressed_data)
             except Exception as e:
-                logger.error("Error decrypting response: %s" % str(e))
+                logging.getLogger(__name__).error(
+                    "Error decrypting response: %s" % str(e))
 
                 # Attempting to decrypt from the session key on disk
                 session_key = self._get_session_key_from_disk()
@@ -787,7 +793,7 @@ class ReconManager:
                         self.session_key = session_key
                         return data
                     except Exception as e:
-                        logger.error(
+                        logging.getLogger(__name__).error(
                             "Error decrypting response with session from disk. Refreshing session: %s" % str(e))
 
                 # Remove the previous session file
@@ -806,7 +812,7 @@ class ReconManager:
             with open("session", "r") as file_fd:
                 hex_session = file_fd.read().strip()
 
-            # logger.debug("Session Key File Exists. Key: %s" % hex_session)
+            # logging.getLogger(__name__).debug("Session Key File Exists. Key: %s" % hex_session)
 
             session_key = binascii.unhexlify(hex_session)
 
@@ -828,7 +834,7 @@ class ReconManager:
         r = requests.post('%s/api/session' % self.manager_url, headers=self.headers, json={"data": b64_val},
                           verify=False)
         if r.status_code != 200:
-            logger.error("Error retrieving session key.")
+            logging.getLogger(__name__).error("Error retrieving session key.")
             raise SessionException()
 
         if r.content:
@@ -855,7 +861,8 @@ class ReconManager:
         if r.status_code == 404:
             return subnets
         if r.status_code != 200:
-            logger.error("Unknown Error retriving subnets")
+            logging.getLogger(__name__).error(
+                "Unknown Error retriving subnets")
             return subnets
 
         if r.content:
@@ -866,8 +873,9 @@ class ReconManager:
                 subnet_obj_arr = json.loads(
                     data, object_hook=lambda d: SimpleNamespace(**d))
             except Exception as e:
-                logger.error("Error retrieving subnets: %s" % str(e))
-                logger.debug(traceback.format_exc())
+                logging.getLogger(__name__).error(
+                    "Error retrieving subnets: %s" % str(e))
+                logging.getLogger(__name__).debug(traceback.format_exc())
                 return subnets
 
             if subnet_obj_arr:
@@ -886,7 +894,8 @@ class ReconManager:
         if r.status_code == 404:
             return wordlist
         if r.status_code != 200:
-            logger.error("Unknown Error retrieving wordlist")
+            logging.getLogger(__name__).error(
+                "Unknown Error retrieving wordlist")
             return wordlist
 
         if r.content:
@@ -895,8 +904,9 @@ class ReconManager:
                 data = self._decrypt_json(content)
                 wordlist = json.loads(data)
             except Exception as e:
-                logger.error("Error retrieving wordlist: %s" % str(e))
-                logger.debug(traceback.format_exc())
+                logging.getLogger(__name__).error(
+                    "Error retrieving wordlist: %s" % str(e))
+                logging.getLogger(__name__).debug(traceback.format_exc())
                 return wordlist
 
         return wordlist
@@ -909,7 +919,8 @@ class ReconManager:
         if r.status_code == 404:
             return target_obj
         if r.status_code != 200:
-            logger.error("Unknown Error retrieving targets")
+            logging.getLogger(__name__).error(
+                "Unknown Error retrieving targets")
             return target_obj
 
         if r.content:
@@ -920,8 +931,9 @@ class ReconManager:
                     target_obj = json.loads(
                         data, object_hook=lambda d: SimpleNamespace(**d))
             except Exception as e:
-                logger.error("Error retrieving target: %s" % str(e))
-                logger.debug(traceback.format_exc())
+                logging.getLogger(__name__).error(
+                    "Error retrieving target: %s" % str(e))
+                logging.getLogger(__name__).debug(traceback.format_exc())
 
         return target_obj
 
@@ -933,7 +945,7 @@ class ReconManager:
         if r.status_code == 404:
             return urls
         if r.status_code != 200:
-            logger.error("Unknown Error retrieving urls")
+            logging.getLogger(__name__).error("Unknown Error retrieving urls")
             return urls
 
         if r.content:
@@ -944,8 +956,9 @@ class ReconManager:
                 url_obj_arr = json.loads(
                     data, object_hook=lambda d: SimpleNamespace(**d))
             except Exception as e:
-                logger.error("Error retrieving urls: %s" % str(e))
-                logger.debug(traceback.format_exc())
+                logging.getLogger(__name__).error(
+                    "Error retrieving urls: %s" % str(e))
+                logging.getLogger(__name__).debug(traceback.format_exc())
                 return urls
 
             if url_obj_arr:
@@ -963,7 +976,8 @@ class ReconManager:
         if r.status_code == 404:
             return sched_scan_arr
         elif r.status_code != 200:
-            logger.error("Unknown Error retrieving scheduled scans")
+            logging.getLogger(__name__).error(
+                "Unknown Error retrieving scheduled scans")
             return sched_scan_arr
 
         if r.content:
@@ -974,8 +988,9 @@ class ReconManager:
                     sched_scan_arr = json.loads(
                         data, object_hook=lambda d: SimpleNamespace(**d))
             except Exception as e:
-                logger.error("Error retrieving scheduled scans: %s" % str(e))
-                logger.debug(traceback.format_exc())
+                logging.getLogger(__name__).error(
+                    "Error retrieving scheduled scans: %s" % str(e))
+                logging.getLogger(__name__).debug(traceback.format_exc())
 
         return sched_scan_arr
 
@@ -991,7 +1006,8 @@ class ReconManager:
         if r.status_code == 404:
             return settings
         elif r.status_code != 200:
-            logger.error("Unknown Error retrieving collector settings")
+            logging.getLogger(__name__).error(
+                "Unknown Error retrieving collector settings")
             return settings
 
         if r.content:
@@ -1001,9 +1017,9 @@ class ReconManager:
                 if data:
                     settings = json.loads(data)
             except Exception as e:
-                logger.error(
+                logging.getLogger(__name__).error(
                     "Error retrieving collector settings: %s" % str(e))
-                logger.debug(traceback.format_exc())
+                logging.getLogger(__name__).debug(traceback.format_exc())
 
         return settings
 
@@ -1015,7 +1031,7 @@ class ReconManager:
         if r.status_code == 404:
             return sched_scan
         elif r.status_code != 200:
-            logger.error("Unknown Error retrieving scan")
+            logging.getLogger(__name__).error("Unknown Error retrieving scan")
             return sched_scan
 
         if r.content:
@@ -1024,8 +1040,9 @@ class ReconManager:
                 data = self._decrypt_json(content)
                 sched_scan = json.loads(data)
             except Exception as e:
-                logger.error("Error retrieving scan: %s" % str(e))
-                logger.debug(traceback.format_exc())
+                logging.getLogger(__name__).error(
+                    "Error retrieving scan: %s" % str(e))
+                logging.getLogger(__name__).debug(traceback.format_exc())
 
         return sched_scan
 
@@ -1037,7 +1054,7 @@ class ReconManager:
         if r.status_code == 404:
             return scan_status
         elif r.status_code != 200:
-            logger.error("Unknown Error retrieving scan")
+            logging.getLogger(__name__).error("Unknown Error retrieving scan")
             return scan_status
 
         if r.content:
@@ -1047,8 +1064,9 @@ class ReconManager:
                 scan_status = json.loads(
                     data, object_hook=lambda d: SimpleNamespace(**d))
             except Exception as e:
-                logger.error("Error retrieving scan status: %s" % str(e))
-                logger.debug(traceback.format_exc())
+                logging.getLogger(__name__).error(
+                    "Error retrieving scan status: %s" % str(e))
+                logging.getLogger(__name__).debug(traceback.format_exc())
 
         return scan_status
 
@@ -1060,7 +1078,7 @@ class ReconManager:
         if r.status_code == 404:
             return port_arr
         elif r.status_code != 200:
-            logger.error("Unknown Error retrieving hosts")
+            logging.getLogger(__name__).error("Unknown Error retrieving hosts")
             return port_arr
 
         if r.content:
@@ -1070,8 +1088,9 @@ class ReconManager:
                 port_arr = json.loads(
                     data, object_hook=lambda d: SimpleNamespace(**d))
             except Exception as e:
-                logger.error("Error retrieving hosts: %s" % str(e))
-                logger.debug(traceback.format_exc())
+                logging.getLogger(__name__).error(
+                    "Error retrieving hosts: %s" % str(e))
+                logging.getLogger(__name__).debug(traceback.format_exc())
 
         return port_arr
 
@@ -1083,7 +1102,7 @@ class ReconManager:
         if r.status_code == 404:
             return tool_obj_arr
         elif r.status_code != 200:
-            logger.error("Unknown Error retrieving tools")
+            logging.getLogger(__name__).error("Unknown Error retrieving tools")
             return tool_obj_arr
 
         if r.content:
@@ -1093,8 +1112,9 @@ class ReconManager:
                 tool_obj_arr = json.loads(
                     data, object_hook=lambda d: SimpleNamespace(**d))
             except Exception as e:
-                logger.error("Error retrieving tools: %s" % str(e))
-                logger.debug(traceback.format_exc())
+                logging.getLogger(__name__).error(
+                    "Error retrieving tools: %s" % str(e))
+                logging.getLogger(__name__).debug(traceback.format_exc())
 
         return tool_obj_arr
 
@@ -1115,8 +1135,9 @@ class ReconManager:
                 data = self._decrypt_json(content)
                 ret_obj = json.loads(data)
             except Exception as e:
-                logger.error("Error retrieving collector data: %s" % str(e))
-                logger.debug(traceback.format_exc())
+                logging.getLogger(__name__).error(
+                    "Error retrieving collector data: %s" % str(e))
+                logging.getLogger(__name__).debug(traceback.format_exc())
 
         return ret_obj
 
@@ -1142,7 +1163,8 @@ class ReconManager:
         if r.status_code == 404:
             return status
         if r.status_code != 200:
-            logger.error("Unknown Error retrieving tool status")
+            logging.getLogger(__name__).error(
+                "Unknown Error retrieving tool status")
             return status
 
         if r.content:
@@ -1154,8 +1176,9 @@ class ReconManager:
                         data, object_hook=lambda d: SimpleNamespace(**d))
                     status = tool_inst.status
             except Exception as e:
-                logger.error("Error retrieving tool status: %s" % str(e))
-                logger.debug(traceback.format_exc())
+                logging.getLogger(__name__).error(
+                    "Error retrieving tool status: %s" % str(e))
+                logging.getLogger(__name__).debug(traceback.format_exc())
 
         return status
 
@@ -1219,8 +1242,9 @@ class ReconManager:
                 if data:
                     record_arr = json.loads(data)
             except Exception as e:
-                logger.error("Error retrieving import response: %s" % str(e))
-                logger.debug(traceback.format_exc())
+                logging.getLogger(__name__).error(
+                    "Error retrieving import response: %s" % str(e))
+                logging.getLogger(__name__).debug(traceback.format_exc())
 
         return record_arr
 

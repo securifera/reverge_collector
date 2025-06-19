@@ -296,7 +296,8 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
             data = file_fd.read()
 
         if len(data) == 0:
-            logger.error("Httpx scan output file is empty")
+            logging.getLogger(__name__).error(
+                "Httpx scan output file is empty")
             return
 
         hash_alg = hashlib.sha1
@@ -530,7 +531,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
 
                 endpoint_domain_id = None
                 if cert_obj and domain_used in cert_obj.domain_name_id_map:
-                    # logger.debug("Found domain in cert: %s" % domain_used)
+                    # logging.getLogger(__name__).debug("Found domain in cert: %s" % domain_used)
                     endpoint_domain_id = cert_obj.domain_name_id_map[domain_used]
 
                 # Add http component

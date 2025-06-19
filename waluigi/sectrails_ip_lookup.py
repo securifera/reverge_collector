@@ -49,8 +49,9 @@ def request_wrapper(ip_addr, api_key):
             time.sleep(1)
             continue
         elif r.status_code != 200:
-            logger.debug("Status code: %d" % r.status_code)
-            logger.debug(r.text)
+            logging.getLogger(__name__).debug(
+                "Status code: %d" % r.status_code)
+            logging.getLogger(__name__).debug(r.text)
             raise RuntimeError("[-] Error getting securitytrails output.")
         break
 
@@ -98,7 +99,8 @@ class SecTrailsIPLookupScan(luigi.Task):
 
             target_map = scheduled_scan_obj.scan_data.host_port_obj_map
             if len(target_map) == 0:
-                logger.debug("No target map in scan input")
+                logging.getLogger(__name__).debug(
+                    "No target map in scan input")
 
             for target_key in target_map:
 
@@ -129,9 +131,10 @@ class SecTrailsIPLookupScan(luigi.Task):
                     # Add any domains
                     host_dict['domains'] = ret_dict['domains']
             else:
-                logger.error("No target map in scan input")
+                logging.getLogger(__name__).error(
+                    "No target map in scan input")
         else:
-            logger.error("No api key in scan input")
+            logging.getLogger(__name__).error("No api key in scan input")
 
         results_dict = {'ip_to_host_dict_map': ip_to_host_dict_map}
 

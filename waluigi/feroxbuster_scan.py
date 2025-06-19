@@ -126,7 +126,8 @@ class FeroxScan(luigi.Task):
                     socket.gethostbyname(domain_str).strip()
                     ip_addr = domain_str
                 except Exception:
-                    logger.error("Exception resolving domain: %s" % domain_str)
+                    logging.getLogger(__name__).error(
+                        "Exception resolving domain: %s" % domain_str)
                     continue
 
                 queue_url(url_to_id_map, ip_addr, port_str,

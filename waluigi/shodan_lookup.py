@@ -71,8 +71,8 @@ class ShodanScope(luigi.ExternalTask):
             host_str = "%s/32" % (host_obj.ipv4_addr)
             target_list.append(host_str)
 
-        logger.debug("[+] Retrieved %d subnets from database" %
-                     len(target_list))
+        logging.getLogger(__name__).debug("[+] Retrieved %d subnets from database" %
+                                          len(target_list))
         imput_data = {'host_list': target_list}
         json_data = json.dumps(imput_data)
 
@@ -98,7 +98,8 @@ def shodan_dns_query(api, domain):
             if "invalid api key" in err_msg:
                 raise e
             if "no information" not in err_msg:
-                logger.error("Shodan API Error DNS: %s" % err_msg)
+                logging.getLogger(__name__).error(
+                    "Shodan API Error DNS: %s" % err_msg)
             break
 
     # Grab the host information for any IP records that were returned
@@ -114,7 +115,7 @@ def shodan_dns_query(api, domain):
 
 def shodan_host_query(api, ip):
 
-    # logger.error("Shodan Host Query: %s" % ip)
+    # logging.getLogger(__name__).error("Shodan Host Query: %s" % ip)
     service_list = []
     while True:
         try:
@@ -130,7 +131,8 @@ def shodan_host_query(api, ip):
             if "invalid api key" in err_msg:
                 raise e
             if "no information" not in err_msg:
-                logger.error("Shodan API Error Host: %s" % err_msg)
+                logging.getLogger(__name__).error(
+                    "Shodan API Error Host: %s" % err_msg)
             break
 
     return service_list
@@ -157,7 +159,8 @@ def shodan_subnet_query(api, subnet, cidr):
             if "invalid api key" in err_msg:
                 raise e
             if "no information" not in err_msg:
-                logger.error("[-] Shodan API Error Subnet: %s" % err_msg)
+                logging.getLogger(__name__).error(
+                    "[-] Shodan API Error Subnet: %s" % err_msg)
             break
 
     return service_list
@@ -272,15 +275,14 @@ class ShodanScan(luigi.Task):
                 # ip_subnets.extend(dns_ip_arr)
 
                 # Attempt to consolidate subnets to reduce the number of shodan calls
-                logger.debug("Consolidating subnets queried by Shodan")
+                logging.getLogger(__name__).debug(
+                    "Consolidating subnets queried by Shodan")
 
                 if len(ip_subnets) > 50:
-                    # logger.debug("CIDRS Before: %d" % len(ip_subnets))
                     ip_subnets = reduce_subnets(ip_subnets)
-                    # logger.debug("CIDRS After: %d" % len(ip_subnets))
 
                 # Get the shodan key
-                # logger.debug("Retrieving Shodan data")
+                # logging.getLogger(__name__).debug("Retrieving Shodan data")
 
                 futures = []
                 for subnet in ip_subnets:
@@ -319,7 +321,7 @@ class ShodanScan(luigi.Task):
                 f.write(json.dumps(output_data))
 
         else:
-            logger.error("No shodan API key provided.")
+            logging.getLogger(__name__).error("No shodan API key provided.")
             raise Exception("No shodan API key provided")
 
 

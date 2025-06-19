@@ -155,7 +155,7 @@ def dns_wrapper(domain_set):
 
                 # Add to the list
                 ret_list.append(ip_domain_map)
-                # logger.debug("Adding IP %s for hostname %s" %
+                # logging.getLogger(__name__).debug("Adding IP %s for hostname %s" %
                 #            (ip_str, domain_str))
         except Exception:
             continue
