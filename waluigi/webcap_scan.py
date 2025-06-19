@@ -20,7 +20,7 @@ future_map = {}
 class Webcap(data_model.WaluigiTool):
 
     def __init__(self):
-        self.name = 'pyshot'
+        self.name = 'webcap'
         self.description = 'A python library that can be used for taking screenshots of web pages using Chrome and Webcap.'
         self.project_url = 'https://github.com/blacklanternsecurity/webcap'
         self.collector_type = data_model.CollectorType.ACTIVE.value
