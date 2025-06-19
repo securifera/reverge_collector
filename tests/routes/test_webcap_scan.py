@@ -14,7 +14,7 @@ def test_webcap_success(recon_manager):
     scan_id = 'f35c684c61da412c8aaf7d386540f668'
     scheduled_scan_id = 'f35c684c61da412c8aaf7d386540f663'
     tool_inst = {'id': 'a9866b94f7104754bd161c1ab7cbf0cd', 'collection_tool': {'wordlists': [], 'name': 'webcap', 'args':
-                                                                               '', 'tool_type': 2, 'scan_order': 2, 'api_key': None, 'id': 'f35c684c61da412c8aaf7d386540f666'}, 'args_override': None,
+                                                                               '', 'tool_type': 2, 'scan_order': 2, 'api_key': None, 'id': 'f35c684c61da412c8aaf7d386540f668'}, 'args_override': None,
                  'enabled': 1, 'status': 0, 'status_message': None, 'collection_tool_id': 'f35c684c61da412c8aaf7d386540f668',
                  'scheduled_scan_id': 'f00e34cffce546edb2701096fc66da65', 'owner_id': '94cb514e85da4abea6ee227730328619'}
 
