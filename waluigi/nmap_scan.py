@@ -411,9 +411,10 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                     try:
                         nmap_report = NmapParser.parse_fromfile(nmap_out)
                     except Exception as e:
-                        logger.error(
+                        logging.getLogger(__name__).error(
                             "Failed parsing nmap output: %s" % nmap_out)
-                        logger.error(traceback.format_exc())
+                        logging.getLogger(__name__).error(
+                            traceback.format_exc())
 
                         try:
                             dir_path = os.path.dirname(meta_file)
@@ -604,7 +605,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                                                                         if "," in dns_name:
                                                                             dns_name = dns_name.split(",")[
                                                                                 0]
-                                                                        # logger.debug(
+                                                                        # logging.getLogger(__name__).debug(
                                                                         #    "Adding SAN: %s" % dns_name)
                                                                         domain_obj = cert_obj.add_domain(
                                                                             host_id, dns_name)

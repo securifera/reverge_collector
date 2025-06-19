@@ -53,8 +53,8 @@ def pyshot_wrapper(ip_addr, port, dir_path, ssl_val, port_id, query_arg="", doma
     domain_str = ''
     if domain:
         domain_str = domain
-    logger.debug("Running Pyshot scan on %s:%s%s (%s)" %
-                 (ip_addr, port, query_arg, domain_str))
+    logging.getLogger(__name__).debug("Running Pyshot scan on %s:%s%s (%s)" %
+                                      (ip_addr, port, query_arg, domain_str))
     pyshot_lib.take_screenshot(host=ip_addr, port_arg=port, query_arg=query_arg,
                                dest_dir=dir_path, secure=ssl_val, port_id=port_id, domain=domain, endpoint_id=http_endpoint_data_id)
 
@@ -119,11 +119,6 @@ class PyshotScan(luigi.Task):
         web_path_map = scope_obj.path_map
         domain_map = scope_obj.domain_map
         endpoint_data_endpoint_id_map = scope_obj.endpoint_data_endpoint_id_map
-
-        # logger.debug("[+] Running Pyshot scan on %s" %
-        #             str(target_map))
-        # logger.debug("[+] Running Pyshot scan on %s" %
-        #             str(domain_map))
 
         future_map = {}
         for target_key in target_map:
@@ -377,8 +372,10 @@ class ImportPyshotOutput(data_model.ImportToolXOutput):
             with open(tool_import_file, 'w') as import_fd:
                 import_fd.write(json.dumps(import_data_arr))
 
-            logger.debug("Imported %d screenshots to manager." % (count))
+            logging.getLogger(__name__).debug(
+                "Imported %d screenshots to manager." % (count))
 
         else:
 
-            logger.error("[-] Pyshot meta file does not exist.")
+            logging.getLogger(__name__).error(
+                "[-] Pyshot meta file does not exist.")

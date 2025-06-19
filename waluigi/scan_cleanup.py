@@ -67,7 +67,7 @@ class ScanCleanup(luigi.ExternalTask):
                 shutil.rmtree(dir_path)
 
             except Exception as e:
-                logger.error(
+                logging.getLogger(__name__).error(
                     "[-] Error deleting output directory: %s" % str(e))
                 pass
 

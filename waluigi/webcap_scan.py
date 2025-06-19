@@ -68,6 +68,9 @@ async def webcap_asyncio(future_map):
             url_entry['status_code'] = webscreenshot.status_code
             url_entry['title'] = webscreenshot.title
             ret_list.append(url_entry)
+        else:
+            logging.getLogger(__name__).warning(
+                f"Failed to take screenshot for {url}")
 
     # stop the browser
     await browser.stop()
@@ -129,6 +132,9 @@ class WebcapScan(luigi.Task):
         global future_map
         # Ensure output folder exists
         dir_path = os.path.dirname(self.output().path)
+
+        logging.getLogger(__name__).debug(
+            "WebcapScan started. Output directory: %s" % dir_path)
 
         scheduled_scan_obj = self.scan_input
 

@@ -55,7 +55,7 @@ def update_host_port_obj_map(scan_data, port_id, host_port_obj_map):
     if len(port_obj.tags.intersection(set(tag_list))) == 0:
         return
 
-    # logger.debug("Processing port: %s" % port_obj.to_jsonable())
+    # logging.getLogger(__name__).debug("Processing port: %s" % port_obj.to_jsonable())
     host_id = port_obj.parent.id
     if host_id in scan_data.host_map:
         host_obj = scan_data.host_map[host_id]
@@ -84,7 +84,7 @@ def update_host_port_obj_map(scan_data, port_id, host_port_obj_map):
                 host_port_obj_map[domain_port_str] = host_port_entry
 
     # else:
-    #    logger.debug("Host not found in map: %s" % host_id)
+    #    logging.getLogger(__name__).debug("Host not found in map: %s" % host_id)
 
 
 class CollectorType(enum.Enum):
@@ -198,30 +198,31 @@ class ImportToolXOutput(luigi.Task):
                 flat_obj = obj.to_jsonable()
                 import_arr.append(flat_obj)
 
-            # logger.debug("Imported:\n %s" % str(import_arr))
+            # logging.getLogger(__name__).debug("Imported:\n %s" % str(import_arr))
 
             # Import the results to the server
             updated_record_map = recon_manager.import_data(
                 scan_id, tool_id, import_arr)
 
-            # logger.debug("Returned map: %d" % len(updated_record_map))
+            # logging.getLogger(__name__).debug("Returned map: %d" % len(updated_record_map))
 
             updated_import_arr = update_scope_array(
                 record_map, updated_record_map)
 
-            # logger.debug("Updated scope")
+            # logging.getLogger(__name__).debug("Updated scope")
 
             # Write imported data to file
             tool_import_file = self.output().path
             with open(tool_import_file, 'w') as import_fd:
                 import_fd.write(json.dumps(updated_import_arr))
 
-            # logger.debug("Updating server")
+            # logging.getLogger(__name__).debug("Updating server")
 
             # Update the scan scope
             scheduled_scan_obj.scan_data.update(updated_import_arr)
         else:
-            logger.debug("No objects to import for scan %s" % scan_id)
+            logging.getLogger(__name__).warning(
+                "No objects to import for scan %s" % scan_id)
 
 
 def update_scope_array(record_map, updated_record_map=None):
@@ -690,7 +691,7 @@ class ScanData():
         self.module_map = {}
         self.component_name_module_map = {}
 
-        # logger.debug("Processing scan data\n %s" % scan_data)
+        # logging.getLogger(__name__).debug("Processing scan data\n %s" % scan_data)
         # Decode the port map
         if 'b64_port_bitmap' in scan_data and scan_data['b64_port_bitmap']:
             b64_port_bitmap = scan_data['b64_port_bitmap']
@@ -790,7 +791,8 @@ class Record():
             elif record_type == 'subnet':
                 obj = Subnet(id=obj_id)
             else:
-                logger.debug("Unknown record type: %s" % record_type)
+                logging.getLogger(__name__).debug(
+                    "Unknown record type: %s" % record_type)
                 return
 
             # Populate data
@@ -800,7 +802,7 @@ class Record():
                 obj.from_jsonsable(record_data)
 
         except Exception as e:
-            logger.error(traceback.format_exc())
+            logging.getLogger(__name__).error(traceback.format_exc())
             raise Exception('Invalid scan object: %s' % str(e))
 
         return obj
@@ -1222,10 +1224,10 @@ class CollectionModule(Record):
                             update_host_port_obj_map(
                                 self.scan_data, port_id, host_port_obj_map)
                 else:
-                    logger.debug(
+                    logging.getLogger(__name__).debug(
                         "Component key not found in component name port id map: %s" % component_key)
             else:
-                logger.debug(
+                logging.getLogger(__name__).debug(
                     "Component id not found in component map: %s" % component_id)
 
         return host_port_obj_map

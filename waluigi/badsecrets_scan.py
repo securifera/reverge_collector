@@ -65,7 +65,7 @@ def request_wrapper(url_obj):
     url = url_obj['url']
     output = ''
 
-    logger.debug("Scanning URL: %s" % url)
+    logging.getLogger(__name__).debug("Scanning URL: %s" % url)
     multiprocessing.log_to_stderr()
     headers = {
         'User-Agent': "Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; AS; rv:11.0) like Gecko"}
@@ -80,14 +80,15 @@ def request_wrapper(url_obj):
 
             break
         except Exception as e:
-            logger.error("Error scanning URL %s: %s" % (url, str(e)))
+            logging.getLogger(__name__).error(
+                "Error scanning URL %s: %s" % (url, str(e)))
             count += 1
             time.sleep(1)
             if count > 2:
                 break
 
     # if output:
-    #    logger.debug("Output for URL %s: %s" % (url, output))
+    #    logging.getLogger(__name__).debug("Output for URL %s: %s" % (url, output))
 
     url_obj['output'] = output
     return url_obj
@@ -185,7 +186,8 @@ class BadSecretsScan(luigi.Task):
                     futures.append(future_inst)
 
         else:
-            logger.debug("No targets to scan for BadSecrets")
+            logging.getLogger(__name__).debug(
+                "No targets to scan for BadSecrets")
 
         # If there are any futures, wait for them to complete
         if len(futures) > 0:

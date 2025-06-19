@@ -129,7 +129,7 @@ def get_masscan_input(scheduled_scan_obj):
             for target_inst in target_list:
                 mass_scan_fd.write(target_inst + '\n')
     else:
-        logger.error("Target list is empty")
+        logging.getLogger(__name__).error("Target list is empty")
 
     # Construct ports conf line
     port_line = "ports = "
@@ -228,7 +228,8 @@ class MasscanScan(luigi.Task):
             future.result()
 
         else:
-            logger.error("No targets to scan with masscan")
+            logging.getLogger(__name__).error(
+                "No targets to scan with masscan")
             with open(masscan_output_file_path, 'w') as f:
                 pass
 
@@ -293,11 +294,12 @@ class ImportMasscanOutput(data_model.ImportToolXOutput):
                         obj_arr.append(port_obj)
 
             except Exception as e:
-                logger.error('Masscan results parsing error: %s' % str(e))
+                logging.getLogger(__name__).error(
+                    'Masscan results parsing error: %s' % str(e))
                 os.remove(masscan_output_file)
                 raise e
         else:
-            logger.error(
+            logging.getLogger(__name__).error(
                 "Masscan output file is empty. Ensure inputs were provided.")
 
         # Import, Update, & Save

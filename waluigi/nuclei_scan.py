@@ -276,8 +276,8 @@ class ImportNucleiOutput(data_model.ImportToolXOutput):
                                 ret_arr.append(module_output_obj)
 
                         else:
-                            logger.debug("Endpoint not in map: %s %s" %
-                                         (endpoint, str(endpoint_port_obj_map)))
+                            logging.getLogger(__name__).debug("Endpoint not in map: %s %s" %
+                                                              (endpoint, str(endpoint_port_obj_map)))
 
         # Import, Update, & Save
         self.import_results(scheduled_scan_obj, ret_arr)

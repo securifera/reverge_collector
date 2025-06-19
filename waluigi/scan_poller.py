@@ -50,7 +50,7 @@ def setup_logging():
     queue_handler.setFormatter(formatter)
 
     logger = logging.getLogger()
-    logger.addHandler(queue_handler)
+    logging.getLogger(__name__).addHandler(queue_handler)
 
     return log_queue
 
