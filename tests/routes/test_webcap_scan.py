@@ -82,6 +82,7 @@ def test_webcap_scan_success(recon_manager):
                 assert 'image_data' in item
                 assert 'url' in item
                 assert 'status_code' in item
+                assert item['status_code'] != 0
                 assert 'title' in item
                 assert 'domain' in item
                 assert (

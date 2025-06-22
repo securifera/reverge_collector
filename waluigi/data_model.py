@@ -711,12 +711,13 @@ class ScanData():
 
 class Record():
 
-    def __init__(self, id=None, parent=None):
+    def __init__(self, id=None, parent=None, collection_tool_instance_id=None):
         self.id = id if id is not None else format(
             uuid.uuid4().int, 'x')
         self.parent = parent
         self.scan_data = None
         self.tags = set()
+        self.collection_tool_instance_id = collection_tool_instance_id
 
     def _data_to_jsonable(self):
         return None
@@ -732,6 +733,7 @@ class Record():
         ret['id'] = self.id
         ret['type'] = str(self.__class__.__name__).lower()
         ret['parent'] = parent_dict
+        ret['collection_tool_instance_id'] = self.collection_tool_instance_id
 
         ret['data'] = self._data_to_jsonable()
 
@@ -748,6 +750,7 @@ class Record():
         record_tags_inst = set(record_tags)
 
         obj_id = input_dict['id']
+
         record_data = input_dict['data']
         parent_id = None
         if 'parent' in input_dict:
@@ -797,6 +800,12 @@ class Record():
 
             # Populate data
             if obj:
+                if 'collection_tool_instance_id' in input_dict:
+                    obj.collection_tool_instance_id = input_dict['collection_tool_instance_id']
+                else:
+                    logging.getLogger(__name__).warning(
+                        "No collection tool instance ID found for record type: %s" % record_type)
+
                 obj.scan_data = scan_data
                 obj.tags.update(record_tags_inst)
                 obj.from_jsonsable(record_data)
@@ -1301,7 +1310,7 @@ class Certificate(Record):
         except Exception as e:
             raise Exception('Invalid module output object: %s' % str(e))
 
-    def add_domain(self, host_id, domain_str):
+    def add_domain(self, host_id, domain_str, collection_tool_instance_id):
 
         # If it's a wildcard
         if "*." in domain_str:
@@ -1316,6 +1325,7 @@ class Certificate(Record):
 
         if domain_str not in self.domain_name_id_map:
             domain_obj = Domain(parent_id=host_id)
+            domain_obj.collection_tool_instance_id = collection_tool_instance_id
             domain_obj.name = domain_str
 
             self.domain_name_id_map[domain_str] = domain_obj.id

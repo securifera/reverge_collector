@@ -333,6 +333,9 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
 
     def run(self):
 
+        scheduled_scan_obj = self.scan_input
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+
         shodan_output_file = self.input().path
         with open(shodan_output_file, 'r') as file_fd:
             data = file_fd.read()
@@ -356,6 +359,7 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
                         ip_object = netaddr.IPAddress(ip_int)
 
                         host_obj = data_model.Host(id=host_id)
+                        host_obj.collection_tool_instance_id = tool_instance_id
                         if ip_object.version == 4:
                             host_obj.ipv4_addr = str(ip_object)
                         elif ip_object.version == 6:
@@ -369,6 +373,7 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
                     port = service['port']
                     port_obj = data_model.Port(
                         parent_id=host_id)
+                    port_obj.collection_tool_instance_id = tool_instance_id
                     port_obj.proto = 0
                     port_obj.port = port
                     port_id = port_obj.id
@@ -396,6 +401,7 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
                                     # Get or create a domain object
                                     domain_obj = data_model.Domain(
                                         parent_id=host_id)
+                                    domain_obj.collection_tool_instance_id = tool_instance_id
                                     domain_obj.name = domain_str
 
                                     # Add domain
@@ -433,7 +439,7 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
 
                                         component_obj = data_model.WebComponent(
                                             parent_id=port_id)
-
+                                        component_obj.collection_tool_instance_id = tool_instance_id
                                         component_obj.name = server_tech
 
                                         # Add the version
@@ -459,7 +465,7 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
 
                                 component_obj = data_model.WebComponent(
                                     parent_id=port_id)
-
+                                component_obj.collection_tool_instance_id = tool_instance_id
                                 component_obj.name = component_name
 
                                 if 'versions' in components_dict_obj:
@@ -479,7 +485,7 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
                                 # Create a certificate object
                                 cert_obj = data_model.Certificate(
                                     parent_id=port_obj.id)
-
+                                cert_obj.collection_tool_instance_id = tool_instance_id
                                 if 'issued' in cert:
                                     issued = cert['issued']
                                     # Parse the time string into a datetime object in UTC
@@ -507,7 +513,7 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
                                         domain_str = subject['CN'].lower()
 
                                         domain_obj = cert_obj.add_domain(
-                                            host_id, domain_str)
+                                            host_id, domain_str, tool_instance_id)
                                         if domain_obj:
                                             ret_arr.append(domain_obj)
 
@@ -525,6 +531,7 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
                                 # Get or create a domain object
                                 domain_obj = data_model.Domain(
                                     parent_id=host_id)
+                                domain_obj.collection_tool_instance_id = tool_instance_id
                                 domain_obj.name = domain_name
 
                                 # Add domain
@@ -554,6 +561,7 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
                                     path_obj = path_hash_map[web_path_hash]
                                 else:
                                     path_obj = data_model.ListItem()
+                                    path_obj.collection_tool_instance_id = tool_instance_id
                                     path_obj.web_path = trimmed_path
                                     path_obj.web_path_hash = web_path_hash
 
@@ -566,6 +574,7 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
                         # Add http endpoint
                         http_endpoint_obj = data_model.HttpEndpoint(
                             parent_id=port_obj.id)
+                        http_endpoint_obj.collection_tool_instance_id = tool_instance_id
                         http_endpoint_obj.web_path_id = web_path_id
 
                         # Add the endpoint
@@ -573,6 +582,7 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
 
                         http_endpoint_data_obj = data_model.HttpEndpointData(
                             parent_id=http_endpoint_obj.id)
+                        http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
                         http_endpoint_data_obj.domain_id = endpoint_domain_id
                         http_endpoint_data_obj.title = title
                         http_endpoint_data_obj.status = status_code
