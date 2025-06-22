@@ -245,6 +245,8 @@ class ImportMasscanOutput(data_model.ImportToolXOutput):
 
         obj_arr = []
         masscan_output_file = self.input().path
+        scheduled_scan_obj = self.scan_input
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
 
         if os.path.isfile(masscan_output_file) and os.path.getsize(masscan_output_file) > 0:
 
@@ -266,6 +268,8 @@ class ImportMasscanOutput(data_model.ImportToolXOutput):
                         continue
 
                     host_obj = data_model.Host()
+                    host_obj.collection_tool_instance_id = tool_instance_id
+
                     if addr_type == 'ipv4':
                         host_obj.ipv4_addr = ip_addr
                     elif addr_type == 'ipv6':
@@ -287,6 +291,7 @@ class ImportMasscanOutput(data_model.ImportToolXOutput):
 
                         port_obj = data_model.Port(
                             parent_id=host_obj.id)
+                        port_obj.collection_tool_instance_id = tool_instance_id
                         port_obj.proto = proto
                         port_obj.port = port_id
 

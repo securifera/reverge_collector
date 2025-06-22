@@ -386,6 +386,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
     def run(self):
 
         scheduled_scan_obj = self.scan_input
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
         scope_obj = scheduled_scan_obj.scan_data
         tool_obj = scheduled_scan_obj.current_tool
         tool_id = tool_obj.id
@@ -409,7 +410,13 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                     nmap_out = nmap_scan_entry['output_file']
                     nmap_report = None
                     try:
-                        nmap_report = NmapParser.parse_fromfile(nmap_out)
+                        if os.path.exists(nmap_out) and os.path.getsize(nmap_out) > 0:
+                            nmap_report = NmapParser.parse_fromfile(nmap_out)
+                        else:
+                            logging.getLogger(__name__).warning(
+                                f"Skipping nmap output file {nmap_out}: file does not exist or is empty."
+                            )
+                            continue
                     except Exception as e:
                         logging.getLogger(__name__).error(
                             "Failed parsing nmap output: %s" % nmap_out)
@@ -455,6 +462,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                             ip_object = netaddr.IPAddress(host_ip)
 
                             host_obj = data_model.Host(id=host_id)
+                            host_obj.collection_tool_instance_id = tool_instance_id
                             if ip_object.version == 4:
                                 host_obj.ipv4_addr = str(ip_object)
                             elif ip_object.version == 6:
@@ -467,6 +475,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
 
                             port_obj = data_model.Port(
                                 parent_id=host_id, id=port_id)
+                            port_obj.collection_tool_instance_id = tool_instance_id
                             port_obj.proto = 0
                             port_obj.port = port_str
                             port_id = port_obj.id
@@ -483,6 +492,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
 
                                 domain_obj = data_model.Domain(
                                     parent_id=host_id)
+                                domain_obj.collection_tool_instance_id = tool_instance_id
                                 domain_obj.name = hostname
 
                                 # Add domain
@@ -504,7 +514,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                                         if len(component_name) > 0 and component_name != "unknown":
                                             component_obj = data_model.WebComponent(
                                                 parent_id=port_id)
-
+                                            component_obj.collection_tool_instance_id = tool_instance_id
                                             component_obj.name = component_name
                                             ret_arr.append(component_obj)
 
@@ -516,7 +526,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
 
                                         component_obj = data_model.WebComponent(
                                             parent_id=port_id)
-
+                                        component_obj.collection_tool_instance_id = tool_instance_id
                                         component_obj.name = component_name
 
                                         # Add the version
@@ -546,7 +556,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                                             # Create a certificate object
                                             cert_obj = data_model.Certificate(
                                                 parent_id=port_obj.id)
-
+                                            cert_obj.collection_tool_instance_id = tool_instance_id
                                             if 'elements' in script:
                                                 elements = script['elements']
                                                 if 'validity' in elements:
@@ -576,7 +586,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                                                     if 'commonName' in subject:
                                                         common_name = subject['commonName']
                                                         domain_obj = cert_obj.add_domain(
-                                                            host_id, common_name)
+                                                            host_id, common_name, tool_instance_id)
                                                         if domain_obj:
                                                             ret_arr.append(
                                                                 domain_obj)
@@ -608,7 +618,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                                                                         # logging.getLogger(__name__).debug(
                                                                         #    "Adding SAN: %s" % dns_name)
                                                                         domain_obj = cert_obj.add_domain(
-                                                                            host_id, dns_name)
+                                                                            host_id, dns_name, tool_instance_id)
                                                                         if domain_obj:
                                                                             ret_arr.append(
                                                                                 domain_obj)
@@ -620,6 +630,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                                             # Set to http if nmap detected http in a script
                                             component_obj = data_model.WebComponent(
                                                 parent_id=port_id)
+                                            component_obj.collection_tool_instance_id = tool_instance_id
                                             component_obj.name = 'http'
                                             ret_arr.append(component_obj)
 
@@ -642,6 +653,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                                                         if output_component.name in output.lower():
                                                             component_obj = data_model.WebComponent(
                                                                 parent_id=port_id)
+                                                            component_obj.collection_tool_instance_id = tool_instance_id
                                                             component_obj.name = output_component.name
                                                             ret_arr.append(
                                                                 component_obj)
@@ -650,6 +662,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                                                     args_str = "--script +%s" % script_id
                                                     module_obj = data_model.CollectionModule(
                                                         parent_id=tool_id)
+                                                    module_obj.collection_tool_instance_id = tool_instance_id
                                                     module_obj.name = script_id
                                                     module_obj.args = args_str
 
@@ -659,6 +672,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                                                 # Add module output
                                                 module_output_obj = data_model.CollectionModuleOutput(
                                                     parent_id=temp_module_id)
+                                                module_output_obj.collection_tool_instance_id = tool_instance_id
                                                 module_output_obj.data = output
                                                 module_output_obj.port_id = port_id
 

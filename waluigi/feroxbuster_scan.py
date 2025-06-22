@@ -215,6 +215,9 @@ class ImportFeroxOutput(data_model.ImportToolXOutput):
         path_hash_map = {}
         domain_name_id_map = {}
 
+        scheduled_scan_obj = self.scan_input
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+
         http_output_file = self.input().path
         with open(http_output_file, 'r') as file_fd:
             data = file_fd.read()
@@ -274,6 +277,7 @@ class ImportFeroxOutput(data_model.ImportToolXOutput):
                                             endpoint_domain_id = domain_name_id_map[domain_str]
                                         else:
                                             domain_obj = data_model.Domain()
+                                            domain_obj.collection_tool_instance_id = tool_instance_id
                                             domain_obj.name = domain_str
 
                                             # Add domain
@@ -289,6 +293,7 @@ class ImportFeroxOutput(data_model.ImportToolXOutput):
                                         path_obj = path_hash_map[web_path_hash]
                                     else:
                                         path_obj = data_model.ListItem()
+                                        path_obj.collection_tool_instance_id = tool_instance_id
                                         path_obj.web_path = web_path_str
                                         path_obj.web_path_hash = web_path_hash
 
@@ -301,6 +306,7 @@ class ImportFeroxOutput(data_model.ImportToolXOutput):
                                     # Create http endpoint
                                     http_endpoint_obj = data_model.HttpEndpoint(
                                         parent_id=port_id)
+                                    http_endpoint_obj.collection_tool_instance_id = tool_instance_id
                                     http_endpoint_obj.web_path_id = web_path_id
 
                                     # Add the endpoint
@@ -308,6 +314,7 @@ class ImportFeroxOutput(data_model.ImportToolXOutput):
 
                                     http_endpoint_data_obj = data_model.HttpEndpointData(
                                         parent_id=http_endpoint_obj.id)
+                                    http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
                                     http_endpoint_data_obj.domain_id = endpoint_domain_id
                                     http_endpoint_data_obj.status = status_code
 

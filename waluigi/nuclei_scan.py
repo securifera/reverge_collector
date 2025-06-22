@@ -187,6 +187,7 @@ class ImportNucleiOutput(data_model.ImportToolXOutput):
     def run(self):
 
         scheduled_scan_obj = self.scan_input
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
         scope_obj = scheduled_scan_obj.scan_data
 
         # Import the ports to the manager
@@ -230,6 +231,7 @@ class ImportNucleiOutput(data_model.ImportToolXOutput):
                                     # Add component
                                     component_obj = data_model.WebComponent(
                                         parent_id=port_id)
+                                    component_obj.collection_tool_instance_id = tool_instance_id
                                     component_obj.name = matcher_name
                                     ret_arr.append(component_obj)
 
@@ -238,6 +240,7 @@ class ImportNucleiOutput(data_model.ImportToolXOutput):
                                     # Add vuln
                                     vuln_obj = data_model.Vuln(
                                         parent_id=port_id)
+                                    vuln_obj.collection_tool_instance_id = tool_instance_id
                                     vuln_obj.name = template_id
                                     ret_arr.append(vuln_obj)
 
@@ -254,6 +257,7 @@ class ImportNucleiOutput(data_model.ImportToolXOutput):
                                         if output_component.name in str(nuclei_scan_result).lower():
                                             component_obj = data_model.WebComponent(
                                                 parent_id=port_id)
+                                            component_obj.collection_tool_instance_id = tool_instance_id
                                             component_obj.name = output_component.name
                                             ret_arr.append(
                                                 component_obj)
@@ -261,6 +265,7 @@ class ImportNucleiOutput(data_model.ImportToolXOutput):
                                     # Add collection module
                                     module_obj = data_model.CollectionModule(
                                         parent_id=tool_id)
+                                    module_obj.collection_tool_instance_id = tool_instance_id
                                     module_obj.name = template_id
                                     module_obj.args = module_args
 
@@ -270,6 +275,7 @@ class ImportNucleiOutput(data_model.ImportToolXOutput):
                                 # Add module output
                                 module_output_obj = data_model.CollectionModuleOutput(
                                     parent_id=module_id)
+                                module_output_obj.collection_tool_instance_id = tool_instance_id
                                 module_output_obj.data = nuclei_scan_result
                                 module_output_obj.port_id = port_id
 

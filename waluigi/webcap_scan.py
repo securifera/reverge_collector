@@ -29,6 +29,9 @@ class Webcap(data_model.WaluigiTool):
         self.scan_func = Webcap.webcap_scan_func
         self.import_func = Webcap.webcap_import
 
+        # Set logging higher for websockets to avoid too much output
+        logging.getLogger("websockets.client").setLevel(logging.WARNING)
+
     @staticmethod
     def webcap_scan_func(scan_input):
         luigi_run_result = luigi.build([WebcapScan(
@@ -50,7 +53,7 @@ async def webcap_asyncio(future_map):
 
     ret_list = []
     # create a browser instance
-    browser = Browser()
+    browser = Browser(timeout=5)
     # start the browser
     await browser.start()
 
@@ -61,7 +64,7 @@ async def webcap_asyncio(future_map):
 
         # take a screenshot
         webscreenshot = await browser.screenshot(url)
-        if webscreenshot:
+        if webscreenshot and webscreenshot.status_code != 0:
             url_entry['url'] = url
             url_entry['image_data'] = base64.b64encode(
                 webscreenshot.blob).decode()
@@ -210,18 +213,38 @@ class WebcapScan(luigi.Task):
 
             else:
 
-                # Add for IP address
-                queue_scan(ip_addr, port_str, secure, port_id,
-                           query_arg, domain_str_orig)
+                # For hosts without HTTP endpoints, let's try to confirm this is likely a web
+                # endpoint so we aren't trying to screencap regular ports
+                # First we'll check for the http component, next we'll check if it's port 80 or 443
+                likely_http = False
+                component_port_id_map = scope_obj.component_port_id_map
+                if port_id in component_port_id_map:
+                    component_obj_list = component_port_id_map[port_id]
+                    for component_obj in component_obj_list:
+                        component_name = component_obj.name
+                        if 'http' in component_name.lower():
+                            likely_http = True
+                            break
 
-                # Add for domains in the scope
-                if host_id in scope_obj.domain_host_id_map:
-                    temp_domain_list = scope_obj.domain_host_id_map[host_id]
-                    for domain_obj in temp_domain_list:
+                if port_str in ['80', '443']:
+                    likely_http = True
 
-                        domain_name = domain_obj.name
-                        queue_scan(domain_name, port_str, secure,
-                                   port_id, query_arg, domain_name)
+                # Queue if it is likely an HTTP endpoint
+                if likely_http:
+                    queue_scan(ip_addr, port_str, secure, port_id,
+                               query_arg, domain_str_orig)
+
+                    # Add for domains in the scope
+                    if host_id in scope_obj.domain_host_id_map:
+                        temp_domain_list = scope_obj.domain_host_id_map[host_id]
+                        for domain_obj in temp_domain_list:
+
+                            domain_name = domain_obj.name
+                            queue_scan(domain_name, port_str, secure,
+                                       port_id, query_arg, domain_name)
+                else:
+                    logging.getLogger(__name__).debug(
+                        "Skipping port %s on host %s as it does not appear to be a web endpoint." % (port_str, ip_addr))
 
         # Submit the tuples
         futures = []
@@ -260,6 +283,7 @@ class ImportWebcapOutput(data_model.ImportToolXOutput):
 
         meta_file = self.input().path
         scheduled_scan_obj = self.scan_input
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
         scan_id = scheduled_scan_obj.scan_id
         recon_manager = scheduled_scan_obj.scan_thread.recon_manager
         tool_obj = scheduled_scan_obj.current_tool
@@ -299,6 +323,7 @@ class ImportWebcapOutput(data_model.ImportToolXOutput):
                     screenshot_obj = screenshot_hash_map[image_hash_str]
                 else:
                     screenshot_obj = data_model.Screenshot()
+                    screenshot_obj.collection_tool_instance_id = tool_instance_id
                     screenshot_obj.screenshot = screenshot_bytes_b64
                     screenshot_obj.image_hash = image_hash_str
 
@@ -323,6 +348,7 @@ class ImportWebcapOutput(data_model.ImportToolXOutput):
                         domain_obj = domain_name_id_map[domain_str]
                     else:
                         domain_obj = data_model.Domain()
+                        domain_obj.collection_tool_instance_id = tool_instance_id
                         domain_obj.name = domain_str
                         domain_name_id_map[domain_str] = domain_obj
 
@@ -335,6 +361,7 @@ class ImportWebcapOutput(data_model.ImportToolXOutput):
                     path_obj = path_hash_map[web_path_hash]
                 else:
                     path_obj = data_model.ListItem()
+                    path_obj.collection_tool_instance_id = tool_instance_id
                     path_obj.web_path = web_path
                     path_obj.web_path_hash = web_path_hash
 
@@ -349,6 +376,7 @@ class ImportWebcapOutput(data_model.ImportToolXOutput):
                 # Add http endpoint
                 http_endpoint_obj = data_model.HttpEndpoint(
                     parent_id=port_id)
+                http_endpoint_obj.collection_tool_instance_id = tool_instance_id
                 http_endpoint_obj.web_path_id = web_path_id
 
                 # Add the endpoint
@@ -357,6 +385,7 @@ class ImportWebcapOutput(data_model.ImportToolXOutput):
                 # Add http endpoint data
                 http_endpoint_data_obj = data_model.HttpEndpointData(
                     parent_id=http_endpoint_obj.id)
+                http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
                 http_endpoint_data_obj.domain_id = endpoint_domain_id
                 http_endpoint_data_obj.status = status_code
                 http_endpoint_data_obj.title = title

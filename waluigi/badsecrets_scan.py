@@ -306,6 +306,9 @@ class ImportBadSecretsOutput(data_model.ImportToolXOutput):
     def run(self):
 
         http_output_file = self.input().path
+        scheduled_scan_obj = self.scan_input
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+
         with open(http_output_file, 'r') as file_fd:
             data = file_fd.read()
 
@@ -346,6 +349,7 @@ class ImportBadSecretsOutput(data_model.ImportToolXOutput):
                                             # Add vuln
                                             vuln_obj = data_model.Vuln(
                                                 parent_id=port_id)
+                                            vuln_obj.collection_tool_instance_id = tool_instance_id
                                             vuln_obj.name = vuln_name
                                             vuln_obj.vuln_details = secret_val
                                             vuln_obj.endpoint_id = http_endpoint_id

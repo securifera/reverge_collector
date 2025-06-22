@@ -284,6 +284,9 @@ class SubfinderImport(data_model.ImportToolXOutput):
 
     def run(self):
 
+        scheduled_scan_obj = self.scan_input
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+
         subfinder_output_file = self.input().path
         with open(subfinder_output_file, 'r') as file_fd:
             data = file_fd.read()
@@ -320,6 +323,7 @@ class SubfinderImport(data_model.ImportToolXOutput):
                     ip_object = netaddr.IPAddress(ip_addr)
 
                     host_obj = data_model.Host()
+                    host_obj.collection_tool_instance_id = tool_instance_id
                     if ip_object.version == 4:
                         host_obj.ipv4_addr = str(ip_object)
                     elif ip_object.version == 6:
@@ -332,6 +336,7 @@ class SubfinderImport(data_model.ImportToolXOutput):
 
                         domain_obj = data_model.Domain(
                             parent_id=host_obj.id)
+                        domain_obj.collection_tool_instance_id = tool_instance_id
                         domain_obj.name = domain
 
                         # Add domain

@@ -151,6 +151,9 @@ class ImportSecTrailsIPLookupOutput(data_model.ImportToolXOutput):
 
     def run(self):
 
+        scheduled_scan_obj = self.scan_input
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+
         scan_output_file = self.input().path
         with open(scan_output_file, 'r') as file_fd:
             data = file_fd.read()
@@ -168,6 +171,7 @@ class ImportSecTrailsIPLookupOutput(data_model.ImportToolXOutput):
 
                 for domain in domains:
                     domain_obj = data_model.Domain(parent_id=host_id)
+                    domain_obj.collection_tool_instance_id = tool_instance_id
                     domain_obj.name = domain
 
                     # Add domain

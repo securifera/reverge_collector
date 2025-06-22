@@ -290,6 +290,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
     def run(self):
 
         scheduled_scan_obj = self.scan_input
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
 
         http_output_file = self.input().path
         with open(http_output_file, 'r') as file_fd:
@@ -343,6 +344,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
 
                     # Create Host object
                     host_obj = data_model.Host(id=host_id)
+                    host_obj.collection_tool_instance_id = tool_instance_id
 
                     ip_object = netaddr.IPAddress(ip_str)
                     if ip_object.version == 4:
@@ -358,6 +360,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                 # Create Port object
                 port_obj = data_model.Port(
                     parent_id=host_id, id=port_id)
+                port_obj.collection_tool_instance_id = tool_instance_id
                 port_obj.proto = 0
                 port_obj.port = port_str
                 port_id = port_obj.id
@@ -421,6 +424,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                         path_obj = path_hash_map[web_path_hash]
                     else:
                         path_obj = data_model.ListItem()
+                        path_obj.collection_tool_instance_id = tool_instance_id
                         path_obj.web_path = web_path
                         path_obj.web_path_hash = web_path_hash
 
@@ -443,6 +447,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                         screenshot_obj = screenshot_hash_map[image_hash_str]
                     else:
                         screenshot_obj = data_model.Screenshot()
+                        screenshot_obj.collection_tool_instance_id = tool_instance_id
                         screenshot_obj.screenshot = screenshot_bytes_b64
                         screenshot_obj.image_hash = image_hash_str
 
@@ -468,11 +473,13 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                     # Create a certificate object
                     cert_obj = data_model.Certificate(
                         parent_id=port_obj.id)
+                    cert_obj.collection_tool_instance_id = tool_instance_id
 
                     if 'subject_an' in tls_data:
                         dns_names = tls_data['subject_an']
                         for dns_name in dns_names:
-                            domain_obj = cert_obj.add_domain(host_id, dns_name)
+                            domain_obj = cert_obj.add_domain(
+                                host_id, dns_name, tool_instance_id)
                             if domain_obj:
                                 ret_arr.append(domain_obj)
 
@@ -481,12 +488,12 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                         if type(common_name) == list:
                             for common_name_inst in common_name:
                                 domain_obj = cert_obj.add_domain(host_id,
-                                                                 common_name_inst)
+                                                                 common_name_inst, tool_instance_id)
                                 if domain_obj:
                                     ret_arr.append(domain_obj)
                         else:
                             domain_obj = cert_obj.add_domain(
-                                host_id, common_name)
+                                host_id, common_name, tool_instance_id)
                             if domain_obj:
                                 ret_arr.append(domain_obj)
 
@@ -495,13 +502,13 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                         if type(common_name) == list:
                             for common_name_inst in common_name:
                                 domain_obj = cert_obj.add_domain(host_id,
-                                                                 common_name_inst)
+                                                                 common_name_inst, tool_instance_id)
                                 if domain_obj:
                                     ret_arr.append(domain_obj)
 
                         else:
                             domain_obj = cert_obj.add_domain(
-                                host_id, common_name)
+                                host_id, common_name, tool_instance_id)
                             if domain_obj:
                                 ret_arr.append(domain_obj)
 
@@ -537,6 +544,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                 # Add http component
                 component_obj = data_model.WebComponent(
                     parent_id=port_obj.id)
+                component_obj.collection_tool_instance_id = tool_instance_id
                 component_obj.name = 'http'
                 ret_arr.append(component_obj)
 
@@ -546,6 +554,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
 
                         component_obj = data_model.WebComponent(
                             parent_id=port_obj.id)
+                        component_obj.collection_tool_instance_id = tool_instance_id
 
                         if ":" in tech_entry:
                             tech_entry_arr = tech_entry.split(":")
@@ -559,6 +568,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                 # Add http endpoint
                 http_endpoint_obj = data_model.HttpEndpoint(
                     parent_id=port_obj.id)
+                http_endpoint_obj.collection_tool_instance_id = tool_instance_id
                 http_endpoint_obj.web_path_id = web_path_id
 
                 # Add the endpoint
@@ -566,6 +576,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
 
                 http_endpoint_data_obj = data_model.HttpEndpointData(
                     parent_id=http_endpoint_obj.id)
+                http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
                 http_endpoint_data_obj.domain_id = endpoint_domain_id
                 http_endpoint_data_obj.title = title
                 http_endpoint_data_obj.status = status_code
