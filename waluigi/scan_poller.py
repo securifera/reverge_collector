@@ -8,8 +8,6 @@ import queue
 
 local_extender_port = 33333
 
-logger = logging.getLogger(__name__)
-
 
 def print_usage():
     print("Help:")
@@ -50,7 +48,7 @@ def setup_logging():
     queue_handler.setFormatter(formatter)
 
     logger = logging.getLogger()
-    logging.getLogger(__name__).addHandler(queue_handler)
+    logger.addHandler(queue_handler)
 
     return log_queue
 

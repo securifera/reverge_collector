@@ -16,7 +16,6 @@ from waluigi import scan_utils
 from urllib.parse import urlparse
 from waluigi import data_model
 
-logger = logging.getLogger(__name__)
 url_set = set()
 
 

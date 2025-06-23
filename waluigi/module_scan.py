@@ -7,8 +7,6 @@ from waluigi.recon_manager import ScheduledScan
 import logging
 import copy
 
-logger = logging.getLogger(__name__)
-
 
 class Module(data_model.WaluigiTool):
 

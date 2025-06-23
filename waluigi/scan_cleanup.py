@@ -7,8 +7,6 @@ import logging
 
 from datetime import datetime
 
-logger = logging.getLogger(__name__)
-
 
 def scan_cleanup_func(scan_id):
     luigi_run_result = luigi.build([ScanCleanup(

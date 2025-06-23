@@ -13,8 +13,6 @@ import traceback
 
 from waluigi import scan_utils
 
-logger = logging.getLogger(__name__)
-
 waluigi_tools = [
     ('waluigi.masscan', 'Masscan'),
     ('waluigi.nmap_scan', 'Nmap'),

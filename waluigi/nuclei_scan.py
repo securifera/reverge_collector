@@ -2,17 +2,11 @@ from functools import partial
 import json
 import os
 import luigi
-import errno
 import logging
 
 from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
-
-custom_user_agent = "Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; AS; rv:11.0) like Gecko"
-
-
-logger = logging.getLogger(__name__)
 
 
 class Nuclei(data_model.WaluigiTool):

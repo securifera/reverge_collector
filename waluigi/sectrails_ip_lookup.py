@@ -10,7 +10,6 @@ from waluigi import scan_utils
 from waluigi import data_model
 
 proxies = None
-logger = logging.getLogger(__name__)
 
 
 class Sectrails(data_model.WaluigiTool):
