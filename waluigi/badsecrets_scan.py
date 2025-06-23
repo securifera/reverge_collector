@@ -16,7 +16,6 @@ from waluigi import data_model
 from badsecrets.base import carve_all_modules
 from urllib.parse import urlparse
 
-logger = logging.getLogger(__name__)
 url_set = set()
 path_hash_map = {}
 

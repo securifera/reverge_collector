@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from waluigi.data_model import ToolExecutor
 
 NOT_WHITESPACE = re.compile(r'\S')
-logger = logging.getLogger(__name__)
+custom_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.3"
 
 
 class ThreadExecutorWrapper():

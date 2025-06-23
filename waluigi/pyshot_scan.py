@@ -13,8 +13,6 @@ from waluigi import scan_utils
 from os.path import exists
 from waluigi import data_model
 
-
-logger = logging.getLogger(__name__)
 future_map = {}
 
 

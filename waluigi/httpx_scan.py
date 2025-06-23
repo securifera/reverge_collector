@@ -15,8 +15,6 @@ from waluigi import scan_utils
 from waluigi import data_model
 from urllib.parse import urlparse
 
-logger = logging.getLogger(__name__)
-
 
 class Httpx(data_model.WaluigiTool):
 

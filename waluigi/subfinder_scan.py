@@ -13,8 +13,6 @@ from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
 
-logger = logging.getLogger(__name__)
-
 
 class Subfinder(data_model.WaluigiTool):
 

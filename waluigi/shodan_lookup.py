@@ -15,8 +15,6 @@ from waluigi import data_model
 from datetime import datetime
 from urllib.parse import urlsplit, urlunsplit
 
-logger = logging.getLogger(__name__)
-
 
 class Shodan(data_model.WaluigiTool):
 

@@ -14,10 +14,6 @@ from waluigi import scan_utils
 from waluigi import data_model
 from datetime import datetime
 
-logger = logging.getLogger(__name__)
-
-custom_user_agent = "Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; AS; rv:11.0) like Gecko"
-
 
 class Nmap(data_model.WaluigiTool):
 
@@ -304,7 +300,7 @@ class NmapScan(luigi.Task):
                 "--script-timeout",
                 "2m",
                 "--script-args",
-                'http.useragent="%s"' % custom_user_agent,
+                'http.useragent="%s"' % scan_utils.custom_user_agent,
                 "-sT",
                 "-p",
                 port_comma_list,
