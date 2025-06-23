@@ -170,7 +170,7 @@ def construct_url(target_str, port, secure, query_str=None):
     port_str = str(port).strip()
     add_port_flag = True
     url = "http"
-    if secure:
+    if secure or port_str == '443':
         url += "s"
         if port_str == '443':
             add_port_flag = False
