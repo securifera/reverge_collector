@@ -800,9 +800,9 @@ class Record():
             if obj:
                 if 'collection_tool_instance_id' in input_dict:
                     obj.collection_tool_instance_id = input_dict['collection_tool_instance_id']
-                else:
-                    logging.getLogger(__name__).warning(
-                        "No collection tool instance ID found for record type: %s" % record_type)
+                # else:
+                #    logging.getLogger(__name__).warning(
+                #        "No collection tool instance ID found for record type: %s" % record_type)
 
                 obj.scan_data = scan_data
                 obj.tags.update(record_tags_inst)
