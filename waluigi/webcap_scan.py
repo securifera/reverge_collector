@@ -81,8 +81,12 @@ async def webcap_asyncio(future_map, meta_file_path):
 
             if webscreenshot and webscreenshot.status_code != 0:
                 url_entry['url'] = url
-                url_entry['image_data'] = base64.b64encode(
-                    webscreenshot.blob).decode()
+                try:
+                    url_entry['image_data'] = base64.b64encode(
+                        webscreenshot.blob).decode()
+                except ValueError as e:
+                    # Skip if there is no image data
+                    continue
                 url_entry['status_code'] = webscreenshot.status_code
                 url_entry['title'] = webscreenshot.title
 
