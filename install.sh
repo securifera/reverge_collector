@@ -98,13 +98,10 @@ sudo mkdir /opt/collector
 echo "[worker]" | sudo tee /opt/collector/luigi.cfg
 echo "no_install_shutdown_handler=True" | sudo tee -a /opt/collector/luigi.cfg
 
-sudo mkdir /opt/reverge_collector
-cp -r ./waluigi /opt/reverge_collector/
-cp ./pyproject.toml /opt/reverge_collector/
-sudo chmod -R 777 /opt/reverge_collector
-cd /opt/reverge_collector 
+# Build and install waluigi
 poetry build
 python3 -m pip install dist/waluigi*.whl
+cp ./waluigi/scan_poller.py /opt/collector/
 
 ###############
 # scanner stuff

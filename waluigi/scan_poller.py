@@ -1,4 +1,4 @@
-import recon_manager
+from waluigi import recon_manager
 import traceback
 import argparse
 import time
