@@ -104,9 +104,14 @@ class HttpXScan(luigi.Task):
                 target_obj_dict = target_map[target_key]
                 port_obj = target_obj_dict['port_obj']
                 port_str = port_obj.port
+                secure_flag = port_obj.secure
 
                 host_obj = target_obj_dict['host_obj']
                 ip_addr = host_obj.ipv4_addr
+
+                # Construct URL
+                url_str = scan_utils.construct_url(
+                    ip_addr, port_str, secure_flag)
 
                 # Add to ip set
                 if port_str in port_target_list_map:
@@ -116,7 +121,8 @@ class HttpXScan(luigi.Task):
                     port_target_list_map[port_str] = ip_set
 
                 # Add IP to list
-                ip_set.add(ip_addr)
+                # ip_set.add(ip_addr)
+                ip_set.add(url_str)
 
                 # Get domains
                 host_id = host_obj.id
@@ -125,7 +131,10 @@ class HttpXScan(luigi.Task):
                     for domain_obj in temp_domain_list:
 
                         domain_name = domain_obj.name
-                        ip_set.add(domain_name)
+                        # ip_set.add(domain_name)
+                        url_str = scan_utils.construct_url(
+                            domain_name, port_str, secure_flag)
+                        ip_set.add(url_str)
 
         else:
 
@@ -201,8 +210,12 @@ class HttpXScan(luigi.Task):
                                 ip_set = set()
                                 port_target_list_map[port_str] = ip_set
 
+                            url_str = scan_utils.construct_url(
+                                ip_addr, port_str, False)
+                            ip_set.add(url_str)
+
                             # Add IP to list
-                            ip_set.add(ip_addr)
+                            # ip_set.add(ip_addr)
 
                             # Get domains
                             if host_id in scope_obj.domain_host_id_map:
@@ -210,7 +223,10 @@ class HttpXScan(luigi.Task):
                                 for domain_obj in temp_domain_list:
 
                                     domain_name = domain_obj.name
-                                    ip_set.add(domain_name)
+                                    url_str = scan_utils.construct_url(
+                                        domain_name, port_str, False)
+                                    ip_set.add(url_str)
+                                    # ip_set.add(domain_name)
 
         futures = []
         for port_str in port_target_list_map:
@@ -231,7 +247,7 @@ class HttpXScan(luigi.Task):
                 command.append("sudo")
 
             command_arr = [
-                "httpx",
+                "/usr/local/bin/httpx",
                 "-json",
                 "-silent",
                 "-irr",  # Return response so Headers can be parsed
@@ -319,13 +335,11 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                 port_str = httpx_scan['port']
 
                 host_id = None
-                port_id = None
                 host_key = '%s:%s' % (target_str, port_str)
 
                 # See if we have an host/port mapping already for this ip and port
                 if host_key in scheduled_scan_obj.scan_data.host_port_obj_map:
                     host_port_dict = scheduled_scan_obj.scan_data.host_port_obj_map[host_key]
-                    port_id = host_port_dict['port_obj'].id
                     host_id = host_port_dict['host_obj'].id
                 elif target_str in scheduled_scan_obj.scan_data.host_ip_id_map:
                     host_id = scheduled_scan_obj.scan_data.host_ip_id_map[target_str]
@@ -341,7 +355,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                     ip_object = netaddr.IPAddress(ip_str)
 
                     # Create Host object
-                    host_obj = data_model.Host(id=host_id)
+                    host_obj = data_model.Host()
                     host_obj.collection_tool_instance_id = tool_instance_id
 
                     ip_object = netaddr.IPAddress(ip_str)
@@ -355,13 +369,23 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                     # Add host
                     ret_arr.append(host_obj)
 
+                # If cname
+                if 'cname' in httpx_scan:
+                    cname = httpx_scan['cname']
+                    if type(cname) == list:
+                        for cname_inst in cname:
+                            domain_obj = data_model.Domain(
+                                parent_id=host_id)
+                            domain_obj.collection_tool_instance_id = tool_instance_id
+                            domain_obj.name = cname_inst
+                            ret_arr.append(domain_obj)
+
                 # Create Port object
                 port_obj = data_model.Port(
-                    parent_id=host_id, id=port_id)
+                    parent_id=host_id)
                 port_obj.collection_tool_instance_id = tool_instance_id
                 port_obj.proto = 0
                 port_obj.port = port_str
-                port_id = port_obj.id
 
                 # If TLS
                 if 'scheme' in httpx_scan and httpx_scan['scheme'] == "https":
