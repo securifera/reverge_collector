@@ -7,6 +7,7 @@ import hashlib
 import base64
 import logging
 import asyncio
+import shlex
 
 from luigi.util import inherits
 from webcap import Browser
@@ -22,11 +23,11 @@ class Webcap(data_model.WaluigiTool):
 
     def __init__(self):
         self.name = 'webcap'
-        self.description = 'A python library that can be used for taking screenshots of web pages using Chrome and Webcap.'
+        self.description = 'A python library that can be used for taking screenshots of web pages using Chrome and Webcap. Currently only the timeout and threads options can be set.'
         self.project_url = 'https://github.com/blacklanternsecurity/webcap'
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 8
-        self.args = ""
+        self.args = "--timeout 5 --threads 5"
         self.scan_func = Webcap.webcap_scan_func
         self.import_func = Webcap.webcap_import
 
@@ -50,10 +51,32 @@ class Webcap(data_model.WaluigiTool):
         return True
 
 
-async def webcap_asyncio(future_map, meta_file_path):
+def parse_args(args_str):
+    timeout = 5
+    threads = 5
+    if args_str and len(args_str) > 0:
+        tokens = shlex.split(args_str)
+        for i, token in enumerate(tokens):
+            if token == "--timeout" and i + 1 < len(tokens):
+                try:
+                    timeout = int(tokens[i + 1])
+                except ValueError:
+                    pass
+            if token == "--threads" and i + 1 < len(tokens):
+                try:
+                    threads = int(tokens[i + 1])
+                except ValueError:
+                    pass
+    return timeout, threads
+
+
+async def webcap_asyncio(future_map, meta_file_path, webcap_args):
+
+    # Get the arguments for timeout and threads
+    timeout, threads = parse_args(webcap_args)
 
     # create a browser instance
-    browser = Browser(timeout=5)
+    browser = Browser(timeout=timeout, threads=threads)
     # start the browser
     await browser.start()
 
@@ -68,11 +91,12 @@ async def webcap_asyncio(future_map, meta_file_path):
             try:
                 webscreenshot = await browser.screenshot(url)
             except WebCapError as e:
-                if 'You must call start()' in str(e):
-                    # Restart the browser
-                    browser = Browser(timeout=5)
-                    await browser.start()
-                    continue
+                logging.getLogger(__name__).error(
+                    f"WebCapError, restarting browser: {str(e)}")
+                # Restart the browser
+                browser = Browser(timeout=timeout, threads=threads)
+                await browser.start()
+                continue
             except Exception as e:
                 logging.getLogger(__name__).error(
                     f"Error taking screenshot for {url}: {str(e)}")
@@ -166,6 +190,8 @@ class WebcapScan(luigi.Task):
         web_path_map = scope_obj.path_map
         domain_map = scope_obj.domain_map
         endpoint_data_endpoint_id_map = scope_obj.endpoint_data_endpoint_id_map
+
+        webcap_scan_args = scheduled_scan_obj.current_tool.args
 
         future_map = {}
         for target_key in target_map:
