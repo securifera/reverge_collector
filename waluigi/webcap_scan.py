@@ -10,6 +10,7 @@ import asyncio
 
 from luigi.util import inherits
 from webcap import Browser
+from webcap.errors import WebCapError
 from waluigi import scan_utils
 from waluigi import data_model
 
@@ -63,7 +64,21 @@ async def webcap_asyncio(future_map):
                      'http_endpoint_data_id': http_endpoint_data_id, 'path': path, 'domain': domain_str}
 
         # take a screenshot
-        webscreenshot = await browser.screenshot(url)
+        webscreenshot = None
+        try:
+            webscreenshot = await browser.screenshot(url)
+        except WebCapError as e:
+            if 'You must call start()' in str(e):
+                # Restart the browser
+                browser = Browser(timeout=5)
+                await browser.start()
+                continue
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                f"Error taking screenshot for {url}: {str(e)}")
+            logging.getLogger(__name__).debug(traceback.format_exc())
+            break
+
         if webscreenshot and webscreenshot.status_code != 0:
             url_entry['url'] = url
             url_entry['image_data'] = base64.b64encode(
