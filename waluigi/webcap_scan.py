@@ -91,6 +91,8 @@ async def webcap_asyncio(future_map, meta_file_path, webcap_args):
             try:
                 webscreenshot = await browser.screenshot(url)
             except WebCapError as e:
+                # stop the browser
+                await browser.stop()
                 logging.getLogger(__name__).error(
                     f"WebCapError, restarting browser: {str(e)}")
                 # Restart the browser
