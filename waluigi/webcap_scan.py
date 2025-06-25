@@ -124,9 +124,9 @@ async def webcap_asyncio(future_map, meta_file_path, webcap_args):
     await browser.stop()
 
 
-def webcap_wrapper(future_map, meta_file_path):
+def webcap_wrapper(future_map, meta_file_path, webcap_scan_args):
 
-    return asyncio.run(webcap_asyncio(future_map, meta_file_path))
+    return asyncio.run(webcap_asyncio(future_map, meta_file_path, webcap_scan_args))
 
 
 def queue_scan(host, port_str, secure, port_id, query_arg="", domain_str=None, http_endpoint_data_id=None):
@@ -294,7 +294,7 @@ class WebcapScan(luigi.Task):
         # Submit the scan task
         meta_file = '%s%s%s' % (dir_path, os.path.sep, 'screenshots.json')
         future_inst = scan_utils.executor.submit(
-            webcap_wrapper, future_map, meta_file)
+            webcap_wrapper, future_map, meta_file, webcap_scan_args)
 
         scan_proc_inst = data_model.ToolExecutor([future_inst])
         scheduled_scan_obj.register_tool_executor(
