@@ -27,7 +27,7 @@ class Webcap(data_model.WaluigiTool):
         self.project_url = 'https://github.com/blacklanternsecurity/webcap'
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 8
-        self.args = "--timeout 5 --threads 5"
+        self.args = "--timeout 5 --threads 5 --quality 100"
         self.scan_func = Webcap.webcap_scan_func
         self.import_func = Webcap.webcap_import
 
@@ -54,6 +54,7 @@ class Webcap(data_model.WaluigiTool):
 def parse_args(args_str):
     timeout = 5
     threads = 5
+    quality = 100
     if args_str and len(args_str) > 0:
         tokens = shlex.split(args_str)
         for i, token in enumerate(tokens):
@@ -67,16 +68,21 @@ def parse_args(args_str):
                     threads = int(tokens[i + 1])
                 except ValueError:
                     pass
-    return timeout, threads
+            if token == "--quality" and i + 1 < len(tokens):
+                try:
+                    quality = int(tokens[i + 1])
+                except ValueError:
+                    pass
+    return timeout, threads, quality
 
 
 async def webcap_asyncio(future_map, meta_file_path, webcap_args):
 
     # Get the arguments for timeout and threads
-    timeout, threads = parse_args(webcap_args)
+    timeout, threads, quality = parse_args(webcap_args)
 
     # create a browser instance
-    browser = Browser(timeout=timeout, threads=threads)
+    browser = Browser(timeout=timeout, threads=threads, quality=quality)
     # start the browser
     await browser.start()
 
@@ -329,8 +335,8 @@ class ImportWebcapOutput(data_model.ImportToolXOutput):
 
         if os.path.exists(meta_file):
 
-            with open(meta_file, 'r') as file_fd:
-
+            tool_import_file = self.output().path
+            with open(meta_file, 'r') as file_fd, open(tool_import_file, 'w') as import_fd:
                 count = 0
                 for line in file_fd:
                     if not line.strip():
@@ -338,8 +344,6 @@ class ImportWebcapOutput(data_model.ImportToolXOutput):
 
                     ret_arr = []
                     screenshot_meta = json.loads(line)
-                    import_data_arr = []
-
                     web_path = screenshot_meta['path']
                     port_id = screenshot_meta['port_id']
                     status_code = screenshot_meta['status_code']
@@ -451,17 +455,12 @@ class ImportWebcapOutput(data_model.ImportToolXOutput):
                         updated_import_arr = data_model.update_scope_array(
                             record_map, updated_record_map)
 
-                        import_data_arr.extend(updated_import_arr)
+                        import_fd.write(json.dumps(updated_import_arr) + '\n')
 
                         # Update the scan scope
                         scheduled_scan_obj.scan_data.update(record_map)
 
                     count += 1
-
-                    # Write imported data to file
-                    tool_import_file = self.output().path
-                    with open(tool_import_file, 'w') as import_fd:
-                        import_fd.write(json.dumps(import_data_arr))
 
                 logging.getLogger(__name__).debug(
                     "Imported %d screenshots to manager." % (count))

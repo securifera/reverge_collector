@@ -166,13 +166,16 @@ class ImportToolXOutput(luigi.Task):
         output = self.output()
         if output.exists():
 
-            import_arr = None
+            import_arr = []
             with open(output.path, 'r') as import_fd:
-                file_data = import_fd.read()
-                import_arr = json.loads(file_data)
+                for line in import_fd:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    import_arr.append(json.loads(line))
 
             # Update the scope
-            if import_arr:
+            if len(import_arr) > 0:
                 scheduled_scan_obj = self.scan_input
                 scheduled_scan_obj.scan_data.update(import_arr)
 
