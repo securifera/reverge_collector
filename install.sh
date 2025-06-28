@@ -111,9 +111,11 @@ cp ./waluigi/scan_poller.py /opt/collector/
 install_packages libssl-dev libpcap-dev masscan autoconf build-essential
 
 # install nmap
-cd /opt
-sudo git clone -c http.sslVerify=false https://github.com/securifera/nmap.git
-cd nmap && sudo ./configure --without-ncat --without-zenmap --without-nping && sudo make -j"$(nproc)" && sudo make install
+#cd /opt
+#sudo git clone -c http.sslVerify=false https://github.com/securifera/nmap.git
+#cd nmap && sudo ./configure --without-ncat --without-zenmap --without-nping && sudo make -j"$(nproc)" && sudo make install
+
+cd /tmp; curl -k -s https://api.github.com/repos/securifera/nmap/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf nmap*.tar.gz -C / ; sudo rm nmap*.tar.gz
 
 # Install nuclei
 cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o nuclei*.zip; sudo mv nuclei /usr/local/bin/ ; sudo rm nuclei*.zip
