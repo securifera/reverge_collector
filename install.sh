@@ -113,7 +113,7 @@ install_packages libssl-dev libpcap-dev masscan autoconf build-essential
 # install nmap
 cd /opt
 sudo git clone -c http.sslVerify=false https://github.com/securifera/nmap.git
-cd nmap && sudo git checkout ssl_updates && sudo ./configure --without-ncat --without-zenmap --without-nping && sudo make && sudo make install
+cd nmap && sudo ./configure --without-ncat --without-zenmap --without-nping && sudo make -j"$(nproc)" && sudo make install
 
 # Install nuclei
 cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o nuclei*.zip; sudo mv nuclei /usr/local/bin/ ; sudo rm nuclei*.zip
