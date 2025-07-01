@@ -1,3 +1,56 @@
+"""
+BadSecrets Cryptographic Vulnerability Scanner Module.
+
+This module provides comprehensive cryptographic security analysis using BadSecrets,
+a pure Python library for identifying the use of known or very weak cryptographic
+secrets across a variety of web application platforms. It integrates with the Waluigi
+framework to perform automated detection of common cryptographic vulnerabilities.
+
+The module supports:
+    - Detection of known weak cryptographic secrets and keys
+    - Analysis of various web application platforms and frameworks
+    - HTTP endpoint scanning for cryptographic vulnerabilities
+    - Support for both discovered endpoints and custom URL lists
+    - Concurrent processing for performance optimization
+    - Comprehensive vulnerability reporting with details
+    - Integration with the Waluigi vulnerability management system
+
+Classes:
+    Badsecrets: Main tool class implementing the cryptographic scanner interface
+    BadSecretsScan: Luigi task for executing BadSecrets vulnerability scanning
+    ImportBadSecretsOutput: Luigi task for importing and processing scan results
+
+Functions:
+    queue_scan: Manages vulnerability scan target queuing with deduplication
+    request_wrapper: Core HTTP request and vulnerability analysis function
+    create_port_objs: Creates database objects from URL analysis for new targets
+
+Global Variables:
+    url_set: Thread-safe set tracking scanned URLs to prevent duplicates
+    path_hash_map: Mapping for web path deduplication across scans
+
+Example:
+    Basic usage through the Waluigi framework::
+    
+        # Initialize the tool
+        badsecrets = Badsecrets()
+        
+        # Execute vulnerability scanning
+        success = badsecrets.scan_func(scan_input_obj)
+        
+        # Import results
+        imported = badsecrets.import_func(scan_input_obj)
+
+Note:
+    This module performs active HTTP requests to analyze cryptographic implementations.
+    It should be used responsibly with proper authorization on target systems.
+    The tool can identify various types of weak secrets including JWT keys,
+    API tokens, and framework-specific cryptographic vulnerabilities.
+
+.. moduleauthor:: Waluigi Framework Team
+.. version:: 1.0.0
+"""
+
 import binascii
 import hashlib
 import json
@@ -9,6 +62,7 @@ import requests
 import time
 import logging
 import netaddr
+from typing import Dict, Set, List, Any, Optional, Union
 
 from luigi.util import inherits
 from waluigi import scan_utils
@@ -16,13 +70,68 @@ from waluigi import data_model
 from badsecrets.base import carve_all_modules
 from urllib.parse import urlparse
 
-url_set = set()
-path_hash_map = {}
+# Global URL tracking set to prevent duplicate scanning
+url_set: Set[str] = set()
+
+# Global path hash mapping for deduplication across vulnerability scans
+path_hash_map: Dict[str, Any] = {}
 
 
 class Badsecrets(data_model.WaluigiTool):
+    """
+    BadSecrets cryptographic vulnerability scanner integration for the Waluigi framework.
 
-    def __init__(self):
+    This class provides integration with BadSecrets, a pure Python library designed
+    to identify the use of known or very weak cryptographic secrets across various
+    web application platforms. It implements the WaluigiTool interface to provide
+    comprehensive cryptographic security analysis within the reconnaissance workflow.
+
+    BadSecrets specializes in detecting:
+        - Weak or default JWT signing keys
+        - Known API tokens and secrets
+        - Framework-specific cryptographic vulnerabilities
+        - Default encryption keys in web applications
+        - Predictable or hardcoded cryptographic material
+        - Common cryptographic implementation flaws
+
+    Attributes:
+        name (str): The tool identifier ('badsecrets')
+        description (str): Human-readable description of the tool's capabilities
+        project_url (str): URL to the official BadSecrets project repository
+        collector_type (int): Identifies this as an active scanning tool
+        scan_order (int): Execution priority within the scanning workflow (10)
+        args (str): Command-line arguments (empty for this tool)
+        scan_func (callable): Static method for executing vulnerability scanning
+        import_func (callable): Static method for importing scan results
+
+    Methods:
+        badsecrets_scan_func: Executes cryptographic vulnerability scanning operations
+        badsecrets_import: Imports and processes vulnerability scan results
+
+    Example:
+        >>> tool = Badsecrets()
+        >>> print(tool.name)
+        badsecrets
+
+        >>> # Execute cryptographic vulnerability scanning through the framework
+        >>> success = tool.scan_func(scan_input_obj)
+        >>> if success:
+        ...     imported = tool.import_func(scan_input_obj)
+
+    Note:
+        The scan_order of 10 positions this tool to run after endpoint discovery
+        and initial reconnaissance phases. The tool performs active HTTP requests
+        to analyze cryptographic implementations and identify vulnerabilities.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize the BadSecrets tool with default configuration.
+
+        Sets up the tool with appropriate parameters for cryptographic vulnerability
+        scanning, including integration points for the scanning and import
+        workflow phases.
+        """
         self.name = 'badsecrets'
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 10
@@ -33,7 +142,30 @@ class Badsecrets(data_model.WaluigiTool):
         self.import_func = Badsecrets.badsecrets_import
 
     @staticmethod
-    def badsecrets_scan_func(scan_input):
+    def badsecrets_scan_func(scan_input: Any) -> bool:
+        """
+        Execute BadSecrets cryptographic vulnerability scanning operations.
+
+        This static method serves as the entry point for executing cryptographic
+        vulnerability scanning within the Waluigi framework. It builds and runs
+        the BadSecretsScan Luigi task with the provided scan input configuration.
+
+        Args:
+            scan_input (Any): The scan input object containing target information,
+                            endpoint data, and execution parameters
+
+        Returns:
+            bool: True if the vulnerability scanning completed successfully, False otherwise
+
+        Example:
+            >>> scan_obj = create_scan_input(...)  # Configure scan
+            >>> success = Badsecrets.badsecrets_scan_func(scan_obj)
+            >>> print(f"Cryptographic vulnerability scan successful: {success}")
+
+        Note:
+            Uses Luigi's local scheduler for task execution and provides detailed
+            summary information for debugging and monitoring purposes.
+        """
         luigi_run_result = luigi.build([BadSecretsScan(
             scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
         if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
@@ -41,7 +173,31 @@ class Badsecrets(data_model.WaluigiTool):
         return True
 
     @staticmethod
-    def badsecrets_import(scan_input):
+    def badsecrets_import(scan_input: Any) -> bool:
+        """
+        Import and process BadSecrets vulnerability scan results.
+
+        This static method handles the import phase of the vulnerability scanning
+        workflow, processing discovered cryptographic vulnerabilities and importing
+        findings into the database structure with proper vulnerability categorization.
+
+        Args:
+            scan_input (Any): The scan input object containing configuration
+                            and metadata for the import operation
+
+        Returns:
+            bool: True if the import completed successfully, False otherwise
+
+        Example:
+            >>> # After successful vulnerability scanning
+            >>> imported = Badsecrets.badsecrets_import(scan_obj)
+            >>> print(f"Vulnerability import successful: {imported}")
+
+        Note:
+            This method depends on the successful completion of the vulnerability
+            scanning phase and processes all discovered cryptographic vulnerabilities
+            with detailed categorization and severity assessment.
+        """
         luigi_run_result = luigi.build([ImportBadSecretsOutput(
             scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
         if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
@@ -49,7 +205,41 @@ class Badsecrets(data_model.WaluigiTool):
         return True
 
 
-def queue_scan(url_dict):
+def queue_scan(url_dict: Dict[str, Any]) -> Optional[Any]:
+    """
+    Queue a cryptographic vulnerability scan target with deduplication.
+
+    This function manages the queuing of URLs for BadSecrets vulnerability scanning
+    while preventing duplicate scans. It maintains a global set of processed URLs
+    to ensure efficient resource utilization and avoid redundant analysis.
+
+    Args:
+        url_dict (Dict[str, Any]): Dictionary containing target URL and metadata
+                                  including 'url', 'port_id', and 'http_endpoint_id'
+
+    Returns:
+        Optional[Any]: Future object for the queued scan task, or None if URL
+                      was already queued (duplicate)
+
+    Side Effects:
+        - Modifies the global url_set to track processed URLs
+        - Submits vulnerability scanning tasks to the executor pool
+
+    Example:
+        >>> url_data = {
+        ...     'url': 'https://example.com/api',
+        ...     'port_id': 123,
+        ...     'http_endpoint_id': 456
+        ... }
+        >>> future = queue_scan(url_data)
+        >>> if future:
+        ...     result = future.result()
+
+    Note:
+        The function prevents duplicate scanning by checking the global url_set.
+        Only unique URLs are submitted for vulnerability analysis to optimize
+        performance and avoid redundant cryptographic testing.
+    """
 
     global url_set
 
@@ -59,7 +249,45 @@ def queue_scan(url_dict):
         return scan_utils.executor.submit(request_wrapper, url_dict)
 
 
-def request_wrapper(url_obj):
+def request_wrapper(url_obj: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Core HTTP request and cryptographic vulnerability analysis function.
+
+    This function performs the actual HTTP request to the target URL and executes
+    BadSecrets analysis to identify cryptographic vulnerabilities. It handles
+    network errors, retries, and comprehensive vulnerability detection across
+    various web application platforms.
+
+    Args:
+        url_obj (Dict[str, Any]): Dictionary containing URL and metadata including:
+                                 - 'url': Target URL for analysis
+                                 - 'port_id': Database port identifier
+                                 - 'http_endpoint_id': Database endpoint identifier
+
+    Returns:
+        Dict[str, Any]: Updated URL object with 'output' field containing
+                       BadSecrets analysis results or empty string if no
+                       vulnerabilities found
+
+    Side Effects:
+        - Performs HTTP GET requests to target URLs
+        - Logs debug and error information
+        - May retry requests up to 3 times on failure
+
+    Raises:
+        Exception: Various network and analysis exceptions are caught and logged
+
+    Example:
+        >>> url_data = {'url': 'https://example.com/api', 'port_id': 123}
+        >>> result = request_wrapper(url_data)
+        >>> if result['output']:
+        ...     print(f"Vulnerabilities found: {len(result['output'])}")
+
+    Note:
+        The function uses a Windows-like User-Agent for consistency and disables
+        SSL verification to handle self-signed certificates. Analysis is only
+        performed on successful HTTP 200 responses to ensure accurate results.
+    """
 
     url = url_obj['url']
     output = ''
@@ -94,10 +322,62 @@ def request_wrapper(url_obj):
 
 
 class BadSecretsScan(luigi.Task):
+    """
+    Luigi task for executing BadSecrets cryptographic vulnerability scanning operations.
+
+    This task orchestrates the execution of cryptographic vulnerability analysis against
+    discovered web endpoints and URLs, managing input parameters, output file generation,
+    and execution flow within the Luigi workflow framework. It processes HTTP endpoints
+    from previous scanning phases and custom URL lists to identify cryptographic weaknesses.
+
+    Attributes:
+        scan_input (luigi.Parameter): The scan input object containing target information,
+                                    endpoint data, and configuration parameters
+
+    Methods:
+        output: Defines the output file target for the vulnerability scan results
+        requires: Specifies task dependencies (inherited from parent tasks)
+        run: Executes the actual BadSecrets cryptographic vulnerability scanning
+
+    Example:
+        >>> scan_obj = ScanInputObject(...)  # Configured scan input
+        >>> task = BadSecretsScan(scan_input=scan_obj)
+        >>> luigi.build([task])
+
+    Note:
+        This class inherits from luigi.Task and follows Luigi's task execution model.
+        The task processes both discovered HTTP endpoints and custom URL lists to
+        provide comprehensive cryptographic vulnerability coverage.
+    """
 
     scan_input = luigi.Parameter()
 
-    def output(self):
+    def output(self) -> luigi.LocalTarget:
+        """
+        Define the output file target for BadSecrets vulnerability scan results.
+
+        Creates a unique output file path based on the scan ID and tool name,
+        ensuring that vulnerability scan results are properly organized and
+        accessible to downstream tasks in the Luigi workflow.
+
+        Returns:
+            luigi.LocalTarget: A Luigi target representing the output file where
+                             BadSecrets vulnerability scan results will be stored
+
+        Side Effects:
+            - Initializes the tool output directory structure if it doesn't exist
+            - Creates directory paths as needed for organized output storage
+
+        Example:
+            >>> task = BadSecretsScan(scan_input=scan_obj)
+            >>> target = task.output()
+            >>> print(target.path)
+            /path/to/outputs/badsecrets/scan_123/badsecrets_outputs_123
+
+        Note:
+            The output file contains JSON data with vulnerability findings,
+            including cryptographic weakness details and affected endpoints.
+        """
 
         scheduled_scan_obj = self.scan_input
         scan_id = scheduled_scan_obj.id
@@ -110,7 +390,45 @@ class BadSecretsScan(luigi.Task):
         http_outputs_file = dir_path + os.path.sep + "badsecrets_outputs_" + scan_id
         return luigi.LocalTarget(http_outputs_file)
 
-    def run(self):
+    def run(self) -> None:
+        """
+        Execute the BadSecrets cryptographic vulnerability scanning operation.
+
+        This method orchestrates the complete vulnerability scanning workflow including:
+        - Processing discovered HTTP endpoints and custom URL lists
+        - Constructing target URLs from host, port, and endpoint data
+        - Handling both IP-based and domain-based targets
+        - Concurrent execution of cryptographic vulnerability analysis
+        - Collection and aggregation of vulnerability findings
+
+        The method processes all HTTP endpoints from previous scan phases and
+        any custom URL lists, executing BadSecrets analysis against each unique
+        target to identify cryptographic weaknesses and implementation flaws.
+
+        Returns:
+            None: Vulnerability findings are written to the output file
+
+        Side Effects:
+            - Modifies the global url_set to track processed URLs
+            - Creates vulnerability scan tasks for concurrent execution
+            - Generates output file with aggregated vulnerability data
+            - Registers tool executors with the scan management system
+
+        Raises:
+            OSError: If output directories cannot be created or accessed
+            requests.RequestException: If HTTP requests fail repeatedly
+            json.JSONEncodeError: If results cannot be serialized to JSON
+            Exception: Various exceptions related to network requests or file I/O
+
+        Example:
+            >>> task = BadSecretsScan(scan_input=scan_obj)
+            >>> task.run()  # Executes all configured vulnerability scans
+
+        Note:
+            The method handles both discovered HTTP endpoints from previous scans
+            and custom URL lists. It uses concurrent execution for performance
+            and includes comprehensive error handling for network operations.
+        """
 
         scheduled_scan_obj = self.scan_input
 
@@ -207,9 +525,42 @@ class BadSecretsScan(luigi.Task):
             file_fd.write(json.dumps(results_dict))
 
 
-def create_port_objs(ret_arr, url):
+def create_port_objs(ret_arr: List[Any], url: str) -> List[Any]:
     """
-    Create objects from the url and add to the return array
+    Create database objects from URL analysis for new targets.
+
+    This function parses a URL to extract host, port, and path information,
+    then creates appropriate database objects for hosts, ports, and HTTP
+    endpoints. It handles both IPv4 and IPv6 addresses and manages path
+    deduplication through hashing.
+
+    Args:
+        ret_arr (List[Any]): List to append created database objects to
+        url (str): Target URL to parse and create objects from
+
+    Returns:
+        List[Any]: Updated list containing the original objects plus newly
+                  created host, port, path, and endpoint objects
+
+    Side Effects:
+        - Modifies the global path_hash_map for path deduplication
+        - Creates Host, Port, ListItem, and HttpEndpoint database objects
+        - Parses URL components including scheme, host, port, and path
+
+    Raises:
+        ValueError: If URL cannot be parsed or contains invalid components
+        netaddr.AddrFormatError: If host is not a valid IP address
+
+    Example:
+        >>> objects = []
+        >>> result = create_port_objs(objects, "https://192.168.1.1:8443/api/v1")
+        >>> print(f"Created {len(result)} database objects")
+        Created 4 database objects
+
+    Note:
+        The function assumes the host portion of the URL is an IP address
+        and creates appropriate IPv4 or IPv6 host objects. It handles
+        default ports (80 for HTTP, 443 for HTTPS) when not explicitly specified.
     """
     global path_hash_map
 
@@ -297,12 +648,101 @@ def create_port_objs(ret_arr, url):
 
 @inherits(BadSecretsScan)
 class ImportBadSecretsOutput(data_model.ImportToolXOutput):
+    """
+    Luigi task for importing and processing BadSecrets vulnerability scan results.
 
-    def requires(self):
+    This task handles the post-processing of BadSecrets vulnerability outputs,
+    parsing scan results, extracting vulnerability details, and importing findings
+    into the database structure with proper categorization and severity assessment.
+
+    The class inherits from both BadSecretsScan (via @inherits decorator) and
+    ImportToolXOutput, providing access to scan parameters and import functionality.
+
+    Processing includes:
+        - Loading vulnerability scan results from JSON output files
+        - Parsing SecretFound findings with detailed vulnerability information
+        - Creating database objects for vulnerabilities with proper classification
+        - Handling both existing endpoints and new target object creation
+        - Comprehensive vulnerability detail extraction and storage
+
+    Attributes:
+        Inherits all attributes from BadSecretsScan including scan_input parameter
+
+    Methods:
+        requires: Specifies that BadSecretsScan must complete before import
+        run: Processes vulnerability findings and imports results to database
+
+    Example:
+        >>> import_task = ImportBadSecretsOutput(scan_input=scan_obj)
+        >>> luigi.build([import_task])  # Runs BadSecretsScan then ImportBadSecretsOutput
+
+    Note:
+        This task automatically depends on BadSecretsScan completion and processes
+        all vulnerability findings with detailed categorization including vulnerability
+        names, descriptions, and affected cryptographic secrets.
+    """
+
+    def requires(self) -> BadSecretsScan:
+        """
+        Define task dependencies for the import operation.
+
+        Ensures that the BadSecretsScan task completes successfully before attempting
+        to import and process the cryptographic vulnerability scan results.
+
+        Returns:
+            BadSecretsScan: The vulnerability scanning task that must complete before import
+
+        Example:
+            >>> task = ImportBadSecretsOutput(scan_input=scan_obj)
+            >>> deps = task.requires()
+            >>> print(type(deps).__name__)
+            BadSecretsScan
+        """
         # Requires BadSecretsScan Task to be run prior
         return BadSecretsScan(scan_input=self.scan_input)
 
-    def run(self):
+    def run(self) -> None:
+        """
+        Process and import BadSecrets cryptographic vulnerability results into the database.
+
+        This method performs comprehensive processing of vulnerability scan findings,
+        including vulnerability classification, detail extraction, and database object
+        creation. It handles the complete import workflow from JSON parsing to database
+        insertion with proper vulnerability categorization.
+
+        The processing workflow includes:
+        - Loading vulnerability scan results from JSON output files
+        - Parsing 'SecretFound' findings with cryptographic vulnerability details
+        - Extracting vulnerability names, descriptions, and affected secrets
+        - Creating database objects for vulnerabilities with proper relationships
+        - Handling new target creation for URLs not in existing scope
+        - Comprehensive vulnerability detail storage and classification
+
+        Returns:
+            None: Results are imported directly into the database via import_results()
+
+        Side Effects:
+            - Creates database records for vulnerabilities with detailed information
+            - May create new host, port, and endpoint objects for discovered targets
+            - Processes all vulnerability findings from the preceding BadSecretsScan task
+            - Updates vulnerability database with cryptographic weakness information
+
+        Raises:
+            json.JSONDecodeError: If scan output files contain invalid JSON
+            FileNotFoundError: If expected vulnerability output files are missing
+            KeyError: If required fields are missing from vulnerability findings
+            Exception: Various exceptions related to vulnerability processing or database operations
+
+        Example:
+            >>> task = ImportBadSecretsOutput(scan_input=scan_obj)
+            >>> task.run()  # Processes and imports all vulnerability findings
+
+        Note:
+            The method specifically looks for 'SecretFound' type findings and extracts
+            detailed vulnerability information including secret values and descriptions.
+            For new URLs not in the existing scope, it creates appropriate database
+            objects using the create_port_objs helper function.
+        """
 
         http_output_file = self.input().path
         scheduled_scan_obj = self.scan_input

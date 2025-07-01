@@ -1,3 +1,52 @@
+"""
+Pyshot Screenshot Capture Module.
+
+This module provides comprehensive web page screenshot capabilities using Pyshot,
+a Python library that leverages PhantomJS for automated web page rendering and
+image capture. It integrates with the Waluigi framework to perform automated
+screenshot collection of discovered web endpoints.
+
+The module supports:
+    - Automated screenshot capture of web pages and endpoints
+    - Support for both HTTP and HTTPS targets
+    - Domain-based and IP-based screenshot collection
+    - Concurrent screenshot processing for performance
+    - Base64 image encoding and hash-based deduplication
+    - Integration with HTTP endpoint discovery results
+
+Classes:
+    Pyshot: Main tool class implementing the screenshot capture interface
+    PyshotScan: Luigi task for executing screenshot capture operations
+    ImportPyshotOutput: Luigi task for importing and processing screenshot results
+
+Functions:
+    pyshot_wrapper: Core screenshot capture function using pyshot library
+    queue_scan: Manages screenshot target queuing with deduplication
+
+Global Variables:
+    future_map: Thread-safe mapping for tracking queued screenshot targets
+
+Example:
+    Basic usage through the Waluigi framework::
+    
+        # Initialize the tool
+        pyshot = Pyshot()
+        
+        # Execute screenshot capture
+        success = pyshot.scan_func(scan_input_obj)
+        
+        # Import results
+        imported = pyshot.import_func(scan_input_obj)
+
+Note:
+    This module requires PhantomJS to be installed and accessible in the system PATH.
+    The tool performs active web requests and should be used responsibly with proper
+    authorization on target systems.
+
+.. moduleauthor:: Waluigi Framework Team
+.. version:: 1.0.0
+"""
+
 import json
 import os
 import binascii
@@ -6,6 +55,7 @@ import traceback
 import hashlib
 import base64
 import logging
+from typing import Dict, Tuple, Any, Optional, List
 
 from luigi.util import inherits
 from pyshot import pyshot as pyshot_lib
@@ -13,12 +63,62 @@ from waluigi import scan_utils
 from os.path import exists
 from waluigi import data_model
 
-future_map = {}
+# Global future mapping for screenshot target management and deduplication
+future_map: Dict[str, Tuple[Optional[int], Tuple]] = {}
 
 
 class Pyshot(data_model.WaluigiTool):
+    """
+    Pyshot web page screenshot capture integration for the Waluigi framework.
 
-    def __init__(self):
+    This class provides integration with Pyshot, a Python library that uses PhantomJS
+    for automated web page screenshot capture. It implements the WaluigiTool interface
+    to provide visual reconnaissance capabilities within the security scanning workflow.
+
+    Pyshot is particularly useful for:
+        - Visual confirmation of discovered web endpoints
+        - Documentation of web application interfaces
+        - Identification of interesting login pages or admin panels
+        - Evidence collection for security assessments
+
+    Attributes:
+        name (str): The tool identifier ('pyshot')
+        description (str): Human-readable description of the tool's purpose
+        project_url (str): URL to the official Pyshot project repository
+        collector_type (int): Identifies this as an active scanning tool
+        scan_order (int): Execution priority within the scanning workflow (8)
+        args (str): Command-line arguments (empty for this tool)
+        scan_func (callable): Static method for executing screenshot operations
+        import_func (callable): Static method for importing screenshot results
+
+    Methods:
+        pyshot_scan_func: Executes screenshot capture operations
+        pyshot_import: Imports and processes screenshot results
+
+    Example:
+        >>> tool = Pyshot()
+        >>> print(tool.name)
+        pyshot
+
+        >>> # Execute screenshot capture through the framework
+        >>> success = tool.scan_func(scan_input_obj)
+        >>> if success:
+        ...     imported = tool.import_func(scan_input_obj)
+
+    Note:
+        The scan_order of 8 positions this tool to run after endpoint discovery
+        but before final reporting phases. PhantomJS must be installed and
+        accessible in the system PATH for proper operation.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize the Pyshot tool with default configuration.
+
+        Sets up the tool with appropriate parameters for web page screenshot
+        capture, including integration points for the scanning and import
+        workflow phases.
+        """
         self.name = 'pyshot'
         self.description = 'A python library that can be used for taking screenshots of web pages using PhantomJS.'
         self.project_url = 'https://github.com/securifera/pyshot'
@@ -29,7 +129,30 @@ class Pyshot(data_model.WaluigiTool):
         self.import_func = Pyshot.pyshot_import
 
     @staticmethod
-    def pyshot_scan_func(scan_input):
+    def pyshot_scan_func(scan_input: Any) -> bool:
+        """
+        Execute Pyshot screenshot capture operations.
+
+        This static method serves as the entry point for executing screenshot
+        capture operations within the Waluigi framework. It builds and runs the
+        PyshotScan Luigi task with the provided scan input configuration.
+
+        Args:
+            scan_input (Any): The scan input object containing target information,
+                            endpoint data, and execution parameters
+
+        Returns:
+            bool: True if the screenshot capture completed successfully, False otherwise
+
+        Example:
+            >>> scan_obj = create_scan_input(...)  # Configure scan
+            >>> success = Pyshot.pyshot_scan_func(scan_obj)
+            >>> print(f"Screenshot capture successful: {success}")
+
+        Note:
+            Uses Luigi's local scheduler for task execution and provides detailed
+            summary information for debugging and monitoring purposes.
+        """
         luigi_run_result = luigi.build([PyshotScan(
             scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
         if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
@@ -37,7 +160,30 @@ class Pyshot(data_model.WaluigiTool):
         return True
 
     @staticmethod
-    def pyshot_import(scan_input):
+    def pyshot_import(scan_input: Any) -> bool:
+        """
+        Import and process Pyshot screenshot results.
+
+        This static method handles the import phase of the screenshot workflow,
+        processing captured screenshots and importing findings into the database
+        structure with proper metadata and relationships.
+
+        Args:
+            scan_input (Any): The scan input object containing configuration
+                            and metadata for the import operation
+
+        Returns:
+            bool: True if the import completed successfully, False otherwise
+
+        Example:
+            >>> # After successful screenshot capture
+            >>> imported = Pyshot.pyshot_import(scan_obj)
+            >>> print(f"Import successful: {imported}")
+
+        Note:
+            This method depends on the successful completion of the screenshot
+            capture phase and processes all generated screenshot files and metadata.
+        """
         luigi_run_result = luigi.build([ImportPyshotOutput(
             scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
         if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
@@ -45,7 +191,45 @@ class Pyshot(data_model.WaluigiTool):
         return True
 
 
-def pyshot_wrapper(ip_addr, port, dir_path, ssl_val, port_id, query_arg="", domain=None, http_endpoint_data_id=None):
+def pyshot_wrapper(ip_addr: str, port: str, dir_path: str, ssl_val: bool, port_id: int,
+                   query_arg: str = "", domain: Optional[str] = None,
+                   http_endpoint_data_id: Optional[int] = None) -> str:
+    """
+    Wrapper function for executing Pyshot screenshot capture operations.
+
+    This function provides a standardized interface for capturing screenshots
+    of web endpoints using the Pyshot library. It handles the configuration
+    and execution of screenshot capture with appropriate logging and error handling.
+
+    Args:
+        ip_addr (str): The target IP address or hostname
+        port (str): The target port number as a string
+        dir_path (str): Directory path where screenshots will be saved
+        ssl_val (bool): Whether to use HTTPS (True) or HTTP (False)
+        port_id (int): Database identifier for the target port
+        query_arg (str, optional): URL path/query string to append. Defaults to "".
+        domain (str, optional): Domain name to use instead of IP. Defaults to None.
+        http_endpoint_data_id (int, optional): Database ID for endpoint data. Defaults to None.
+
+    Returns:
+        str: Status message from the screenshot operation (typically empty)
+
+    Side Effects:
+        - Creates screenshot files in the specified directory
+        - Generates metadata files for screenshot import
+        - Logs debug information about the screenshot operation
+
+    Example:
+        >>> result = pyshot_wrapper(
+        ...     "192.168.1.1", "80", "/tmp/screenshots", False, 123,
+        ...     query_arg="/admin", domain="example.com"
+        ... )
+        >>> print("Screenshot capture completed")
+
+    Note:
+        The function uses the pyshot library's take_screenshot method internally.
+        SSL certificate validation is typically disabled for broader compatibility.
+    """
 
     ret_msg = ""
     domain_str = ''
@@ -59,7 +243,44 @@ def pyshot_wrapper(ip_addr, port, dir_path, ssl_val, port_id, query_arg="", doma
     return ret_msg
 
 
-def queue_scan(host, port_str, dir_path, secure, port_id, query_arg="", domain_str=None, http_endpoint_data_id=None):
+def queue_scan(host: str, port_str: str, dir_path: str, secure: bool, port_id: int,
+               query_arg: str = "", domain_str: Optional[str] = None,
+               http_endpoint_data_id: Optional[int] = None) -> None:
+    """
+    Queue a screenshot capture target with deduplication and priority management.
+
+    This function manages the queuing of screenshot targets while preventing
+    duplicates and handling priority-based updates. It maintains a global mapping
+    of URLs to their associated screenshot tasks and metadata.
+
+    Args:
+        host (str): The target host (IP address or hostname)
+        port_str (str): The target port number as a string
+        dir_path (str): Directory path where screenshots will be saved
+        secure (bool): Whether to use HTTPS (True) or HTTP (False)
+        port_id (int): Database identifier for the target port
+        query_arg (str, optional): URL path/query string to append. Defaults to "".
+        domain_str (str, optional): Domain name for the target. Defaults to None.
+        http_endpoint_data_id (int, optional): Database ID for endpoint data. Defaults to None.
+
+    Returns:
+        None: This function modifies the global future_map dictionary in-place
+
+    Side Effects:
+        - Modifies the global future_map to track queued screenshot targets
+        - Implements priority-based replacement for existing targets
+        - Constructs URLs for deduplication purposes
+
+    Example:
+        >>> queue_scan("192.168.1.1", "80", "/tmp/screenshots", False, 123,
+        ...           query_arg="/login", domain_str="example.com")
+        >>> # Target is now queued for screenshot capture
+
+    Note:
+        If a URL is already queued and the new request has an endpoint data ID
+        while the existing one doesn't, the new request takes priority.
+        This ensures more specific endpoint data is preserved.
+    """
 
     global future_map
 
@@ -86,10 +307,62 @@ def queue_scan(host, port_str, dir_path, secure, port_id, query_arg="", domain_s
 
 
 class PyshotScan(luigi.Task):
+    """
+    Luigi task for executing Pyshot screenshot capture operations.
+
+    This task orchestrates the execution of screenshot capture against discovered
+    web endpoints, managing input parameters, output file generation, and execution
+    flow within the Luigi workflow framework. It processes HTTP endpoints from
+    previous scanning phases and generates visual documentation.
+
+    Attributes:
+        scan_input (luigi.Parameter): The scan input object containing target information,
+                                    endpoint data, and configuration parameters
+
+    Methods:
+        output: Defines the output file target for the screenshot metadata
+        requires: Specifies task dependencies (inherited from parent tasks)
+        run: Executes the actual screenshot capture operations
+
+    Example:
+        >>> scan_obj = ScanInputObject(...)  # Configured scan input
+        >>> task = PyshotScan(scan_input=scan_obj)
+        >>> luigi.build([task])
+
+    Note:
+        This class inherits from luigi.Task and follows Luigi's task execution model.
+        The task processes HTTP endpoints discovered by previous scanning phases
+        and generates screenshots with metadata for later import.
+    """
 
     scan_input = luigi.Parameter()
 
-    def output(self):
+    def output(self) -> luigi.LocalTarget:
+        """
+        Define the output file target for screenshot metadata.
+
+        Creates a unique metadata file path based on the scan ID and tool name,
+        ensuring that screenshot metadata is properly organized and accessible to
+        downstream tasks in the Luigi workflow.
+
+        Returns:
+            luigi.LocalTarget: A Luigi target representing the metadata file where
+                             screenshot information will be stored
+
+        Side Effects:
+            - Initializes the tool output directory structure if it doesn't exist
+            - Creates directory paths as needed for organized output storage
+
+        Example:
+            >>> task = PyshotScan(scan_input=scan_obj)
+            >>> target = task.output()
+            >>> print(target.path)
+            /path/to/outputs/pyshot/scan_123/screenshots.meta
+
+        Note:
+            The metadata file contains JSON lines with screenshot information
+            including file paths, URLs, and associated endpoint data.
+        """
 
         scheduled_scan_obj = self.scan_input
         scan_id = scheduled_scan_obj.id
@@ -103,7 +376,43 @@ class PyshotScan(luigi.Task):
 
         return luigi.LocalTarget(meta_file)
 
-    def run(self):
+    def run(self) -> None:
+        """
+        Execute the Pyshot screenshot capture operation.
+
+        This method orchestrates the complete screenshot workflow including:
+        - Processing discovered HTTP endpoints and web paths
+        - Queuing screenshot targets with deduplication
+        - Handling both IP-based and domain-based targets
+        - Concurrent execution of screenshot capture operations
+        - Intelligent filtering for likely web endpoints
+
+        The method processes all HTTP endpoints from previous scan phases,
+        constructs appropriate URLs, and executes screenshot capture against
+        each unique target concurrently for performance.
+
+        Returns:
+            None: Screenshots and metadata are written to the output directory
+
+        Side Effects:
+            - Modifies the global future_map to track screenshot targets
+            - Creates screenshot files in the output directory
+            - Generates metadata file for import processing
+            - Registers tool executors with the scan management system
+
+        Raises:
+            OSError: If output directories cannot be created or accessed
+            Exception: Various exceptions related to screenshot capture or file I/O
+
+        Example:
+            >>> task = PyshotScan(scan_input=scan_obj)
+            >>> task.run()  # Executes all configured screenshot captures
+
+        Note:
+            This method includes intelligent filtering to avoid screenshot attempts
+            on non-web ports and implements concurrent execution for performance.
+            It processes both discovered HTTP endpoints and likely web ports.
+        """
 
         global future_map
         # Ensure output folder exists
@@ -239,12 +548,100 @@ class PyshotScan(luigi.Task):
 
 @inherits(PyshotScan)
 class ImportPyshotOutput(data_model.ImportToolXOutput):
+    """
+    Luigi task for importing and processing Pyshot screenshot results.
 
-    def requires(self):
+    This task handles the post-processing of Pyshot screenshot outputs, parsing
+    metadata files, processing screenshot images, and importing the findings
+    into the database structure with proper relationships and deduplication.
+
+    The class inherits from both PyshotScan (via @inherits decorator) and
+    ImportToolXOutput, providing access to scan parameters and import functionality.
+
+    Processing includes:
+        - Loading screenshot metadata from JSON line files
+        - Hash-based screenshot deduplication
+        - Base64 encoding of screenshot images
+        - Creation of database objects for screenshots, domains, and endpoints
+        - Batch import of processed data with relationship mapping
+
+    Attributes:
+        Inherits all attributes from PyshotScan including scan_input parameter
+
+    Methods:
+        requires: Specifies that PyshotScan must complete before import
+        run: Processes screenshot files and imports results to database
+
+    Example:
+        >>> import_task = ImportPyshotOutput(scan_input=scan_obj)
+        >>> luigi.build([import_task])  # Runs PyshotScan then ImportPyshotOutput
+
+    Note:
+        This task automatically depends on PyshotScan completion and processes
+        all screenshot files and metadata generated during the capture phase.
+        Uses SHA-1 hashing for both screenshot and path deduplication.
+    """
+
+    def requires(self) -> PyshotScan:
+        """
+        Define task dependencies for the import operation.
+
+        Ensures that the PyshotScan task completes successfully before attempting
+        to import and process the screenshot results and metadata.
+
+        Returns:
+            PyshotScan: The screenshot capture task that must complete before import
+
+        Example:
+            >>> task = ImportPyshotOutput(scan_input=scan_obj)
+            >>> deps = task.requires()
+            >>> print(type(deps).__name__)
+            PyshotScan
+        """
         # Requires PyshotScan Task to be run prior
         return PyshotScan(scan_input=self.scan_input)
 
-    def run(self):
+    def run(self) -> None:
+        """
+        Process and import Pyshot screenshot results into the database.
+
+        This method performs comprehensive processing of screenshot files and metadata,
+        including image hashing, Base64 encoding, and database object creation.
+        It handles the complete import workflow from file processing to database
+        insertion with proper relationship mapping.
+
+        The processing workflow includes:
+        - Loading screenshot metadata from JSON line files
+        - Processing screenshot images with hash-based deduplication
+        - Base64 encoding of image data for database storage
+        - Creating domain, path, endpoint, and screenshot database objects
+        - Batch importing with proper relationship mapping
+        - Updating scan scope with imported data
+
+        Returns:
+            None: Results are imported directly into the database via batch operations
+
+        Side Effects:
+            - Creates database records for screenshots, domains, paths, and endpoints
+            - Updates deduplication maps for screenshots and paths
+            - Processes all screenshot files from the preceding PyshotScan task
+            - Writes import results to the tool import file
+
+        Raises:
+            json.JSONDecodeError: If metadata files contain invalid JSON
+            FileNotFoundError: If expected screenshot files are missing
+            IOError: If screenshot files cannot be read or processed
+            Exception: Various exceptions related to image processing or database operations
+
+        Example:
+            >>> task = ImportPyshotOutput(scan_input=scan_obj)
+            >>> task.run()  # Processes and imports all screenshot results
+
+        Note:
+            Uses SHA-1 hashing for both screenshot and web path deduplication.
+            Screenshot images are stored as Base64-encoded strings in the database.
+            The method handles both existing and new HTTP endpoint data objects.
+        """
 
         meta_file = self.input().path
         scheduled_scan_obj = self.scan_input

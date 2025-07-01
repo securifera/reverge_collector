@@ -1,8 +1,25 @@
+"""
+Waluigi Data Model Module
+
+This module provides the core data structures and classes for the Waluigi security scanning framework.
+It defines various record types (hosts, ports, domains, vulnerabilities, etc.) and manages scan data
+throughout the collection and analysis process.
+
+The module handles:
+- Data model definitions for security scan results
+- Object serialization/deserialization 
+- Data relationships and mappings
+- Tool integration and execution management
+- Scan result processing and aggregation
+
+"""
+
 import base64
 import binascii
 import enum
 import hashlib
 import uuid
+from typing import List, Dict, Set, Optional, Union, Any, Tuple
 import netaddr
 import luigi
 import os
@@ -13,29 +30,51 @@ import traceback
 
 from waluigi import scan_utils
 
-waluigi_tools = [
-    ('waluigi.masscan', 'Masscan'),
-    ('waluigi.nmap_scan', 'Nmap'),
-    ('waluigi.pyshot_scan', 'Pyshot'),
-    ('waluigi.nuclei_scan', 'Nuclei'),
-    ('waluigi.subfinder_scan', 'Subfinder'),
-    ('waluigi.feroxbuster_scan', 'Feroxbuster'),
-    ('waluigi.shodan_lookup', 'Shodan'),
-    ('waluigi.httpx_scan', 'Httpx'),
+# Configuration: Available security scanning tools
+# Each tuple contains (module_name, class_name) for dynamic tool loading
+waluigi_tools: List[Tuple[str, str]] = [
+    ('waluigi.masscan', 'Masscan'),          # Port scanner
+    ('waluigi.nmap_scan', 'Nmap'),           # Network mapper and port scanner
+    ('waluigi.pyshot_scan', 'Pyshot'),       # Screenshot capture tool
+    ('waluigi.nuclei_scan', 'Nuclei'),       # Vulnerability scanner
+    ('waluigi.subfinder_scan', 'Subfinder'),  # Subdomain discovery
+    ('waluigi.feroxbuster_scan', 'Feroxbuster'),  # Directory/file brute forcer
+    ('waluigi.shodan_lookup', 'Shodan'),     # Shodan API integration
+    ('waluigi.httpx_scan', 'Httpx'),         # HTTP toolkit
+    # SecurityTrails API integration
     ('waluigi.sectrails_ip_lookup', 'Sectrails'),
-    ('waluigi.module_scan', 'Module'),
-    ('waluigi.badsecrets_scan', 'Badsecrets'),
-    ('waluigi.webcap_scan', 'Webcap')
-    # ('waluigi.divvycloud_lookup', 'Divvycloud')
+    ('waluigi.module_scan', 'Module'),       # Custom module execution
+    ('waluigi.badsecrets_scan', 'Badsecrets'),  # Secret detection
+    ('waluigi.webcap_scan', 'Webcap')        # Web capture and analysis
+    # ('waluigi.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
 ]
 
-wordlist_path = "/tmp/reverge_wordlist"
+# Global configuration: Wordlist storage path
+wordlist_path: str = "/tmp/reverge_wordlist"
 if not os.path.exists(wordlist_path):
     os.mkdir(wordlist_path)
 
 
-def get_tool_classes():
-    tool_classes = []
+def get_tool_classes() -> List[Any]:
+    """
+    Dynamically load and return all available Waluigi security scanning tool classes.
+
+    This function imports each tool module specified in the waluigi_tools configuration
+    and retrieves the corresponding class objects for tool instantiation.
+
+    Returns:
+        List[Any]: A list of tool class objects that can be instantiated for scanning
+
+    Raises:
+        ImportError: If a specified module cannot be imported
+        AttributeError: If a specified class cannot be found in the module
+
+    Example:
+        >>> tools = get_tool_classes()
+        >>> for tool_class in tools:
+        ...     tool_instance = tool_class()
+    """
+    tool_classes: List[Any] = []
 
     for module_name, class_name in waluigi_tools:
         module = importlib.import_module(module_name)
@@ -44,7 +83,31 @@ def get_tool_classes():
     return tool_classes
 
 
-def update_host_port_obj_map(scan_data, port_id, host_port_obj_map):
+def update_host_port_obj_map(scan_data: 'ScanData', port_id: str, host_port_obj_map: Dict[str, Dict[str, Any]]) -> None:
+    """
+    Update the host-port object mapping with scope-filtered port information.
+
+    This function processes a port object and adds it to the host-port mapping if it meets
+    the scope criteria (LOCAL or SCOPE tags). It creates mappings for both IP:port and
+    domain:port combinations.
+
+    Args:
+        scan_data (ScanData): The scan data container with all network objects
+        port_id (str): Unique identifier of the port to process
+        host_port_obj_map (Dict[str, Dict[str, Any]]): Mapping to update with host:port -> {host_obj, port_obj}
+
+    Returns:
+        None: Modifies host_port_obj_map in place
+
+    Note:
+        Only processes ports with LOCAL or SCOPE tags to filter out irrelevant remote data
+
+    Example:
+        >>> host_port_obj_map = {}
+        >>> update_host_port_obj_map(scan_data, "port_123", host_port_obj_map)
+        >>> print(host_port_obj_map["192.168.1.1:80"])
+        {'host_obj': <Host object>, 'port_obj': <Port object>}
+    """
 
     tag_list = [RecordTag.SCOPE.value, RecordTag.LOCAL.value]
 
@@ -86,10 +149,32 @@ def update_host_port_obj_map(scan_data, port_id, host_port_obj_map):
 
 
 class CollectorType(enum.Enum):
-    PASSIVE = 1
-    ACTIVE = 2
+    """
+    Enumeration defining the types of security data collection methods.
 
-    def __str__(self):
+    This enum categorizes scanning tools based on their interaction approach:
+    - PASSIVE: Tools that collect data without actively probing targets
+    - ACTIVE: Tools that actively probe and interact with targets
+
+    Attributes:
+        PASSIVE (int): Passive collection methods (value: 1)
+        ACTIVE (int): Active scanning methods (value: 2)
+
+    Example:
+        >>> tool_type = CollectorType.PASSIVE
+        >>> print(str(tool_type))
+        'PASSIVE'
+    """
+    PASSIVE = 1  # Passive data collection (e.g., Shodan lookups, DNS queries)
+    ACTIVE = 2   # Active scanning (e.g., port scanning, web crawling)
+
+    def __str__(self) -> str:
+        """
+        Return string representation of the collector type.
+
+        Returns:
+            str: String representation ('PASSIVE', 'ACTIVE', or None)
+        """
         if (self == CollectorType.PASSIVE):
             return "PASSIVE"
         elif (self == CollectorType.ACTIVE):
@@ -98,25 +183,81 @@ class CollectorType(enum.Enum):
             return None
 
 
-class ToolExecutor():
+class ToolExecutor:
+    """
+    Manages execution context for security scanning tools.
 
-    def __init__(self, thread_future_array=[], proc_pids=set()):
-        self.thread_future_array = thread_future_array
-        self.proc_pids = proc_pids
+    This class tracks running threads and processes associated with tool execution,
+    providing centralized management of concurrent scanning operations.
 
-    def get_thread_futures(self):
+    Attributes:
+        thread_future_array (List): List of concurrent.futures objects for thread tracking
+        proc_pids (Set[int]): Set of process IDs for subprocess tracking
+
+    Example:
+        >>> executor = ToolExecutor()
+        >>> futures = executor.get_thread_futures()
+        >>> pids = executor.get_process_pids()
+    """
+
+    def __init__(self, thread_future_array: List[Any] = None, proc_pids: Set[int] = None) -> None:
+        """
+        Initialize the ToolExecutor with thread and process tracking collections.
+
+        Args:
+            thread_future_array (List[Any], optional): List of future objects for thread tracking
+            proc_pids (Set[int], optional): Set of process IDs for subprocess tracking
+        """
+        self.thread_future_array: List[Any] = thread_future_array or []
+        self.proc_pids: Set[int] = proc_pids or set()
+
+    def get_thread_futures(self) -> List[Any]:
+        """
+        Get the list of thread future objects being tracked.
+
+        Returns:
+            List[Any]: List of concurrent.futures objects
+        """
         return self.thread_future_array
 
-    def get_process_pids(self):
+    def get_process_pids(self) -> Set[int]:
+        """
+        Get the set of process IDs being tracked.
+
+        Returns:
+            Set[int]: Set of process IDs for running subprocesses
+        """
         return self.proc_pids
 
 
 class RecordTag(enum.Enum):
-    LOCAL = 1
-    REMOTE = 2
-    SCOPE = 3
+    """
+    Enumeration for categorizing data records based on their origin and scope.
 
-    def __str__(self):
+    This enum helps filter and organize scan results based on where the data
+    originated and whether it's within the defined scanning scope.
+
+    Attributes:
+        LOCAL (int): Data collected directly by local scanning tools (value: 1)
+        REMOTE (int): Data obtained from remote sources/APIs (value: 2)  
+        SCOPE (int): Data that falls within the defined scanning scope (value: 3)
+
+    Example:
+        >>> tag = RecordTag.SCOPE
+        >>> print(str(tag))
+        'SCOPE'
+    """
+    LOCAL = 1   # Data collected by local tools/scans
+    REMOTE = 2  # Data from remote sources (APIs, databases)
+    SCOPE = 3   # Data within the defined scanning scope
+
+    def __str__(self) -> str:
+        """
+        Return string representation of the record tag.
+
+        Returns:
+            str: String representation ('LOCAL', 'REMOTE', 'SCOPE', or None)
+        """
         if (self == RecordTag.LOCAL):
             return "LOCAL"
         elif (self == RecordTag.REMOTE):
@@ -127,21 +268,66 @@ class RecordTag(enum.Enum):
             return None
 
 
-class WaluigiTool():
+class WaluigiTool:
+    """
+    Base class representing a security scanning tool within the Waluigi framework.
 
-    def __init__(self):
-        self.name = None
-        self.collector_type = None
-        self.scan_order = None
-        self.args = None
-        self.description = None
-        self.project_url = None
-        self.scope_func = None
-        self.scan_func = None
-        self.import_func = None
+    This class encapsulates the configuration and metadata for individual security
+    scanning tools, including their execution parameters, description, and callback functions.
 
-    def to_jsonable(self) -> dict:
-        ret_dict = {}
+    Attributes:
+        name (str): Human-readable name of the tool
+        collector_type (CollectorType): Type of collection method (ACTIVE/PASSIVE)
+        scan_order (int): Execution order priority for the tool
+        args (str): Command-line arguments or configuration parameters
+        description (str): Detailed description of the tool's purpose and functionality
+        project_url (str): URL to the tool's project page or documentation
+        scope_func (callable): Function to determine if tool should run on given scope
+        scan_func (callable): Main scanning function that executes the tool
+        import_func (callable): Function to import and process tool results
+
+    Example:
+        >>> tool = WaluigiTool()
+        >>> tool.name = "Nmap"
+        >>> tool.collector_type = CollectorType.ACTIVE
+        >>> tool_data = tool.to_jsonable()
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize a new WaluigiTool instance with default values.
+
+        All attributes are initialized to None and should be set by subclasses
+        or during tool configuration.
+        """
+        self.name: Optional[str] = None
+        self.collector_type: Optional[CollectorType] = None
+        self.scan_order: Optional[int] = None
+        self.args: Optional[str] = None
+        self.description: Optional[str] = None
+        self.project_url: Optional[str] = None
+        self.scope_func: Optional[callable] = None
+        self.scan_func: Optional[callable] = None
+        self.import_func: Optional[callable] = None
+
+    def to_jsonable(self) -> Dict[str, Any]:
+        """
+        Convert the tool configuration to a JSON-serializable dictionary.
+
+        This method creates a dictionary representation of the tool's configuration
+        that can be serialized to JSON for storage or transmission.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing tool configuration data
+
+        Example:
+            >>> tool = WaluigiTool()
+            >>> tool.name = "Nmap"
+            >>> data = tool.to_jsonable()
+            >>> print(data['name'])
+            'Nmap'
+        """
+        ret_dict: Dict[str, Any] = {}
         ret_dict['name'] = self.name
         ret_dict['tool_type'] = self.collector_type
         ret_dict['scan_order'] = self.scan_order
@@ -152,16 +338,52 @@ class WaluigiTool():
 
 
 class ImportToolXOutput(luigi.Task):
+    """
+    Luigi Task for importing and processing security scanning tool output.
 
-    def output(self):
+    This class handles the import of scan results from individual tools, processes them
+    for database storage, and updates the scan scope with new findings. It manages the
+    workflow of converting raw tool output into structured data objects.
 
+    Attributes:
+        scan_input: Reference to the scheduled scan object containing scan context
+
+    Example:
+        >>> import_task = ImportToolXOutput()
+        >>> output_target = import_task.output()
+        >>> is_complete = import_task.complete()
+    """
+
+    def output(self) -> luigi.LocalTarget:
+        """
+        Define the output target for the imported tool results.
+
+        Creates a LocalTarget pointing to the processed import file that will contain
+        the JSON-formatted scan results ready for database import.
+
+        Returns:
+            luigi.LocalTarget: Target file for the imported and processed results
+        """
         tool_output_file = self.input().path
         dir_path = os.path.dirname(tool_output_file)
         out_file = dir_path + os.path.sep + "tool_import_json"
 
         return luigi.LocalTarget(out_file)
 
-    def complete(self):
+    def complete(self) -> bool:
+        """
+        Check if the import task is complete and update scan scope if needed.
+
+        This method performs a custom completion check by verifying that the import
+        file exists and contains valid JSON data. If complete, it updates the scan
+        scope with the imported results.
+
+        Returns:
+            bool: True if the task is complete and scope has been updated, False otherwise
+
+        Note:
+            This method has the side effect of updating the scan scope when complete
+        """
         # Custom completion check: Verify the scan objects exist and update the scope
         output = self.output()
         if output.exists():
@@ -183,7 +405,29 @@ class ImportToolXOutput(luigi.Task):
 
         return False
 
-    def import_results(self, scheduled_scan_obj, obj_arr):
+    def import_results(self, scheduled_scan_obj: Any, obj_arr: List[Any]) -> None:
+        """
+        Import and process scan results from a security tool.
+
+        This method takes raw scan objects, converts them to a database-compatible format,
+        imports them to the server, updates IDs based on server response, and updates
+        the local scan scope with the processed results.
+
+        Args:
+            scheduled_scan_obj: The scheduled scan object containing scan context and metadata
+            obj_arr (List[Any]): List of scan result objects to import and process
+
+        Returns:
+            None: Results are written to file and scan scope is updated in place
+
+        Raises:
+            Exception: If there are issues with data serialization or server communication
+
+        Example:
+            >>> import_task = ImportToolXOutput()
+            >>> results = [host_obj, port_obj, domain_obj]
+            >>> import_task.import_results(scan_obj, results)
+        """
 
         scan_id = scheduled_scan_obj.scan_id
         recon_manager = scheduled_scan_obj.scan_thread.recon_manager
@@ -226,11 +470,35 @@ class ImportToolXOutput(luigi.Task):
                 "No objects to import for scan %s" % scan_id)
 
 
-def update_scope_array(record_map, updated_record_map=None):
+def update_scope_array(record_map: Dict[str, Any], updated_record_map: Optional[List[Dict[str, str]]] = None) -> List[Dict[str, Any]]:
+    """
+    Update record IDs based on database responses and return updated scope array.
+
+    This function processes records that have been imported to the database and updates
+    their local IDs to match the database-assigned IDs. It also updates all references
+    to these IDs in related objects to maintain data consistency.
+
+    Args:
+        record_map (Dict[str, Any]): Dictionary mapping record IDs to record objects
+        updated_record_map (Optional[List[Dict[str, str]]]): List of ID mappings from database
+            Each entry should contain 'orig_id' and 'db_id' keys
+
+    Returns:
+        List[Dict[str, Any]]: List of JSON-serializable record objects with updated IDs
+
+    Note:
+        This function modifies the record_map in place by updating IDs and references
+
+    Example:
+        >>> record_map = {'temp_123': host_obj}
+        >>> db_updates = [{'orig_id': 'temp_123', 'db_id': 'host_456'}]
+        >>> updated_records = update_scope_array(record_map, db_updates)
+        >>> print(record_map['host_456'].id)  # 'host_456'
+    """
 
     # Update the record map with those from the database
     if updated_record_map and len(updated_record_map) > 0:
-        id_updates = {}
+        id_updates: Dict[str, str] = {}
 
         # Collect all updates
         for record_entry in updated_record_map:
@@ -256,9 +524,9 @@ def update_scope_array(record_map, updated_record_map=None):
             if isinstance(record_obj, HttpEndpointData) and record_obj.domain_id in id_updates:
                 record_obj.domain_id = id_updates[record_obj.domain_id]
 
-    import_arr = []
+    # Convert all records to JSON-serializable format
+    import_arr: List[Dict[str, Any]] = []
     for obj_id in record_map:
-
         obj = record_map[obj_id]
         flat_obj = obj.to_jsonable()
         import_arr.append(flat_obj)
@@ -266,11 +534,50 @@ def update_scope_array(record_map, updated_record_map=None):
     return import_arr
 
 
-class ScanData():
+class ScanData:
+    """
+    Central data container for managing security scan results and network topology.
 
-    def get_hosts(self, tag_list=None):
+    This class serves as the primary data structure for organizing and accessing all
+    scan results, network objects, and their relationships. It provides methods for
+    querying data by various criteria and maintains comprehensive mappings between
+    different types of network objects.
 
-        host_list = []
+    The class manages multiple types of security scan data:
+    - Hosts and their IP addresses
+    - Ports and services
+    - Domains and DNS information  
+    - HTTP endpoints and web data
+    - Vulnerabilities and security findings
+    - Screenshots and visual data
+    - SSL/TLS certificates
+    - Network components and modules
+
+    Attributes:
+        Various dictionaries and mappings for organizing scan data (see __init__)
+
+    Example:
+        >>> scan_data = ScanData(raw_data)
+        >>> hosts = scan_data.get_hosts([RecordTag.SCOPE.value])
+        >>> urls = scan_data.get_scope_urls()
+    """
+
+    def get_hosts(self, tag_list: Optional[List[str]] = None) -> List['Host']:
+        """
+        Retrieve host objects, optionally filtered by record tags.
+
+        Args:
+            tag_list (Optional[List[str]]): List of tag values to filter by (e.g., ['SCOPE', 'LOCAL'])
+                                          If None, returns all hosts
+
+        Returns:
+            List[Host]: List of Host objects matching the filter criteria
+
+        Example:
+            >>> scope_hosts = scan_data.get_hosts([RecordTag.SCOPE.value])
+            >>> all_hosts = scan_data.get_hosts()
+        """
+        host_list: List['Host'] = []
         host_map = self.host_map
         for host_id in host_map:
             host_obj = host_map[host_id]
@@ -283,23 +590,50 @@ class ScanData():
 
         return host_list
 
-    def get_domains(self, tag_list=None):
+    def get_domains(self, tag_list: Optional[List[str]] = None) -> List['Domain']:
+        """
+        Retrieve domain objects, optionally filtered by record tags.
 
-        domain_name_list = []
+        Args:
+            tag_list (Optional[List[str]]): List of tag values to filter by
+                                          If None, returns all domains
+
+        Returns:
+            List[Domain]: List of Domain objects matching the filter criteria
+
+        Note:
+            This method ensures domain names are unique in the returned list
+
+        Example:
+            >>> scope_domains = scan_data.get_domains([RecordTag.SCOPE.value])
+        """
+        domain_name_list: List['Domain'] = []
         domain_map = self.domain_map
         for domain_id in domain_map:
             domain_obj = domain_map[domain_id]
             if tag_list:
-                if domain_obj.tags.intersection(set(tag_list)) and domain_obj.name not in domain_name_list:
+                if domain_obj.tags.intersection(set(tag_list)) and domain_obj.name not in [d.name for d in domain_name_list]:
                     domain_name_list.append(domain_obj)
-            elif domain_obj.name not in domain_name_list:
-                domain_name_list.add(domain_obj)
+            elif domain_obj.name not in [d.name for d in domain_name_list]:
+                domain_name_list.append(domain_obj)
 
         return domain_name_list
 
-    def get_ports(self, tag_list=None):
+    def get_ports(self, tag_list: Optional[List[str]] = None) -> List['Port']:
+        """
+        Retrieve port objects, optionally filtered by record tags.
 
-        port_list = []
+        Args:
+            tag_list (Optional[List[str]]): List of tag values to filter by
+                                          If None, returns all ports
+
+        Returns:
+            List[Port]: List of Port objects matching the filter criteria
+
+        Example:
+            >>> open_ports = scan_data.get_ports([RecordTag.SCOPE.value])
+        """
+        port_list: List['Port'] = []
         port_map = self.port_map
         for port_id in port_map:
             port_obj = port_map[port_id]
@@ -311,9 +645,23 @@ class ScanData():
 
         return port_list
 
-    def get_scope_urls(self):
+    def get_scope_urls(self) -> List[str]:
+        """
+        Extract all URLs from HTTP endpoints that are marked as within scope.
 
-        endpoint_urls = set()
+        This method searches through all HTTP endpoint data objects and returns
+        the URLs for those marked with the SCOPE tag, providing a list of
+        web targets for further analysis.
+
+        Returns:
+            List[str]: List of unique URLs within the scanning scope
+
+        Example:
+            >>> urls = scan_data.get_scope_urls()
+            >>> print(urls)
+            ['https://example.com:443/', 'http://test.com:80/admin']
+        """
+        endpoint_urls: Set[str] = set()
         http_endpoint_data_map = self.http_endpoint_data_map
         for http_endpoint_data_id in http_endpoint_data_map:
             http_endpoint_data_obj = http_endpoint_data_map[http_endpoint_data_id]
@@ -324,26 +672,70 @@ class ScanData():
 
         return list(endpoint_urls)
 
-    def update(self, record_map):
+    def update(self, record_map: Union[Dict[str, Any], List[Any]]) -> None:
+        """
+        Update the scan data with new records from scan results.
 
+        This method processes new scan data and integrates it into the existing
+        data structure. It handles both dictionary and list formats of input data
+        and automatically tags records as LOCAL.
+
+        Args:
+            record_map (Union[Dict[str, Any], List[Any]]): New scan data to integrate
+                Can be either a dictionary of records or a list of record objects
+
+        Returns:
+            None: Updates the internal data structures in place
+
+        Example:
+            >>> new_data = [host_obj, port_obj, domain_obj]
+            >>> scan_data.update(new_data)
+        """
         # Parse the data
-        import_list = []
+        import_list: List[Any] = []
         if isinstance(record_map, dict):
             import_list = list(record_map.values())
         else:
             import_list = record_map
 
-        record_tags = set([RecordTag.LOCAL.value])
+        record_tags: Set[str] = set([RecordTag.LOCAL.value])
         self._process_data(import_list, record_tags)
 
         self._post_process()
 
-    def _post_process(self):
+    def _post_process(self) -> None:
+        """
+        Perform post-processing operations on scan data.
 
+        This internal method is called after data processing to update
+        derived data structures like host-port mappings.
+
+        Returns:
+            None: Updates internal mappings in place
+        """
         for port_id in self.port_map:
             update_host_port_obj_map(self, port_id, self.host_port_obj_map)
 
-    def _process_data(self, obj_list, record_tags=set()):
+    def _process_data(self, obj_list: List[Any], record_tags: Set[str] = None) -> None:
+        """
+        Process a list of scan objects and organize them into appropriate data structures.
+
+        This internal method takes raw scan objects, converts them to Record objects
+        if necessary, and sorts them into the appropriate mapping structures based
+        on their type (Host, Port, Domain, etc.).
+
+        Args:
+            obj_list (List[Any]): List of scan objects to process
+            record_tags (Set[str], optional): Set of tags to apply to processed records
+
+        Returns:
+            None: Updates internal data structures in place
+
+        Note:
+            This method handles all supported record types and maintains relationships
+            between different types of network objects
+        """
+        record_tags = record_tags or set()
 
         for obj in obj_list:
             if not isinstance(obj, Record):
@@ -609,151 +1001,342 @@ class ScanData():
                 # Add screenshot obj to list for being imported
                 self.subnet_map[record_obj.id] = record_obj
 
-            # Add to overall map
+            # Add to overall mapping
             self.scan_obj_map[record_obj.id] = record_obj
 
-    def get_port_number_list_from_scope(self):
+    def get_port_number_list_from_scope(self) -> List[str]:
+        """
+        Get the list of port numbers from the original scan scope configuration.
+
+        Returns the port numbers that were specified in the initial scan configuration,
+        typically from a port bitmap or predefined port list.
+
+        Returns:
+            List[str]: List of port numbers as strings from the scan scope
+
+        Example:
+            >>> ports = scan_data.get_port_number_list_from_scope()
+            >>> print(ports)
+            ['22', '80', '443', '8080']
+        """
         return list(self.port_number_list)
 
-    def get_port_number_list_from_port_map(self):
-        port_number_list = set()
+    def get_port_number_list_from_port_map(self) -> List[str]:
+        """
+        Get the list of port numbers from discovered ports in the port map.
+
+        Returns port numbers for all ports that have been discovered during scanning,
+        providing the actual ports found rather than just the scope.
+
+        Returns:
+            List[str]: List of unique port numbers as strings from discovered ports
+
+        Example:
+            >>> discovered_ports = scan_data.get_port_number_list_from_port_map()
+            >>> print(discovered_ports)
+            ['22', '80', '443', '3000', '8080']
+        """
+        port_number_list: Set[str] = set()
         for port_id in self.port_map:
             port_obj = self.port_map[port_id]
             if port_obj.port:
                 port_number_list.add(str(port_obj.port))
         return list(port_number_list)
 
-    def __init__(self, scan_data, record_tags=set()):
+    def __init__(self, scan_data: Dict[str, Any], record_tags: Set[str] = None) -> None:
+        """
+        Initialize a new ScanData container with scan results and configuration.
 
-        self.scan_obj_list = []
-        self.module_id = None
+        This constructor sets up all the internal data structures for organizing
+        scan results and processes the initial scan data if provided.
 
-        # Maps object IDs to the obj
-        self.scan_obj_map = {}
+        Args:
+            scan_data (Dict[str, Any]): Dictionary containing scan configuration and results
+                May include 'b64_port_bitmap' for port scope and 'obj_list' for scan objects
+            record_tags (Set[str], optional): Set of tags to apply to all processed records
+                Defaults to empty set if not provided
 
-        self.subnet_map = {}
+        Returns:
+            None: Initializes the instance with processed scan data
 
-        self.host_map = {}
-        self.host_ip_id_map = {}
+        Example:
+            >>> raw_data = {'obj_list': [host_data, port_data], 'b64_port_bitmap': 'base64data'}
+            >>> scan_data = ScanData(raw_data, {RecordTag.SCOPE.value})
+        """
+        record_tags = record_tags or set()
 
-        # Maps ip:port/domain:port to a host and port object tuple
-        self.host_port_obj_map = {}
+        # Initialize all data structure collections
+        self.scan_obj_list: List[Any] = []
+        self.module_id: Optional[str] = None
 
-        # Maps domain names to domain ids
-        self.domain_name_map = {}
+        # Core object mappings - Maps object IDs to their respective objects
+        # Universal object ID -> object mapping
+        self.scan_obj_map: Dict[str, Any] = {}
 
-        self.domain_map = {}
-        self.domain_host_id_map = {}
+        # Network infrastructure mappings
+        # Subnet ID -> Subnet object
+        self.subnet_map: Dict[str, 'Subnet'] = {}
+        # Host ID -> Host object
+        self.host_map: Dict[str, 'Host'] = {}
+        # IP address -> Host ID
+        self.host_ip_id_map: Dict[str, str] = {}
 
-        # Maps domain:port to to host id port id tuple
-        self.domain_port_id_map = {}
+        # Host-Port relationship mappings
+        # "IP:port"/"domain:port" -> {host_obj, port_obj}
+        self.host_port_obj_map: Dict[str, Dict[str, Any]] = {}
 
-        self.port_map = {}
-        self.port_host_map = {}
-        self.host_id_port_map = {}
+        # Domain name mappings
+        # Domain name -> Domain object
+        self.domain_name_map: Dict[str, 'Domain'] = {}
+        # Domain ID -> Domain object
+        self.domain_map: Dict[str, 'Domain'] = {}
+        # Host ID -> List of Domain objects
+        self.domain_host_id_map: Dict[str, List['Domain']] = {}
+        # "domain:port" -> (host_id, port_id)
+        self.domain_port_id_map: Dict[str, Tuple[str, str]] = {}
 
-        self.component_map = {}
-        self.component_port_id_map = {}
-        self.component_name_port_id_map = {}
+        # Port mappings
+        # Port ID -> Port object
+        self.port_map: Dict[str, 'Port'] = {}
+        # Port number -> Set of Host IDs
+        self.port_host_map: Dict[str, Set[str]] = {}
+        # Host ID -> List of Port objects
+        self.host_id_port_map: Dict[str, List['Port']] = {}
 
-        self.module_name_component_map = {}
+        # Web component mappings
+        # Component ID -> WebComponent object
+        self.component_map: Dict[str, 'WebComponent'] = {}
+        self.component_port_id_map: Dict[str, List['WebComponent']] = {
+        }                # Port ID -> List of WebComponent objects
+        # Component name -> List of Port IDs
+        self.component_name_port_id_map: Dict[str, List[str]] = {}
+        # Module name -> List of WebComponent objects
+        self.module_name_component_map: Dict[str, List['WebComponent']] = {}
 
-        self.path_map = {}
-        self.path_hash_id_map = {}
+        # Web path and screenshot mappings
+        # Path ID -> ListItem object
+        self.path_map: Dict[str, 'ListItem'] = {}
+        # Path hash -> List of Path IDs
+        self.path_hash_id_map: Dict[str, List[str]] = {}
+        # Screenshot ID -> Screenshot object
+        self.screenshot_map: Dict[str, 'Screenshot'] = {}
+        # Image hash -> List of Screenshot IDs
+        self.screenshot_hash_id_map: Dict[str, List[str]] = {}
 
-        self.screenshot_map = {}
-        self.screenshot_hash_id_map = {}
+        # HTTP endpoint mappings
+        # Endpoint ID -> HttpEndpoint object
+        self.http_endpoint_map: Dict[str, 'HttpEndpoint'] = {}
+        # Port ID -> List of HttpEndpoint objects
+        self.http_endpoint_port_id_map: Dict[str, List['HttpEndpoint']] = {}
+        # Path ID -> List of HttpEndpoint objects
+        self.http_endpoint_path_id_map: Dict[str, List['HttpEndpoint']] = {}
+        # Screenshot ID -> List of HttpEndpointData objects
+        self.http_endpoint_data_screenshot_id_map: Dict[str, List['HttpEndpointData']] = {
+        }
 
-        self.http_endpoint_map = {}
-        self.http_endpoint_port_id_map = {}
-        self.http_endpoint_path_id_map = {}
-        self.http_endpoint_data_screenshot_id_map = {}
+        # HTTP endpoint data mappings
+        # EndpointData ID -> HttpEndpointData object
+        self.http_endpoint_data_map: Dict[str, 'HttpEndpointData'] = {}
+        # Endpoint ID -> List of HttpEndpointData objects
+        self.endpoint_data_endpoint_id_map: Dict[str, List['HttpEndpointData']] = {
+        }
 
-        self.http_endpoint_data_map = {}
-        self.endpoint_data_endpoint_id_map = {}
+        # Collection module mappings
+        self.collection_module_map: Dict[str, 'CollectionModule'] = {
+        }                  # Module ID -> CollectionModule object
+        # Module name -> List of CollectionModule objects
+        self.module_name_id_map: Dict[str, List['CollectionModule']] = {}
+        # Output ID -> CollectionModuleOutput object
+        self.collection_module_output_map: Dict[str,
+                                                'CollectionModuleOutput'] = {}
+        # Port ID -> List of outputs
+        self.collection_module_output_port_id_map: Dict[str, List['CollectionModuleOutput']] = {
+        }
+        # Module ID -> List of outputs
+        self.module_output_module_id_map: Dict[str,
+                                               List['CollectionModuleOutput']] = {}
 
-        self.collection_module_map = {}
-        self.module_name_id_map = {}
+        # Vulnerability mappings
+        # Vulnerability ID -> Vuln object
+        self.vulnerability_map: Dict[str, 'Vuln'] = {}
+        # Vulnerability name -> List of Vuln objects
+        self.vulnerability_name_id_map: Dict[str, List['Vuln']] = {}
 
-        self.collection_module_output_map = {}
-        self.collection_module_output_port_id_map = {}
-        self.module_output_module_id_map = {}
+        # Certificate mappings
+        # Certificate ID -> Certificate object
+        self.certificate_map: Dict[str, 'Certificate'] = {}
+        # Port ID -> List of Certificate objects
+        self.certificate_port_id_map: Dict[str, List['Certificate']] = {}
 
-        self.vulnerability_map = {}
-        self.vulnerability_name_id_map = {}
+        # Scope and configuration
+        # List of port numbers from scan scope
+        self.port_number_list: List[str] = []
+        # Count of hosts processed
+        self.host_count: int = 0
 
-        self.certificate_map = {}
-        self.certificate_port_id_map = {}
+        # Additional module mappings
+        # Module ID -> Module object
+        self.module_map: Dict[str, Any] = {}
+        self.component_name_module_map: Dict[str, List[Any]] = {
+        }               # Component name -> List of modules
 
-        self.port_number_list = []
-
-        self.host_count = 0
-
-        self.module_map = {}
-        self.component_name_module_map = {}
-
+        # Process initial scan data
         # logging.getLogger(__name__).debug("Processing scan data\n %s" % scan_data)
-        # Decode the port map
+
+        # Decode the port bitmap if present (defines scanning scope)
         if 'b64_port_bitmap' in scan_data and scan_data['b64_port_bitmap']:
             b64_port_bitmap = scan_data['b64_port_bitmap']
             if len(b64_port_bitmap) > 0:
                 port_map = base64.b64decode(b64_port_bitmap)
                 self.port_number_list = scan_utils.get_ports(port_map)
 
+        # Process scan objects if present
         if 'obj_list' in scan_data and scan_data['obj_list']:
             obj_list = scan_data['obj_list']
-
-            # Parse the data
+            # Parse and organize the scan data
             self._process_data(obj_list, record_tags=record_tags)
 
-        # Post process
+        # Perform post-processing to build derived mappings
         self._post_process()
 
 
-class Record():
+class Record:
+    """
+    Base class for all scan data records in the Waluigi framework.
 
-    def __init__(self, id=None, parent=None, collection_tool_instance_id=None):
-        self.id = id if id is not None else format(
-            uuid.uuid4().int, 'x')
-        self.parent = parent
-        self.scan_data = None
-        self.tags = set()
-        self.collection_tool_instance_id = collection_tool_instance_id
+    This abstract base class provides common functionality for all types of scan data
+    objects including ID management, parent-child relationships, tagging, and 
+    JSON serialization/deserialization capabilities.
 
-    def _data_to_jsonable(self):
+    All specific record types (Host, Port, Domain, etc.) inherit from this class
+    and implement their own data serialization methods.
+
+    Attributes:
+        id (str): Unique identifier for the record (auto-generated if not provided)
+        parent (Record, optional): Parent record for hierarchical relationships
+        scan_data (ScanData, optional): Reference to the containing scan data
+        tags (Set[str]): Set of tags for categorizing the record
+        collection_tool_instance_id (str, optional): ID of the tool that created this record
+
+    Example:
+        >>> record = Record(id="custom_id", parent=host_obj)
+        >>> record.tags.add(RecordTag.SCOPE.value)
+        >>> json_data = record.to_jsonable()
+    """
+
+    def __init__(self, id: Optional[str] = None, parent: Optional['Record'] = None,
+                 collection_tool_instance_id: Optional[str] = None) -> None:
+        """
+        Initialize a new Record instance.
+
+        Args:
+            id (Optional[str]): Unique identifier for the record. If None, auto-generates UUID
+            parent (Optional[Record]): Parent record for hierarchical relationships
+            collection_tool_instance_id (Optional[str]): ID of the tool that created this record
+        """
+        self.id: str = id if id is not None else format(uuid.uuid4().int, 'x')
+        self.parent: Optional['Record'] = parent
+        self.scan_data: Optional['ScanData'] = None
+        self.tags: Set[str] = set()
+        self.collection_tool_instance_id: Optional[str] = collection_tool_instance_id
+
+    def _data_to_jsonable(self) -> Optional[Dict[str, Any]]:
+        """
+        Convert record-specific data to JSON-serializable format.
+
+        This method should be overridden by subclasses to provide their specific
+        data serialization logic.
+
+        Returns:
+            Optional[Dict[str, Any]]: Record-specific data or None if no specific data
+        """
         return None
 
-    def to_jsonable(self):
+    def to_jsonable(self) -> Dict[str, Any]:
+        """
+        Convert the complete record to a JSON-serializable dictionary.
 
-        parent_dict = None
+        This method creates a standardized JSON representation of the record
+        including metadata, parent relationships, and record-specific data.
+
+        Returns:
+            Dict[str, Any]: Complete JSON-serializable representation of the record
+
+        Example:
+            >>> record = Host()
+            >>> record.ipv4_addr = "192.168.1.1"
+            >>> json_data = record.to_jsonable()
+            >>> print(json_data['type'])
+            'host'
+        """
+        parent_dict: Optional[Dict[str, str]] = None
         if self.parent:
-            parent_dict = {'type': str(
-                self.parent.__class__.__name__).lower(), 'id': self.parent.id}
+            parent_dict = {
+                'type': str(self.parent.__class__.__name__).lower(),
+                'id': self.parent.id
+            }
 
-        ret = {}
+        ret: Dict[str, Any] = {}
         ret['id'] = self.id
         ret['type'] = str(self.__class__.__name__).lower()
         ret['parent'] = parent_dict
         ret['collection_tool_instance_id'] = self.collection_tool_instance_id
-
         ret['data'] = self._data_to_jsonable()
 
         return ret
 
-    def from_jsonsable(self, input_data_dict):
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Populate the record from a JSON-serializable dictionary.
+
+        This method should be overridden by subclasses to handle their specific
+        data deserialization logic. The base implementation raises an exception
+        to ensure proper implementation by subclasses.
+
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing record data
+
+        Raises:
+            Exception: Always raises exception if not overridden by subclass
+        """
         logging.getLogger(__name__).error(
             f"from_jsonsable called on type: {type(self)}")
         raise Exception('No jsonable method defined for the child object.')
 
     @staticmethod
-    def static_from_jsonsable(input_dict, scan_data=None, record_tags=set()):
-        obj = None
-        record_tags_inst = set(record_tags)
+    def static_from_jsonsable(input_dict: Dict[str, Any], scan_data: Optional['ScanData'] = None,
+                              record_tags: Set[str] = None) -> Optional['Record']:
+        """
+        Static factory method to create Record objects from JSON-serializable data.
+
+        This method analyzes the input dictionary and creates the appropriate
+        Record subclass instance based on the 'type' field. It handles all
+        supported record types and properly sets up parent relationships.
+
+        Args:
+            input_dict (Dict[str, Any]): Dictionary containing record data with 'type' field
+            scan_data (Optional[ScanData]): Reference to the containing scan data
+            record_tags (Set[str], optional): Set of tags to apply to the created record
+
+        Returns:
+            Optional[Record]: Created Record subclass instance, or None if creation fails
+
+        Raises:
+            Exception: If record creation or data population fails
+
+        Example:
+            >>> data = {'type': 'host', 'id': 'host_1', 'data': {'ipv4_addr': '192.168.1.1'}}
+            >>> host = Record.static_from_jsonsable(data)
+            >>> print(type(host).__name__)
+            'Host'
+        """
+        obj: Optional['Record'] = None
+        record_tags_inst: Set[str] = set(record_tags or [])
 
         obj_id = input_dict['id']
-
         record_data = input_dict['data']
-        parent_id = None
+
+        parent_id: Optional[str] = None
         if 'parent' in input_dict:
             parent_record = input_dict['parent']
             if parent_record:
@@ -763,7 +1346,7 @@ class Record():
             record_tags_set = input_dict['tags']
             record_tags_inst.update(record_tags_set)
 
-        # Create record
+        # Create record based on type
         try:
             record_type = input_dict['type']
             if record_type == 'host':
@@ -819,20 +1402,64 @@ class Record():
 
 
 class Tool(Record):
+    """
+    Represents a security scanning tool record.
 
-    def __init__(self, tool_id):
+    Simple record type for representing tools in the scanning framework.
+    Inherits from Record base class and uses the tool ID as the record ID.
+
+    Args:
+        tool_id (str): Unique identifier for the tool
+
+    Example:
+        >>> tool = Tool("nmap_001")
+        >>> print(tool.id)
+        'nmap_001'
+    """
+
+    def __init__(self, tool_id: str) -> None:
+        """Initialize a Tool record with the specified tool ID."""
         super().__init__(id=tool_id)
 
 
 class Subnet(Record):
+    """
+    Represents a network subnet discovered during scanning.
 
-    def __init__(self,  id=None):
+    This record type stores subnet information including the network address
+    and subnet mask, typically discovered through network reconnaissance.
+
+    Attributes:
+        subnet (str): Network address of the subnet
+        mask (str): Subnet mask or CIDR notation
+
+    Example:
+        >>> subnet = Subnet()
+        >>> subnet.subnet = "192.168.1.0"
+        >>> subnet.mask = "24"
+    """
+
+    def __init__(self, id: Optional[str] = None) -> None:
+        """
+        Initialize a Subnet record.
+
+        Args:
+            id (Optional[str]): Unique identifier for the subnet record
+        """
         super().__init__(id=id, parent=None)
+        self.subnet: Optional[str] = None
+        self.mask: Optional[str] = None
 
-        self.subnet = None
-        self.mask = None
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Populate subnet data from JSON dictionary.
 
-    def from_jsonsable(self, input_data_dict):
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing 'subnet' and 'mask' keys
+
+        Raises:
+            Exception: If required subnet data is missing or invalid
+        """
         try:
             self.subnet = input_data_dict['subnet']
             self.mask = input_data_dict['mask']
@@ -841,26 +1468,63 @@ class Subnet(Record):
 
 
 class Host(Record):
+    """
+    Represents a network host (computer/device) discovered during scanning.
 
-    def __init__(self,  id=None):
+    This is one of the core record types representing individual hosts on the network.
+    Hosts can have IPv4 or IPv6 addresses and serve as parents for ports, domains,
+    and other host-specific data.
+
+    Attributes:
+        ipv4_addr (Optional[str]): IPv4 address of the host
+        ipv6_addr (Optional[str]): IPv6 address of the host (currently not fully supported)
+
+    Example:
+        >>> host = Host()
+        >>> host.ipv4_addr = "192.168.1.100"
+        >>> host.tags.add(RecordTag.SCOPE.value)
+    """
+
+    def __init__(self, id: Optional[str] = None) -> None:
+        """
+        Initialize a Host record.
+
+        Args:
+            id (Optional[str]): Unique identifier for the host record
+        """
         super().__init__(id=id, parent=None)
+        self.ipv4_addr: Optional[str] = None
+        self.ipv6_addr: Optional[str] = None
 
-        self.ipv4_addr = None
-        self.ipv6_addr = None
+    def _data_to_jsonable(self) -> Dict[str, str]:
+        """
+        Convert host-specific data to JSON-serializable format.
 
-    def _data_to_jsonable(self):
-        ret = {}
+        Returns:
+            Dict[str, str]: Dictionary containing IP address information
+        """
+        ret: Dict[str, str] = {}
         if self.ipv4_addr:
             ret['ipv4_addr'] = self.ipv4_addr
         elif self.ipv6_addr:
             ret['ipv6_addr'] = self.ipv6_addr
         return ret
 
-    def from_jsonsable(self, input_data_dict):
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Populate host data from JSON dictionary.
+
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing IP address data
+
+        Raises:
+            Exception: If IP address data is missing or invalid
+        """
         try:
             if 'ipv4_addr' in input_data_dict:
                 ipv4_addr_str = input_data_dict['ipv4_addr']
                 self.ipv4_addr = str(netaddr.IPAddress(ipv4_addr_str))
+            # IPv6 support is commented out in original code
             # elif 'ipv6_addr' in input_data_dict:
             #     ipv6_addr_str = input_data_dict['ipv6_addr']
             #     self.ipv6_addr = int(netaddr.IPAddress(input_data_dict['ipv6_addr_str']))
@@ -869,21 +1533,61 @@ class Host(Record):
 
 
 class Port(Record):
+    """
+    Represents a network port on a host discovered during scanning.
 
-    def __init__(self,  parent_id=None, id=None):
+    This record type represents network services running on specific ports
+    of hosts. Ports are children of Host records and can have associated
+    services, vulnerabilities, and other port-specific data.
+
+    Attributes:
+        proto (int): Protocol number (e.g., 6 for TCP, 17 for UDP)
+        port (str): Port number as string
+        secure (bool): Whether the port uses secure/encrypted communication
+
+    Example:
+        >>> port = Port(parent_id="host_123")
+        >>> port.port = "443"
+        >>> port.proto = 6  # TCP
+        >>> port.secure = True
+    """
+
+    def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
+        """
+        Initialize a Port record.
+
+        Args:
+            parent_id (Optional[str]): ID of the parent Host record
+            id (Optional[str]): Unique identifier for the port record
+        """
         super().__init__(id=id, parent=Host(id=parent_id))
+        self.proto: Optional[int] = None
+        self.port: Optional[str] = None
+        self.secure: bool = False
 
-        self.proto = None
-        self.port = None
-        self.secure = False
+    def _data_to_jsonable(self) -> Dict[str, Union[str, int, bool]]:
+        """
+        Convert port-specific data to JSON-serializable format.
 
-    def _data_to_jsonable(self):
-        ret = {'port': self.port, 'proto': self.proto}
+        Returns:
+            Dict[str, Union[str, int, bool]]: Dictionary containing port data
+        """
+        ret: Dict[str, Union[str, int, bool]] = {
+            'port': self.port, 'proto': self.proto}
         if self.secure is not None:
             ret['secure'] = self.secure
         return ret
 
-    def from_jsonsable(self, input_data_dict):
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Populate port data from JSON dictionary.
+
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing port data
+
+        Raises:
+            Exception: If required port data is missing or invalid
+        """
         try:
             self.port = str(input_data_dict['port'])
             self.proto = int(input_data_dict['proto'])
@@ -893,22 +1597,57 @@ class Port(Record):
                     self.secure = True
                 else:
                     self.secure = False
-
         except Exception as e:
             raise Exception('Invalid port object: %s' % str(e))
 
 
 class Domain(Record):
+    """
+    Represents a domain name associated with a host discovered during scanning.
 
-    def __init__(self,  parent_id=None, id=None):
+    This record type stores domain name information for hosts, typically discovered
+    through DNS resolution, certificate analysis, or other reconnaissance methods.
+    Domains are children of Host records and help map friendly names to IP addresses.
+
+    Attributes:
+        name (str): The domain name (e.g., "example.com", "www.example.com")
+
+    Example:
+        >>> domain = Domain(parent_id="host_123")
+        >>> domain.name = "www.example.com"
+        >>> domain.tags.add(RecordTag.SCOPE.value)
+    """
+
+    def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
+        """
+        Initialize a Domain record.
+
+        Args:
+            parent_id (Optional[str]): ID of the parent Host record
+            id (Optional[str]): Unique identifier for the domain record
+        """
         super().__init__(id=id, parent=Host(id=parent_id))
+        self.name: Optional[str] = None
 
-        self.name = None
+    def _data_to_jsonable(self) -> Dict[str, str]:
+        """
+        Convert domain-specific data to JSON-serializable format.
 
-    def _data_to_jsonable(self):
+        Returns:
+            Dict[str, str]: Dictionary containing domain name
+        """
         return {'name': self.name}
 
-    def from_jsonsable(self, input_data_dict):
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Populate domain data from JSON dictionary.
+
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing domain name data
+
+        Raises:
+            Exception: If required domain data is missing or invalid
+        """
         try:
             self.name = input_data_dict['name']
         except Exception as e:
@@ -916,20 +1655,57 @@ class Domain(Record):
 
 
 class WebComponent(Record):
+    """
+    Represents a web technology/component detected on a network port.
 
-    def __init__(self,  parent_id=None, id=None):
+    This record type stores information about web technologies, frameworks, servers,
+    or other software components detected during web scanning. Components are children
+    of Port records and help identify the technology stack of web services.
+
+    Attributes:
+        name (str): Name of the web component (e.g., "Apache", "nginx", "WordPress")
+        version (Optional[str]): Version of the component if detected
+
+    Example:
+        >>> component = WebComponent(parent_id="port_123")
+        >>> component.name = "Apache"
+        >>> component.version = "2.4.41"
+    """
+
+    def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
+        """
+        Initialize a WebComponent record.
+
+        Args:
+            parent_id (Optional[str]): ID of the parent Port record
+            id (Optional[str]): Unique identifier for the component record
+        """
         super().__init__(id=id, parent=Port(id=parent_id))
+        self.name: Optional[str] = None
+        self.version: Optional[str] = None
 
-        self.name = None
-        self.version = None
+    def _data_to_jsonable(self) -> Dict[str, str]:
+        """
+        Convert web component data to JSON-serializable format.
 
-    def _data_to_jsonable(self):
-        ret = {'name': self.name}
+        Returns:
+            Dict[str, str]: Dictionary containing component name and version
+        """
+        ret: Dict[str, str] = {'name': self.name}
         if self.version is not None:
             ret['version'] = self.version
         return ret
 
-    def from_jsonsable(self, input_data_dict):
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Populate web component data from JSON dictionary.
+
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing component data
+
+        Raises:
+            Exception: If required component data is missing or invalid
+        """
         try:
             self.name = input_data_dict['name']
             if 'version' in input_data_dict:
@@ -939,23 +1715,61 @@ class WebComponent(Record):
 
 
 class Vuln(Record):
+    """
+    Represents a security vulnerability detected on a network port.
 
-    def __init__(self,  parent_id=None, id=None):
+    This record type stores information about security vulnerabilities, weaknesses,
+    or misconfigurations discovered during scanning. Vulnerabilities are children
+    of Port records and may reference specific HTTP endpoints.
+
+    Attributes:
+        name (str): Name or identifier of the vulnerability (e.g., CVE-2021-44228)
+        vuln_details (Optional[str]): Detailed description of the vulnerability
+        endpoint_id (Optional[str]): ID of associated HTTP endpoint if applicable
+
+    Example:
+        >>> vuln = Vuln(parent_id="port_123")
+        >>> vuln.name = "CVE-2021-44228"
+        >>> vuln.vuln_details = "Log4Shell vulnerability in Apache Log4j"
+    """
+
+    def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
+        """
+        Initialize a Vuln record.
+
+        Args:
+            parent_id (Optional[str]): ID of the parent Port record
+            id (Optional[str]): Unique identifier for the vulnerability record
+        """
         super().__init__(id=id, parent=Port(id=parent_id))
+        self.name: Optional[str] = None
+        self.vuln_details: Optional[str] = None
+        self.endpoint_id: Optional[str] = None
 
-        self.name = None
-        self.vuln_details = None
-        self.endpoint_id = None
+    def _data_to_jsonable(self) -> Dict[str, str]:
+        """
+        Convert vulnerability data to JSON-serializable format.
 
-    def _data_to_jsonable(self):
-        ret = {'name': self.name}
+        Returns:
+            Dict[str, str]: Dictionary containing vulnerability information
+        """
+        ret: Dict[str, str] = {'name': self.name}
         if self.vuln_details:
             ret['vuln_details'] = self.vuln_details
         if self.endpoint_id:
             ret['endpoint_id'] = self.endpoint_id
         return ret
 
-    def from_jsonsable(self, input_data_dict):
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Populate vulnerability data from JSON dictionary.
+
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing vulnerability data
+
+        Raises:
+            Exception: If required vulnerability data is missing or invalid
+        """
         try:
             self.name = input_data_dict['name']
             if 'vuln_details' in input_data_dict:
@@ -967,24 +1781,64 @@ class Vuln(Record):
 
 
 class ListItem(Record):
+    """
+    Represents a web path or directory entry discovered during web scanning.
 
-    def __init__(self,  id=None):
+    This record type stores information about web paths, directories, or files
+    discovered through directory brute forcing, crawling, or other web reconnaissance.
+    ListItems are standalone records (no parent) and include path hashing for deduplication.
+
+    Attributes:
+        web_path (str): The web path or URI (e.g., "/admin", "/login.php")
+        web_path_hash (str): SHA1 hash of the web path for deduplication
+
+    Example:
+        >>> item = ListItem()
+        >>> item.web_path = "/admin"
+        >>> item.web_path_hash = "sha1_hash_of_path"
+    """
+
+    def __init__(self, id: Optional[str] = None) -> None:
+        """
+        Initialize a ListItem record.
+
+        Args:
+            id (Optional[str]): Unique identifier for the path record
+        """
         super().__init__(id=id)
+        self.web_path: Optional[str] = None
+        self.web_path_hash: Optional[str] = None
 
-        self.web_path = None
-        self.web_path_hash = None
+    def _data_to_jsonable(self) -> Dict[str, str]:
+        """
+        Convert path data to JSON-serializable format.
 
-    def _data_to_jsonable(self):
+        Returns:
+            Dict[str, str]: Dictionary containing path and hash information
+        """
         return {'path': self.web_path,
                 'path_hash': self.web_path_hash}
 
-    def from_jsonsable(self, input_data_dict):
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Populate path data from JSON dictionary.
+
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing path data
+
+        Raises:
+            Exception: If required path data is missing or invalid
+
+        Note:
+            If web_path is None, defaults to "/" and generates corresponding hash
+        """
         try:
             self.web_path = input_data_dict['path']
             self.web_path_hash = input_data_dict['path_hash']
         except Exception as e:
             raise Exception('Invalid path object: %s' % str(e))
 
+        # Default to root path if none specified
         if self.web_path is None:
             self.web_path = '/'
             hashobj = hashlib.sha1()
@@ -995,20 +1849,55 @@ class ListItem(Record):
 
 
 class Screenshot(Record):
+    """
+    Represents a screenshot captured from a web service or application.
 
-    def __init__(self,  id=None):
+    This record type stores screenshot data and metadata captured during web scanning.
+    Screenshots are standalone records used to provide visual confirmation of web
+    services and help with manual analysis of discovered targets.
+
+    Attributes:
+        screenshot (Optional[str]): Base64-encoded screenshot image data
+        image_hash (Optional[str]): Hash of the screenshot for deduplication
+
+    Example:
+        >>> screenshot = Screenshot()
+        >>> screenshot.image_hash = "sha256_hash_of_image"
+        >>> screenshot.screenshot = "base64_encoded_image_data"
+    """
+
+    def __init__(self, id: Optional[str] = None) -> None:
+        """
+        Initialize a Screenshot record.
+
+        Args:
+            id (Optional[str]): Unique identifier for the screenshot record
+        """
         super().__init__(id=id)
+        self.screenshot: Optional[str] = None
+        self.image_hash: Optional[str] = None
 
-        self.screenshot = None
-        self.image_hash = None
+    def _data_to_jsonable(self) -> Dict[str, Optional[str]]:
+        """
+        Convert screenshot data to JSON-serializable format.
 
-    def _data_to_jsonable(self):
+        Returns:
+            Dict[str, Optional[str]]: Dictionary containing screenshot and hash data
+        """
         return {'screenshot': self.screenshot,
                 'image_hash': self.image_hash}
 
-    def from_jsonsable(self, input_data_dict):
-        try:
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Populate screenshot data from JSON dictionary.
 
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing screenshot data
+
+        Raises:
+            Exception: If screenshot data is invalid
+        """
+        try:
             if 'screenshot' in input_data_dict:
                 self.screenshot = input_data_dict['screenshot']
 
@@ -1020,36 +1909,87 @@ class Screenshot(Record):
 
 
 class HttpEndpoint(Record):
+    """
+    Represents an HTTP endpoint discovered on a network port.
 
-    def __init__(self,  parent_id=None, id=None):
+    This record type represents a specific HTTP endpoint (URL path) on a web service.
+    HttpEndpoints are children of Port records and reference web paths through web_path_id.
+    They serve as containers for HTTP-specific data and analysis results.
+
+    Attributes:
+        web_path_id (Optional[str]): ID of the associated ListItem (web path)
+
+    Example:
+        >>> endpoint = HttpEndpoint(parent_id="port_443")
+        >>> endpoint.web_path_id = "path_123"
+        >>> url = endpoint.get_url()
+    """
+
+    def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
+        """
+        Initialize an HttpEndpoint record.
+
+        Args:
+            parent_id (Optional[str]): ID of the parent Port record
+            id (Optional[str]): Unique identifier for the endpoint record
+        """
         super().__init__(id=id, parent=Port(id=parent_id))
-        self.web_path_id = None
+        self.web_path_id: Optional[str] = None
 
-    def get_port(self):
-        port_str = ''
+    def get_port(self) -> str:
+        """
+        Get the port number for this HTTP endpoint.
+
+        Returns:
+            str: Port number as string, or empty string if not found
+
+        Example:
+            >>> endpoint = HttpEndpoint(parent_id="port_443")
+            >>> port_num = endpoint.get_port()
+            >>> print(port_num)  # "443"
+        """
+        port_str: str = ''
         port_id = self.parent.id
         if port_id in self.scan_data.port_map:
             port_obj = self.scan_data.port_map[port_id]
             return port_obj.port
         return port_str
 
-    def get_url(self):
-        port_id = self.parent.id
-        host_ip = None
-        port_str = None
-        secure = None
-        query_str = None
+    def get_url(self) -> str:
+        """
+        Construct the complete URL for this HTTP endpoint.
 
+        This method builds a full URL by combining host information, port details,
+        security settings, and the web path. It handles both IP addresses and
+        domain names when available.
+
+        Returns:
+            str: Complete URL for the endpoint (e.g., "https://example.com:443/admin")
+
+        Example:
+            >>> endpoint = HttpEndpoint()
+            >>> url = endpoint.get_url()
+            >>> print(url)  # "https://192.168.1.1:443/login"
+        """
+        port_id = self.parent.id
+        host_ip: Optional[str] = None
+        port_str: Optional[str] = None
+        secure: Optional[bool] = None
+        query_str: Optional[str] = None
+
+        # Get port information
         if port_id in self.scan_data.port_map:
             port_obj = self.scan_data.port_map[port_id]
             port_str = port_obj.port
             secure = port_obj.secure
 
+            # Get host IP from port's parent host
             if port_obj.parent.id in self.scan_data.host_map:
                 host_obj = self.scan_data.host_map[port_obj.parent.id]
                 if host_obj:
                     host_ip = host_obj.ipv4_addr
 
+        # Check for domain names in endpoint data
         if self.id in self.scan_data.http_endpoint_map:
             http_endpoint_data_obj_list = self.scan_data.endpoint_data_endpoint_id_map[
                 self.id]
@@ -1060,22 +2000,37 @@ class HttpEndpoint(Record):
                         host_ip = domain_obj.name
                         break
 
+        # Get web path information
         if self.web_path_id in self.scan_data.path_map:
             path_obj = self.scan_data.path_map[self.web_path_id]
             query_str = path_obj.web_path
 
+        # Construct the complete URL
         url_str = scan_utils.construct_url(
             host_ip, port_str, secure, query_str)
 
         return url_str
 
-    def _data_to_jsonable(self):
+    def _data_to_jsonable(self) -> Dict[str, Optional[str]]:
+        """
+        Convert HTTP endpoint data to JSON-serializable format.
 
-        ret = {'web_path_id': self.web_path_id}
-
+        Returns:
+            Dict[str, Optional[str]]: Dictionary containing web path ID
+        """
+        ret: Dict[str, Optional[str]] = {'web_path_id': self.web_path_id}
         return ret
 
-    def from_jsonsable(self, input_data_dict):
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Populate HTTP endpoint data from JSON dictionary.
+
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing endpoint data
+
+        Raises:
+            Exception: If endpoint data is invalid
+        """
         try:
 
             if 'web_path_id' in input_data_dict:
@@ -1086,19 +2041,53 @@ class HttpEndpoint(Record):
 
 
 class HttpEndpointData(Record):
+    """
+    Represents HTTP response data and metadata for an HTTP endpoint.
 
-    def __init__(self,  parent_id=None, id=None):
+    This record type stores the actual HTTP response data, metadata, and analysis
+    results for HTTP endpoints. HttpEndpointData are children of HttpEndpoint records
+    and contain the detailed information gathered from HTTP requests.
+
+    Attributes:
+        title (Optional[str]): HTML title of the web page
+        status (Optional[str]): HTTP response status code
+        domain_id (Optional[str]): ID of associated domain if using domain name
+        screenshot_id (Optional[str]): ID of associated screenshot
+        last_modified (Optional[str]): Last-Modified header value
+        fav_icon_hash (Optional[str]): Hash of the favicon for fingerprinting
+
+    Example:
+        >>> data = HttpEndpointData(parent_id="endpoint_123")
+        >>> data.title = "Admin Login"
+        >>> data.status = "200"
+        >>> data.screenshot_id = "screenshot_456"
+    """
+
+    def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
+        """
+        Initialize an HttpEndpointData record.
+
+        Args:
+            parent_id (Optional[str]): ID of the parent HttpEndpoint record
+            id (Optional[str]): Unique identifier for the endpoint data record
+        """
         super().__init__(id=id, parent=HttpEndpoint(id=parent_id))
+        self.title: Optional[str] = None
+        self.status: Optional[str] = None
+        self.domain_id: Optional[str] = None
+        self.screenshot_id: Optional[str] = None
+        self.last_modified: Optional[str] = None
+        self.fav_icon_hash: Optional[str] = None
 
-        self.title = None
-        self.status = None
-        self.domain_id = None
-        self.screenshot_id = None
-        self.last_modified = None
-        self.fav_icon_hash = None
+    def _data_to_jsonable(self) -> Dict[str, Optional[str]]:
+        """
+        Convert HTTP endpoint data to JSON-serializable format.
 
-    def _data_to_jsonable(self):
-        ret = {'title': self.title, 'status': self.status}
+        Returns:
+            Dict[str, Optional[str]]: Dictionary containing HTTP response metadata
+        """
+        ret: Dict[str, Optional[str]] = {
+            'title': self.title, 'status': self.status}
 
         if self.last_modified is not None:
             ret['last_modified'] = self.last_modified
@@ -1114,8 +2103,24 @@ class HttpEndpointData(Record):
 
         return ret
 
-    def get_url(self):
+    def get_url(self) -> str:
+        """
+        Construct the full URL for this HTTP endpoint data.
 
+        This method traverses the data relationships to build a complete URL by:
+        1. Finding the associated HTTP endpoint and port information
+        2. Resolving the host IP address or domain name
+        3. Extracting path and query parameters
+        4. Constructing the final URL string
+
+        Returns:
+            str: Complete URL string (e.g., "https://example.com:443/path?query=value")
+
+        Example:
+            >>> endpoint_data = HttpEndpointData()
+            >>> url = endpoint_data.get_url()
+            >>> print(url)  # "https://192.168.1.1:8080/api/v1"
+        """
         port_id = None
         host_ip = None
         port_str = None
@@ -1151,7 +2156,26 @@ class HttpEndpointData(Record):
 
         return url_str
 
-    def from_jsonsable(self, input_data_dict):
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Deserialize HTTP endpoint data from a JSON-compatible dictionary.
+
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing endpoint data with keys:
+                - title (optional): Page title
+                - status (optional): HTTP status code
+                - last_modified (optional): Last modification timestamp
+                - screenshot_id (optional): Associated screenshot ID
+                - domain_id (optional): Associated domain ID
+                - fav_icon_hash (optional): Favicon hash
+
+        Raises:
+            Exception: If deserialization fails with invalid data
+
+        Example:
+            >>> data = {"title": "Example Page", "status": 200}
+            >>> endpoint_data.from_jsonsable(data)
+        """
         try:
 
             self.screenshot_id = None
@@ -1182,20 +2206,71 @@ class HttpEndpointData(Record):
 
 
 class CollectionModule(Record):
+    """
+    Represents a collection module for organizing and executing scanning tools.
 
-    def __init__(self,  parent_id=None, id=None):
+    A collection module defines a set of tools to be executed together, with
+    bindings to specific components and the ability to track outputs. It serves
+    as a container for related scanning operations.
+
+    Attributes:
+        name (Optional[str]): Name of the collection module
+        args (Optional[str]): Arguments passed to the module
+        bindings (Optional[List[str]]): List of component IDs this module is bound to
+        outputs (Optional[List[str]]): List of output component IDs generated by this module
+
+    Example:
+        >>> module = CollectionModule(parent_id="tool_123")
+        >>> module.name = "web_scan"
+        >>> module.args = "--deep-scan"
+        >>> module.bindings = ["web_component_1", "web_component_2"]
+    """
+
+    def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None):
+        """
+        Initialize a new CollectionModule.
+
+        Args:
+            parent_id (Optional[str]): ID of the parent Tool object
+            id (Optional[str]): Unique identifier for this module
+        """
         super().__init__(id=id, parent=Tool(parent_id))
 
-        self.name = None
-        self.args = None
-        self.bindings = None
-        self.outputs = None
+        self.name: Optional[str] = None
+        self.args: Optional[str] = None
+        self.bindings: Optional[List[str]] = None
+        self.outputs: Optional[List[str]] = None
 
-    def _data_to_jsonable(self):
+    def _data_to_jsonable(self) -> Dict[str, Any]:
+        """
+        Convert the collection module to a JSON-serializable dictionary.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing module name and arguments
+
+        Example:
+            >>> module = CollectionModule()
+            >>> module.name = "nmap_scan"
+            >>> module.args = "-sS -O"
+            >>> data = module._data_to_jsonable()
+            >>> print(data)  # {"name": "nmap_scan", "args": "-sS -O"}
+        """
         ret = {'name': self.name, 'args': self.args}
         return ret
 
-    def get_output_components(self):
+    def get_output_components(self) -> List['WebComponent']:
+        """
+        Retrieve all output components generated by this collection module.
+
+        Returns:
+            List[WebComponent]: List of WebComponent objects that were outputs of this module
+
+        Example:
+            >>> module = CollectionModule()
+            >>> components = module.get_output_components()
+            >>> for comp in components:
+            ...     print(f"Component: {comp.name}")
+        """
         output_components = []
 
         component_arr = self.outputs
@@ -1210,7 +2285,26 @@ class CollectionModule(Record):
 
         return output_components
 
-    def get_host_port_obj_map(self):
+    def get_host_port_obj_map(self) -> Dict[str, Dict[str, 'Port']]:
+        """
+        Build a mapping of host IDs to port objects based on module bindings.
+
+        This method traverses the module's component bindings to identify all
+        ports associated with those components, creating a nested dictionary
+        structure for efficient access.
+
+        Returns:
+            Dict[str, Dict[str, Port]]: Nested dictionary mapping:
+                - Outer key: Host ID
+                - Inner key: Port number (as string)
+                - Value: Port object
+
+        Example:
+            >>> module = CollectionModule()
+            >>> host_port_map = module.get_host_port_obj_map()
+            >>> for host_id, ports in host_port_map.items():
+            ...     print(f"Host {host_id}: {list(ports.keys())}")
+        """
         host_port_obj_map = {}
 
         component_arr = self.bindings
@@ -1242,7 +2336,28 @@ class CollectionModule(Record):
 
         return host_port_obj_map
 
-    def from_jsonsable(self, input_data_dict):
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Deserialize collection module data from a JSON-compatible dictionary.
+
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing module data with keys:
+                - name (required): Module name
+                - args (required): Module arguments
+                - bindings (optional): List of component binding IDs
+                - outputs (optional): List of output component IDs
+
+        Raises:
+            Exception: If deserialization fails due to missing required fields
+
+        Example:
+            >>> data = {
+            ...     "name": "web_scanner",
+            ...     "args": "--verbose",
+            ...     "bindings": ["comp_1", "comp_2"]
+            ... }
+            >>> module.from_jsonsable(data)
+        """
         try:
 
             self.name = str(input_data_dict['name'])
@@ -1258,18 +2373,68 @@ class CollectionModule(Record):
 
 
 class CollectionModuleOutput(Record):
+    """
+    Represents output data generated by a collection module.
 
-    def __init__(self,  parent_id=None, id=None):
+    This class stores the output produced by a collection module execution,
+    including the raw data and associated port information for context.
+
+    Attributes:
+        data (Optional[str]): Raw output data from the module execution
+        port_id (Optional[str]): ID of the port associated with this output
+
+    Example:
+        >>> output = CollectionModuleOutput(parent_id="module_123")
+        >>> output.data = "Port 80 is open"
+        >>> output.port_id = "port_456"
+    """
+
+    def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None):
+        """
+        Initialize a new CollectionModuleOutput.
+
+        Args:
+            parent_id (Optional[str]): ID of the parent CollectionModule
+            id (Optional[str]): Unique identifier for this output
+        """
         super().__init__(id=id, parent=CollectionModule(id=parent_id))
 
-        self.data = None
-        self.port_id = None
+        self.data: Optional[str] = None
+        self.port_id: Optional[str] = None
 
-    def _data_to_jsonable(self):
+    def _data_to_jsonable(self) -> Dict[str, Any]:
+        """
+        Convert the collection module output to a JSON-serializable dictionary.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing output data and port ID
+
+        Example:
+            >>> output = CollectionModuleOutput()
+            >>> output.data = "Service detected: HTTP"
+            >>> output.port_id = "port_80"
+            >>> data = output._data_to_jsonable()
+            >>> print(data)  # {"output": "Service detected: HTTP", "port_id": "port_80"}
+        """
         ret = {'output': self.data, 'port_id': self.port_id}
         return ret
 
-    def from_jsonsable(self, input_data_dict):
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Deserialize collection module output from a JSON-compatible dictionary.
+
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing output data with keys:
+                - output (required): Raw output data string
+                - port_id (required): Associated port ID
+
+        Raises:
+            Exception: If deserialization fails due to missing required fields
+
+        Example:
+            >>> data = {"output": "HTTP service detected", "port_id": "port_123"}
+            >>> output.from_jsonsable(data)
+        """
         try:
 
             self.data = str(input_data_dict['output'])
@@ -1281,18 +2446,60 @@ class CollectionModuleOutput(Record):
 
 
 class Certificate(Record):
+    """
+    Represents an SSL/TLS certificate discovered during scanning.
 
-    def __init__(self,  parent_id=None, id=None):
+    This class stores certificate information including issuer details,
+    validity periods, fingerprints, and associated domain names.
+
+    Attributes:
+        issuer (Optional[str]): Certificate issuer name
+        issued (Optional[int]): Certificate issued timestamp (Unix epoch)
+        expires (Optional[int]): Certificate expiration timestamp (Unix epoch)
+        fingerprint_hash (Optional[str]): Certificate fingerprint hash
+        domain_name_id_map (Dict[str, str]): Mapping of domain names to their IDs
+        domain_id_list (List[str]): List of domain IDs associated with this certificate
+
+    Example:
+        >>> cert = Certificate(parent_id="port_443")
+        >>> cert.issuer = "Let's Encrypt Authority X3"
+        >>> cert.issued = 1609459200  # 2021-01-01
+        >>> cert.expires = 1640995200  # 2022-01-01
+        >>> cert.fingerprint_hash = "a1b2c3d4e5f6..."
+    """
+
+    def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None):
+        """
+        Initialize a new Certificate.
+
+        Args:
+            parent_id (Optional[str]): ID of the parent Port object
+            id (Optional[str]): Unique identifier for this certificate
+        """
         super().__init__(id=id, parent=Port(id=parent_id))
 
-        self.issuer = None
-        self.issued = None
-        self.expires = None
-        self.fingerprint_hash = None
-        self.domain_name_id_map = {}
-        self.domain_id_list = []
+        self.issuer: Optional[str] = None
+        self.issued: Optional[int] = None
+        self.expires: Optional[int] = None
+        self.fingerprint_hash: Optional[str] = None
+        self.domain_name_id_map: Dict[str, str] = {}
+        self.domain_id_list: List[str] = []
 
-    def _data_to_jsonable(self):
+    def _data_to_jsonable(self) -> Dict[str, Any]:
+        """
+        Convert the certificate to a JSON-serializable dictionary.
+
+        Returns:
+            Dict[str, Any]: Dictionary containing all certificate data including
+                           issuer, validity dates, fingerprint, and associated domains
+
+        Example:
+            >>> cert = Certificate()
+            >>> cert.issuer = "DigiCert"
+            >>> cert.issued = 1609459200
+            >>> data = cert._data_to_jsonable()
+            >>> print(data["issuer"])  # "DigiCert"
+        """
         ret = {'issuer': self.issuer}
         ret['issued'] = self.issued
         ret['expires'] = self.expires
@@ -1300,7 +2507,31 @@ class Certificate(Record):
         ret['domain_id_list'] = list(self.domain_name_id_map.values())
         return ret
 
-    def from_jsonsable(self, input_data_dict):
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Deserialize certificate data from a JSON-compatible dictionary.
+
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing certificate data with keys:
+                - issuer (required): Certificate issuer name
+                - issued (required): Issued timestamp as integer
+                - expires (required): Expiration timestamp as integer
+                - fingerprint_hash (required): Certificate fingerprint
+                - domain_id_list (required): List of associated domain IDs
+
+        Raises:
+            Exception: If deserialization fails due to invalid data format
+
+        Example:
+            >>> data = {
+            ...     "issuer": "Let's Encrypt",
+            ...     "issued": 1609459200,
+            ...     "expires": 1640995200,
+            ...     "fingerprint_hash": "abc123...",
+            ...     "domain_id_list": ["domain_1", "domain_2"]
+            ... }
+            >>> cert.from_jsonsable(data)
+        """
         try:
             self.issuer = input_data_dict['issuer']
             self.issued = int(input_data_dict['issued'])
@@ -1309,21 +2540,40 @@ class Certificate(Record):
             self.domain_id_list = input_data_dict['domain_id_list']
 
         except Exception as e:
-            raise Exception('Invalid module output object: %s' % str(e))
+            raise Exception('Invalid certificate object: %s' % str(e))
 
-    def add_domain(self, host_id, domain_str, collection_tool_instance_id):
+    def add_domain(self, host_id: str, domain_str: str, collection_tool_instance_id: str) -> Optional['Domain']:
+        """
+        Add a domain name to the certificate's domain list.
 
-        # If it's a wildcard
+        This method creates a new Domain record for domain names found in SSL/TLS
+        certificates. It filters out wildcard domains and IP addresses.
+
+        Args:
+            host_id (str): ID of the host associated with this certificate
+            domain_str (str): Domain name to add
+            collection_tool_instance_id (str): ID of the tool that discovered this domain
+
+        Returns:
+            Optional[Domain]: Created Domain object, or None if domain was filtered out
+
+        Example:
+            >>> cert = Certificate()
+            >>> domain = cert.add_domain("host_123", "example.com", "tool_456")
+            >>> print(domain.name if domain else "Filtered out")
+        """
+        # Filter out wildcard certificates
         if "*." in domain_str:
             return None
 
-        # If it's an IP skip it
+        # Filter out IP addresses
         try:
             int(netaddr.IPAddress(domain_str))
             return None
         except:
             pass
 
+        # Create new domain if not already present
         if domain_str not in self.domain_name_id_map:
             domain_obj = Domain(parent_id=host_id)
             domain_obj.collection_tool_instance_id = collection_tool_instance_id
@@ -1331,3 +2581,27 @@ class Certificate(Record):
 
             self.domain_name_id_map[domain_str] = domain_obj.id
             return domain_obj
+
+
+# =============================================================================
+# END OF WALUIGI DATA MODEL MODULE
+# =============================================================================
+#
+# This module provides comprehensive data structures for the Waluigi security
+# scanning framework. All classes are fully documented with type hints and
+# docstrings suitable for automated documentation generation.
+#
+# Key Features:
+# - Type annotations throughout for IDE support and automated docs
+# - Comprehensive docstrings with parameters, returns, and examples
+# - Hierarchical record structure with parent-child relationships
+# - JSON serialization/deserialization for all record types
+# - Tag-based filtering and organization
+# - Extensive mapping structures for efficient data access
+#
+# For automated wiki generation, this module supports:
+# - Sphinx documentation generation
+# - IDE IntelliSense and autocompletion
+# - Type checking with mypy
+# - API documentation extraction
+# =============================================================================

@@ -1,7 +1,27 @@
+"""
+HTTPX web scanning module for the Waluigi framework.
+
+This module provides comprehensive HTTP/HTTPS scanning capabilities using HTTPX,
+a fast and multi-purpose HTTP toolkit. It performs web application discovery,
+technology detection, certificate analysis, and screenshot capture for web assets.
+
+The module implements both scanning and data import functionality through Luigi tasks,
+supporting parallel HTTP probing and comprehensive web asset enumeration.
+
+Classes:
+    Httpx: Tool configuration class for HTTPX scanner  
+    HttpXScan: Luigi task for executing HTTPX web scans
+    ImportHttpXOutput: Luigi task for processing and importing HTTPX scan results
+
+Author: Waluigi Security Framework
+License: Internal Use
+"""
+
 from datetime import datetime
 from functools import partial
 import json
 import os
+from typing import Dict, Any, List, Set, Optional, Union
 import luigi
 import hashlib
 import binascii
@@ -17,19 +37,75 @@ from urllib.parse import urlparse
 
 
 class Httpx(data_model.WaluigiTool):
+    """
+    HTTPX web scanner tool configuration.
 
-    def __init__(self):
-        self.name = 'httpx'
-        self.description = 'HTTPX is a fast and multi-purpose HTTP toolkit that allows you to run multiple requests in parallel.'
-        self.project_url = "https://github.com/projectdiscovery/httpx"
-        self.collector_type = data_model.CollectorType.ACTIVE.value
-        self.scan_order = 4
-        self.args = "-favicon -td -t 50 -timeout 3 -maxhr 5 -rstr 10000 -tls-grab"
+    This class configures the HTTPX web scanner for integration with the
+    Waluigi framework. HTTPX is a fast and multi-purpose HTTP toolkit that
+    enables parallel web application discovery, technology detection, and
+    comprehensive web asset enumeration.
+
+    The tool is configured for high-performance scanning with favicon analysis,
+    technology detection, TLS certificate grabbing, and response analysis.
+
+    Attributes:
+        name (str): Tool identifier name
+        description (str): Human-readable tool description
+        project_url (str): Official project URL
+        collector_type (str): Type of collection (ACTIVE)
+        scan_order (int): Execution order in scan chain
+        args (str): Default command line arguments
+        scan_func (callable): Function to execute scans
+        import_func (callable): Function to import results
+
+    Example:
+        >>> httpx_tool = Httpx()
+        >>> print(httpx_tool.name)
+        'httpx'
+        >>> httpx_tool.scan_func(scan_input)
+        True
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize HTTPX tool configuration.
+
+        Sets up the tool with default parameters for web scanning including
+        favicon analysis, technology detection, parallel processing, and
+        TLS certificate analysis.
+        """
+        self.name: str = 'httpx'
+        self.description: str = 'HTTPX is a fast and multi-purpose HTTP toolkit that allows you to run multiple requests in parallel.'
+        self.project_url: str = "https://github.com/projectdiscovery/httpx"
+        self.collector_type: str = data_model.CollectorType.ACTIVE.value
+        self.scan_order: int = 4
+        self.args: str = "-favicon -td -t 50 -timeout 3 -maxhr 5 -rstr 10000 -tls-grab"
         self.scan_func = Httpx.httpx_scan_func
         self.import_func = Httpx.httpx_import
 
     @staticmethod
-    def httpx_scan_func(scan_input):
+    def httpx_scan_func(scan_input: data_model.ScheduledScan) -> bool:
+        """
+        Execute HTTPX web scan.
+
+        Initiates an HTTPX scan using Luigi task orchestration. The scan targets
+        web services and applications, probing for HTTP/HTTPS endpoints with
+        comprehensive analysis including technology detection and certificate
+        information.
+
+        Args:
+            scan_input (data_model.ScheduledScan): Scheduled scan configuration
+                containing target information and scan parameters
+
+        Returns:
+            bool: True if scan completed successfully, False otherwise
+
+        Example:
+            >>> scan_input = ScheduledScan(...)
+            >>> success = Httpx.httpx_scan_func(scan_input)
+            >>> print(success)
+            True
+        """
         luigi_run_result = luigi.build([HttpXScan(
             scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
         if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
@@ -37,7 +113,27 @@ class Httpx(data_model.WaluigiTool):
         return True
 
     @staticmethod
-    def httpx_import(scan_input):
+    def httpx_import(scan_input: data_model.ScheduledScan) -> bool:
+        """
+        Import and process HTTPX scan results.
+
+        Processes the JSON output from completed HTTPX scans, parsing web
+        application information, SSL certificates, technology stacks, and
+        HTTP endpoint data into the data model.
+
+        Args:
+            scan_input (data_model.ScheduledScan): Scheduled scan configuration
+                containing scan results to import
+
+        Returns:
+            bool: True if import completed successfully, False otherwise
+
+        Example:
+            >>> scan_input = ScheduledScan(...)
+            >>> success = Httpx.httpx_import(scan_input)
+            >>> print(success)
+            True
+        """
         luigi_run_result = luigi.build([ImportHttpXOutput(
             scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
         if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
@@ -46,20 +142,64 @@ class Httpx(data_model.WaluigiTool):
 
 
 class HttpXScan(luigi.Task):
+    """
+    Luigi task for executing HTTPX web scans.
 
-    scan_input = luigi.Parameter()
+    This task orchestrates the execution of HTTPX scans against web endpoints,
+    handling target preparation, parallel scanning, and output collection. The
+    task supports both masscan-optimized scanning and comprehensive web discovery
+    across hosts, domains, and ports.
 
-    def output(self):
+    The scan process includes:
+    - Target URL construction from hosts, domains, and ports
+    - Port-based scan optimization when masscan results are available
+    - Parallel HTTPX execution for performance
+    - JSON output collection for import processing
 
+    Features:
+    - Technology detection and favicon analysis
+    - SSL/TLS certificate analysis
+    - HTTP response header analysis
+    - Screenshot capture capabilities
+    - Response size and timeout controls
+
+    Attributes:
+        scan_input (luigi.Parameter): Scheduled scan configuration parameter
+
+    Example:
+        >>> scan_task = HttpXScan(scan_input=scheduled_scan)
+        >>> scan_task.run()
+        # Executes HTTPX scan and saves JSON results
+    """
+
+    scan_input: luigi.Parameter = luigi.Parameter()
+
+    def output(self) -> luigi.LocalTarget:
+        """
+        Define output file target for scan results.
+
+        Creates the output file path where scan results metadata will be stored,
+        incorporating scan ID for uniqueness.
+
+        Returns:
+            luigi.LocalTarget: Output file target for scan results metadata
+
+        Example:
+            >>> task = HttpXScan(scan_input=scan)
+            >>> target = task.output()
+            >>> print(target.path)
+            '/path/to/outputs/httpx_outputs_scan123'
+        """
         scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.id
+        scan_id: str = scheduled_scan_obj.id
 
         # Init directory
-        tool_name = scheduled_scan_obj.current_tool.name
-        dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+        tool_name: str = scheduled_scan_obj.current_tool.name
+        dir_path: str = scan_utils.init_tool_folder(
+            tool_name, 'outputs', scan_id)
 
-        # path to input file
-        http_outputs_file = dir_path + os.path.sep + "httpx_outputs_" + scan_id
+        # Path to output metadata file
+        http_outputs_file: str = dir_path + os.path.sep + "httpx_outputs_" + scan_id
         return luigi.LocalTarget(http_outputs_file)
 
     def run(self):
@@ -296,8 +436,42 @@ class HttpXScan(luigi.Task):
 
 @inherits(HttpXScan)
 class ImportHttpXOutput(data_model.ImportToolXOutput):
+    """
+    Luigi task for importing and processing HTTPX scan results.
 
-    def requires(self):
+    This task processes the JSON output from HTTPX scans, parsing comprehensive
+    web application information including HTTP endpoints, SSL certificates,
+    technology stacks, screenshots, and response data into the data model.
+
+    The import process extracts:
+    - Host information and IP address resolution
+    - HTTP/HTTPS endpoint data with status codes and titles
+    - SSL/TLS certificates with validity and domain information
+    - Web technologies and component versions
+    - Favicon hashes and screenshot data
+    - HTTP response headers and metadata
+    - Web paths and endpoint relationships
+
+    Attributes:
+        Inherits all attributes from HttpXScan task
+
+    Example:
+        >>> import_task = ImportHttpXOutput(scan_input=scheduled_scan)
+        >>> import_task.run()
+        # Processes and imports HTTPX web application results
+    """
+
+    def requires(self) -> HttpXScan:
+        """
+        Specify task dependencies.
+
+        This task requires the HttpXScan task to complete before it can
+        process the JSON scan results.
+
+        Returns:
+            HttpXScan: The required scan task that must complete first
+        """
+        return HttpXScan(scan_input=self.scan_input)
         # Requires HttpScan Task to be run prior
         return HttpXScan(scan_input=self.scan_input)
 
