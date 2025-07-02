@@ -273,13 +273,13 @@ Comprehensive object-oriented representation:
 | **Masscan** | Fast port scanning | Native binary | ✅ Active |
 | **Nmap** | Comprehensive port scanning | python-libnmap | ✅ Active |
 | **HTTPX** | HTTP/HTTPS probing | Native binary | ✅ Active |
-| **Subfinder** | Subdomain enumeration | Native binary | ✅ Active |
+| **Subfinder** | Subdomain enumeration | Native binary | ✅ Passive |
 | **Nuclei** | Vulnerability scanning | Native binary | ✅ Active |
 | **Feroxbuster** | Directory enumeration | Native binary | ✅ Active |
-| **Shodan** | Search engine integration | Python API | ✅ Active |
-| **Screenshot** | Visual documentation | Selenium/Chrome | ✅ Active |
+| **Shodan** | Search engine integration | Python API | ✅ Passive |
+| **Screenshot** | Visual documentation | PhantomJS | ✅ Active |
 | **BadSecrets** | Secret detection | Custom implementation | ✅ Active |
-| **WebCapture** | Web content analysis | Custom implementation | ✅ Active |
+| **WebCapture** | Web content analysis | Chrome | ✅ Active |
 
 ### Tool Execution Flow
 
