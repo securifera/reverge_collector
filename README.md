@@ -1,4 +1,4 @@
-# Waluigi - Automated Security Reconnaissance Framework
+# Waluigi - reverge collector framework
 
 <div align="center">
 
@@ -17,7 +17,7 @@
 
 ## 🎯 Overview
 
-**Waluigi** is a powerful, distributed security reconnaissance framework designed for bug bounty hunters, penetration testers, and security researchers. Built with Python and Luigi task orchestration, it provides automated, scalable scanning capabilities across multiple security tools and methodologies.
+**Waluigi** is a powerful, distributed security reconnaissance framework designed for bug bounty hunters, penetration testers, and security researchers. It acts as the collector component for the [reverge](https://www.reverge.io/) attack surface management tool. Built with Python and Luigi task orchestration, it provides automated, scalable scanning capabilities across multiple security tools and methodologies.
 
 ### Key Highlights
 
@@ -218,23 +218,23 @@ response = requests.post(
 ### System Overview
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Web Manager   │    │   API Gateway   │    │   Collectors    │
-│                 │◄──►│                 │◄──►│                 │
-│  - Dashboard    │    │  - Authentication│    │  - Tool Exec    │
-│  - Scan Config  │    │  - Load Balancer│    │  - Data Proc    │
-│  - Results View │    │  - Rate Limiting│    │  - Status Report│
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         └───────────────────────┼───────────────────────┘
-                                 │
-                    ┌─────────────────┐
-                    │    Database     │
-                    │                 │
-                    │  - Scan Data    │
-                    │  - Tool Results │
-                    │  - User Config  │
-                    └─────────────────┘
+┌─────────────────┐    ┌─────────────────┐
+│   Reverge       │    │   Collectors    │
+│                 │◄──►│                 │
+│  - Dashboard    │    │  - Tool Exec    │
+│  - Scan Config  │    │  - Data Proc    │
+│  - Results View │    │  - Status Report│
+└─────────────────┘    └─────────────────┘
+         │                                             
+         ┼
+         │
+┌─────────────────┐
+│    Database     │
+│                 │
+│  - Scan Data    │
+│  - Tool Results │
+│  - User Config  │
+└─────────────────┘
 ```
 
 ### Component Details
@@ -277,9 +277,9 @@ Comprehensive object-oriented representation:
 | **Nuclei** | Vulnerability scanning | Native binary | ✅ Active |
 | **Feroxbuster** | Directory enumeration | Native binary | ✅ Active |
 | **Shodan** | Search engine integration | Python API | ✅ Passive |
-| **Screenshot** | Visual documentation | PhantomJS | ✅ Active |
+| **Pyshot** | Website Screenshot | PhantomJS | ✅ Active |
 | **BadSecrets** | Secret detection | Custom implementation | ✅ Active |
-| **WebCapture** | Web content analysis | Chrome | ✅ Active |
+| **WebCapture** | Website Screenshot | Chrome | ✅ Active |
 
 ### Tool Execution Flow
 
@@ -362,23 +362,6 @@ class ImportToolOutput(luigi.Task):
 
 ## 🔧 Configuration
 
-### Environment Variables
-
-```bash
-# API Configuration
-WALUIGI_TOKEN=your-api-token
-MANAGER_URL=https://your-manager.com
-
-# Tool Paths
-MASSCAN_PATH=/usr/bin/masscan
-NMAP_PATH=/usr/bin/nmap
-HTTPX_PATH=/usr/local/bin/httpx
-
-# Scan Configuration
-MAX_PARALLEL_SCANS=5
-SCAN_TIMEOUT=3600
-OUTPUT_DIRECTORY=/opt/waluigi/outputs
-```
 
 ### Tool Configuration
 
@@ -413,17 +396,12 @@ chaos: ["your-chaos-key"]
 
 ```bash
 # Run all tests
-pytest
+pytest tests/
 
 # Run specific test modules
 pytest tests/routes/test_nmap_scan.py
 pytest tests/routes/test_httpx_scan.py
 
-# Run with coverage
-pytest --cov=waluigi tests/
-
-# Run integration tests
-pytest tests/integration/
 ```
 
 ### Test Structure
@@ -435,8 +413,6 @@ tests/
 │   ├── test_nmap_scan.py
 │   ├── test_httpx_scan.py
 │   └── test_nuclei_scan.py
-└── integration/             # End-to-end tests
-    └── test_full_scan.py
 ```
 
 ---
@@ -457,10 +433,8 @@ python -m venv venv
 source venv/bin/activate
 
 # Install development dependencies
-pip install -r requirements-dev.txt
+pip install -r requirements.txt
 
-# Install pre-commit hooks
-pre-commit install
 ```
 
 ### Code Standards
@@ -483,7 +457,6 @@ pre-commit install
 - ✅ Advanced process management
 
 ### Roadmap
-- 🔄 Kubernetes deployment support
 - 🔄 Additional tool integrations
 - 🔄 Machine learning result correlation
 - 🔄 Advanced reporting capabilities
@@ -525,7 +498,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <div align="center">
 
-**Built with ❤️ by the security community**
+**Built with ❤️ by Securifera**
 
 [⬆ Back to Top](#waluigi---automated-security-reconnaissance-framework)
 
