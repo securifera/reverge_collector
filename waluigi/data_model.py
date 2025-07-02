@@ -18,6 +18,7 @@ import base64
 import binascii
 import enum
 import hashlib
+import threading
 import uuid
 from typing import List, Dict, Set, Optional, Union, Any, Tuple
 import netaddr
@@ -146,6 +147,442 @@ def update_host_port_obj_map(scan_data: 'ScanData', port_id: str, host_port_obj_
 
     # else:
     #    logging.getLogger(__name__).debug("Host not found in map: %s" % host_id)
+
+
+class ScanStatus(enum.Enum):
+    """
+    Enumeration of possible scan execution states.
+
+    This enumeration defines the lifecycle states of security scans, providing
+    standardized status tracking throughout the scanning process. It enables
+    consistent monitoring and reporting of scan progress across the system.
+
+    Values:
+        CREATED (1): Scan has been created but not yet started
+        RUNNING (2): Scan is currently executing
+        COMPLETED (3): Scan has finished successfully
+        CANCELLED (4): Scan was cancelled by user or system
+        ERROR (5): Scan failed due to an error
+
+    Example:
+        >>> scan.status = ScanStatus.RUNNING
+        >>> if scan.status == ScanStatus.COMPLETED:
+        ...     process_results(scan)
+
+    Note:
+        - Provides both integer values for database storage and string representations
+        - Used for scan lifecycle management and user interface display
+        - Supports conditional logic for scan state handling
+    """
+    CREATED = 1
+    RUNNING = 2
+    COMPLETED = 3
+    CANCELLED = 4
+    ERROR = 5
+
+    def __str__(self) -> str:
+        """
+        Return string representation of scan status.
+
+        Returns:
+            str: Human-readable status name
+
+        Example:
+            >>> status = ScanStatus.RUNNING
+            >>> print(f"Scan is {status}")  # "Scan is RUNNING"
+        """
+        if (self == ScanStatus.CREATED):
+            return "CREATED"
+        elif (self == ScanStatus.RUNNING):
+            return "RUNNING"
+        elif (self == ScanStatus.COMPLETED):
+            return "COMPLETED"
+        elif (self == ScanStatus.CANCELLED):
+            return "CANCELLED"
+        elif (self == ScanStatus.ERROR):
+            return "ERROR"
+
+
+class CollectionToolStatus(enum.Enum):
+    """
+    Enumeration of possible collection tool execution states.
+
+    This enumeration tracks the individual execution status of scanning tools
+    within a scan. Each tool in a scan can have its own status, allowing for
+    granular monitoring and control of the scanning process.
+
+    Values:
+        CREATED (1): Tool instance created but not yet executed
+        RUNNING (2): Tool is currently executing
+        COMPLETED (3): Tool execution completed successfully
+        ERROR (4): Tool execution failed with an error
+        CANCELLED (5): Tool execution was cancelled
+
+    Example:
+        >>> tool.status = CollectionToolStatus.RUNNING
+        >>> if tool.status == CollectionToolStatus.ERROR:
+        ...     retry_tool(tool)
+
+    Note:
+        - Enables fine-grained control over individual tool execution
+        - Supports partial scan recovery by tracking tool-level status
+        - Used for progress reporting and error handling at tool level
+    """
+    CREATED = 1
+    RUNNING = 2
+    COMPLETED = 3
+    ERROR = 4
+    CANCELLED = 5
+
+    def __str__(self) -> str:
+        """
+        Return string representation of collection tool status.
+
+        Returns:
+            str: Human-readable tool status name
+
+        Example:
+            >>> status = CollectionToolStatus.COMPLETED
+            >>> print(f"Tool status: {status}")  # "Tool status: COMPLETED"
+        """
+        if (self == CollectionToolStatus.CREATED):
+            return "CREATED"
+        elif (self == CollectionToolStatus.RUNNING):
+            return "RUNNING"
+        elif (self == CollectionToolStatus.COMPLETED):
+            return "COMPLETED"
+        elif (self == CollectionToolStatus.ERROR):
+            return "ERROR"
+        elif (self == CollectionToolStatus.CANCELLED):
+            return "CANCELLED"
+
+
+class ScheduledScan():
+    """
+    Represents a scheduled security scan with its configuration and execution context.
+
+    This class encapsulates all aspects of a scheduled scan including:
+    - Tool configuration and wordlist management
+    - Scan execution state and progress tracking
+    - Resource management for concurrent tool execution
+    - Network interface and target scope configuration
+    - Process and thread lifecycle management
+
+    The class handles the complete lifecycle of a scan from initialization through
+    cleanup, managing wordlists, tool executors, and scan data throughout the process.
+
+    Attributes:
+        scan_thread (ScheduledScanThread): Parent thread managing this scan
+        target_id (str): Identifier of the target being scanned
+        scan_id (str): Unique identifier for this scan instance
+        id (str): Scheduled scan identifier from the server
+        tool_executor_map (Dict): Map of tool IDs to their executor instances
+        tool_executor_lock (threading.Lock): Thread safety for executor operations
+        collection_tool_map (Dict): Map of collection tools and their configurations
+        current_tool (Optional): Currently executing tool instance
+        current_tool_instance_id (Optional): ID of currently executing tool
+        selected_interface (Optional): Network interface selected for scanning
+        scan_data (data_model.ScanData): Scan scope and target information
+
+    Example:
+        >>> scan = ScheduledScan(scan_thread, scheduled_scan_config)
+        >>> scan.update_scan_status(ScanStatus.RUNNING)
+        >>> scan.register_tool_executor(tool_id, executor)
+
+    Note:
+        - Implements __hash__ method for Luigi task compatibility
+        - Manages wordlist files and cleanup automatically
+        - Supports concurrent tool execution with proper synchronization
+    """
+
+    def __init__(self, scheduled_scan_thread, scheduled_scan: Any) -> None:
+        """
+        Initialize a ScheduledScan instance with configuration and wordlist setup.
+
+        This constructor handles the complete setup of a scan including:
+        - Tool configuration and wordlist preparation
+        - Network interface selection
+        - Scan scope validation and setup
+        - Initial status update to RUNNING
+
+        Args:
+            scheduled_scan_thread (ScheduledScanThread): Parent thread managing this scan
+            scheduled_scan (Any): Server-provided scan configuration object
+
+        Raises:
+            RuntimeError: If scan object or scope is invalid/missing
+
+        Example:
+            >>> thread = ScheduledScanThread(recon_manager)
+            >>> scan = ScheduledScan(thread, server_scan_config)
+        """
+        self.scan_thread = scheduled_scan_thread
+        self.target_id = scheduled_scan.target_id
+        self.scan_id = scheduled_scan.scan_id
+        self.id = scheduled_scan.id
+        self.tool_executor_map: Dict[str, Any] = {}
+        self.tool_executor_lock = threading.Lock()
+
+        # Initialize collection tool map with wordlist preparation
+        self.collection_tool_map: Dict[str, Any] = {}
+        for collection_tool in scheduled_scan.collection_tools:
+
+            temp_wordlist_path = None
+            # Only get wordlists for enabled tools
+            if collection_tool.enabled == 1:
+                # Prepare wordlist if present
+                worlist_arr = []
+                for wordlist in collection_tool.collection_tool.wordlists:
+                    wordlist_id = wordlist.id
+                    wordlist_hash = wordlist.hash
+                    wordlist_json = None
+
+                    # Check if wordlist file exists locally
+                    file_path = os.path.join(
+                        wordlist_path, str(wordlist_id))
+                    if not os.path.exists(file_path):
+                        # Download wordlist from server
+                        wordlist_json = self.scan_thread.recon_manager.get_wordlist(
+                            wordlist_id)
+                        with open(file_path, 'w') as f:
+                            json.dump(wordlist_json, f)
+
+                    else:
+                        try:
+                            # Load existing wordlist and verify hash
+                            with open(file_path, 'r') as f:
+                                wordlist_json = json.load(f)
+
+                            if 'hash' in wordlist_json:
+                                if wordlist_json['hash'] != wordlist_hash:
+                                    # Hash mismatch - re-download wordlist
+                                    wordlist_json = self.scan_thread.recon_manager.get_wordlist(
+                                        wordlist_id)
+                                    with open(file_path, 'w') as f:
+                                        json.dump(wordlist_json, f)
+                            else:
+                                raise Exception("No hash field")
+
+                        except:
+                            # Error loading wordlist - re-download
+                            os.remove(file_path)
+                            wordlist_json = self.scan_thread.recon_manager.get_wordlist(
+                                wordlist_id)
+                            with open(file_path, 'w') as f:
+                                json.dump(wordlist_json, f)
+
+                    # Add words to wordlist array
+                    if wordlist_json and 'words' in wordlist_json:
+                        worlist_arr.extend(wordlist_json['words'])
+
+                # Create combined wordlist file for scan
+                if len(worlist_arr) > 0:
+                    temp_wordlist_path = os.path.join(
+                        wordlist_path, str(collection_tool.id))
+                    with open(temp_wordlist_path, 'w') as f:
+                        f.write("\n".join(worlist_arr) + "\n")
+
+            # Configure tool with wordlist path
+            collection_tool.collection_tool.wordlist_path = temp_wordlist_path
+            self.collection_tool_map[collection_tool.id] = collection_tool
+
+        # Initialize execution state
+        self.current_tool = None
+        self.current_tool_instance_id = None
+        self.selected_interface = None
+
+        # Validate and retrieve scan configuration from server
+        scan_obj = self.scan_thread.recon_manager.get_scheduled_scan(
+            self.id)
+        if scan_obj is None or 'scan_id' not in scan_obj or scan_obj['scan_id'] is None:
+            raise RuntimeError(
+                "[-] No scan object returned for scheduled scan.")
+        else:
+            self.scan_id = scan_obj['scan_id']
+
+        # Validate scan scope
+        if 'scope' not in scan_obj or scan_obj['scope'] is None:
+            raise RuntimeError(
+                "[-] No scan scope returned for scheduled scan.")
+
+        # Initialize scan data with scope
+        scope_dict = scan_obj['scope']
+        self.scan_data = ScanData(
+            scope_dict, record_tags=set([RecordTag.REMOTE.value]))
+
+        # Configure selected network interface
+        if 'interface' in scan_obj and scan_obj['interface']:
+            self.selected_interface = scan_obj['interface']
+
+        # Update scan status to running
+        self.update_scan_status(ScanStatus.RUNNING.value)
+
+    def update_scan_status(self, scan_status: int, err_msg: Optional[str] = None) -> None:
+        """
+        Update the overall scan status on the management server.
+
+        Args:
+            scan_status (int): New scan status value (from ScanStatus enum)
+            err_msg (Optional[str]): Error message if status indicates failure
+
+        Example:
+            >>> scan.update_scan_status(ScanStatus.COMPLETED.value)
+            >>> scan.update_scan_status(ScanStatus.ERROR.value, "Connection failed")
+        """
+        # Send update to the server
+        self.scan_thread.recon_manager.update_scan_status(
+            self.id, scan_status)
+
+    def update_tool_status(self, tool_id: str, tool_status: int, tool_status_msg: str = '') -> None:
+        """
+        Update the status of a specific collection tool.
+
+        Args:
+            tool_id (str): Unique identifier of the tool to update
+            tool_status (int): New tool status value (from CollectionToolStatus enum)
+            tool_status_msg (str): Optional status message or error details
+
+        Example:
+            >>> scan.update_tool_status("nmap", CollectionToolStatus.RUNNING.value)
+            >>> scan.update_tool_status("nuclei", CollectionToolStatus.ERROR.value, "Template load failed")
+        """
+        # Send update to the server
+        self.scan_thread.recon_manager.update_tool_status(
+            tool_id, tool_status, tool_status_msg)
+
+        # Update in local collection tool map
+        if tool_id in self.collection_tool_map:
+            tool_obj = self.collection_tool_map[tool_id]
+            tool_obj.status = tool_status
+
+    def register_tool_executor(self, tool_id: str, tool_executor: Any) -> None:
+        """
+        Register tool executor for process and thread management.
+
+        This method registers executors (processes and threads) associated with
+        a tool so they can be properly cancelled or terminated if needed. It
+        handles cleanup of completed futures to prevent memory leaks.
+
+        Args:
+            tool_id (str): Unique identifier of the tool
+            tool_executor (Any): Executor instance with process PIDs and thread futures
+
+        Example:
+            >>> executor = ToolExecutor()
+            >>> scan.register_tool_executor("nmap", executor)
+
+        Note:
+            This method has known memory leak issues and should be optimized
+        """
+        with self.tool_executor_lock:
+
+            thread_future_array = tool_executor.get_thread_futures()
+            proc_pids = tool_executor.get_process_pids()
+
+            if tool_id in self.tool_executor_map:
+                tool_executor_map_main = self.tool_executor_map[tool_id]
+            else:
+                tool_executor_map_main = ToolExecutor()
+                self.tool_executor_map[tool_id] = tool_executor_map_main
+
+            # Remove any completed futures to prevent memory leaks
+            tool_executor_map_main.thread_future_array = [
+                f for f in tool_executor_map_main.thread_future_array if not f.done()
+            ]
+
+            # Update the executor state
+            if len(thread_future_array) > 0:
+                tool_executor_map_main.thread_future_array.extend(
+                    thread_future_array)
+            tool_executor_map_main.proc_pids.update(proc_pids)
+
+    def kill_scan_processes(self, tool_id_list: List[str] = []) -> None:
+        """
+        Terminate scan processes and cancel running threads.
+
+        This method forcefully terminates all processes and cancels threads
+        associated with specified tools or all tools if no list is provided.
+
+        Args:
+            tool_id_list (List[str]): List of tool IDs to terminate. 
+                                    If empty, terminates all tools
+
+        Example:
+            >>> scan.kill_scan_processes(["nmap", "masscan"])  # Kill specific tools
+            >>> scan.kill_scan_processes()  # Kill all tools
+
+        Note:
+            Uses SIGKILL for process termination - processes cannot ignore this signal
+        """
+        with self.tool_executor_lock:
+
+            # Get the list of tool executors to process
+            tool_executor_map_list = (
+                [self.tool_executor_map[tool_id]
+                    for tool_id in tool_id_list if tool_id in self.tool_executor_map]
+                if tool_id_list else self.tool_executor_map.values()
+            )
+
+            # Terminate processes and cancel threads
+            for executor in tool_executor_map_list:
+                # Kill all processes with SIGKILL
+                for pid in executor.get_process_pids():
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except:
+                        pass
+                # Cancel all thread futures
+                for future in executor.get_thread_futures():
+                    try:
+                        future.cancel()
+                    except:
+                        pass
+
+            # Cleanup tool_executor_map
+            if tool_id_list:
+                # Remove only specified tools
+                self.tool_executor_map = {
+                    k: v for k, v in self.tool_executor_map.items() if k not in tool_id_list}
+            else:
+                # Clear all tools
+                self.tool_executor_map.clear()
+
+    def cleanup(self) -> None:
+        """
+        Clean up temporary files and resources used during the scan.
+
+        This method removes temporary wordlist files created for the scan
+        and performs other cleanup operations to free system resources.
+
+        Example:
+            >>> scan.cleanup()  # Called after scan completion
+
+        Note:
+            Automatically called when scan completes successfully
+        """
+        collection_tools = self.collection_tool_map.values()
+        for collection_tool_inst in collection_tools:
+            # Remove the wordlist file if it exists
+            if (collection_tool_inst.collection_tool.wordlist_path and
+                    os.path.exists(collection_tool_inst.collection_tool.wordlist_path)):
+                os.remove(collection_tool_inst.collection_tool.wordlist_path)
+
+    def __hash__(self) -> int:
+        """
+        Return hash value for Luigi task compatibility.
+
+        Luigi requires hashable input parameters for task deduplication.
+        Since this object contains complex data structures that aren't
+        naturally hashable, we return a constant value.
+
+        Returns:
+            int: Constant hash value (0) for Luigi compatibility
+
+        Note:
+            This is necessary because Luigi hashes input parameters and
+            dictionaries won't work as task parameters
+        """
+        return 0
 
 
 class CollectorType(enum.Enum):

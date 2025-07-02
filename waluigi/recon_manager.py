@@ -217,442 +217,6 @@ def encrypt_data(session_key: bytes, data: bytes) -> str:
     return b64_data
 
 
-class ScanStatus(enum.Enum):
-    """
-    Enumeration of possible scan execution states.
-
-    This enumeration defines the lifecycle states of security scans, providing
-    standardized status tracking throughout the scanning process. It enables
-    consistent monitoring and reporting of scan progress across the system.
-
-    Values:
-        CREATED (1): Scan has been created but not yet started
-        RUNNING (2): Scan is currently executing
-        COMPLETED (3): Scan has finished successfully
-        CANCELLED (4): Scan was cancelled by user or system
-        ERROR (5): Scan failed due to an error
-
-    Example:
-        >>> scan.status = ScanStatus.RUNNING
-        >>> if scan.status == ScanStatus.COMPLETED:
-        ...     process_results(scan)
-
-    Note:
-        - Provides both integer values for database storage and string representations
-        - Used for scan lifecycle management and user interface display
-        - Supports conditional logic for scan state handling
-    """
-    CREATED = 1
-    RUNNING = 2
-    COMPLETED = 3
-    CANCELLED = 4
-    ERROR = 5
-
-    def __str__(self) -> str:
-        """
-        Return string representation of scan status.
-
-        Returns:
-            str: Human-readable status name
-
-        Example:
-            >>> status = ScanStatus.RUNNING
-            >>> print(f"Scan is {status}")  # "Scan is RUNNING"
-        """
-        if (self == ScanStatus.CREATED):
-            return "CREATED"
-        elif (self == ScanStatus.RUNNING):
-            return "RUNNING"
-        elif (self == ScanStatus.COMPLETED):
-            return "COMPLETED"
-        elif (self == ScanStatus.CANCELLED):
-            return "CANCELLED"
-        elif (self == ScanStatus.ERROR):
-            return "ERROR"
-
-
-class CollectionToolStatus(enum.Enum):
-    """
-    Enumeration of possible collection tool execution states.
-
-    This enumeration tracks the individual execution status of scanning tools
-    within a scan. Each tool in a scan can have its own status, allowing for
-    granular monitoring and control of the scanning process.
-
-    Values:
-        CREATED (1): Tool instance created but not yet executed
-        RUNNING (2): Tool is currently executing
-        COMPLETED (3): Tool execution completed successfully
-        ERROR (4): Tool execution failed with an error
-        CANCELLED (5): Tool execution was cancelled
-
-    Example:
-        >>> tool.status = CollectionToolStatus.RUNNING
-        >>> if tool.status == CollectionToolStatus.ERROR:
-        ...     retry_tool(tool)
-
-    Note:
-        - Enables fine-grained control over individual tool execution
-        - Supports partial scan recovery by tracking tool-level status
-        - Used for progress reporting and error handling at tool level
-    """
-    CREATED = 1
-    RUNNING = 2
-    COMPLETED = 3
-    ERROR = 4
-    CANCELLED = 5
-
-    def __str__(self) -> str:
-        """
-        Return string representation of collection tool status.
-
-        Returns:
-            str: Human-readable tool status name
-
-        Example:
-            >>> status = CollectionToolStatus.COMPLETED
-            >>> print(f"Tool status: {status}")  # "Tool status: COMPLETED"
-        """
-        if (self == CollectionToolStatus.CREATED):
-            return "CREATED"
-        elif (self == CollectionToolStatus.RUNNING):
-            return "RUNNING"
-        elif (self == CollectionToolStatus.COMPLETED):
-            return "COMPLETED"
-        elif (self == CollectionToolStatus.ERROR):
-            return "ERROR"
-        elif (self == CollectionToolStatus.CANCELLED):
-            return "CANCELLED"
-
-
-class ScheduledScan():
-    """
-    Represents a scheduled security scan with its configuration and execution context.
-
-    This class encapsulates all aspects of a scheduled scan including:
-    - Tool configuration and wordlist management
-    - Scan execution state and progress tracking
-    - Resource management for concurrent tool execution
-    - Network interface and target scope configuration
-    - Process and thread lifecycle management
-
-    The class handles the complete lifecycle of a scan from initialization through
-    cleanup, managing wordlists, tool executors, and scan data throughout the process.
-
-    Attributes:
-        scan_thread (ScheduledScanThread): Parent thread managing this scan
-        target_id (str): Identifier of the target being scanned
-        scan_id (str): Unique identifier for this scan instance
-        id (str): Scheduled scan identifier from the server
-        tool_executor_map (Dict): Map of tool IDs to their executor instances
-        tool_executor_lock (threading.Lock): Thread safety for executor operations
-        collection_tool_map (Dict): Map of collection tools and their configurations
-        current_tool (Optional): Currently executing tool instance
-        current_tool_instance_id (Optional): ID of currently executing tool
-        selected_interface (Optional): Network interface selected for scanning
-        scan_data (data_model.ScanData): Scan scope and target information
-
-    Example:
-        >>> scan = ScheduledScan(scan_thread, scheduled_scan_config)
-        >>> scan.update_scan_status(ScanStatus.RUNNING)
-        >>> scan.register_tool_executor(tool_id, executor)
-
-    Note:
-        - Implements __hash__ method for Luigi task compatibility
-        - Manages wordlist files and cleanup automatically
-        - Supports concurrent tool execution with proper synchronization
-    """
-
-    def __init__(self, scheduled_scan_thread: 'ScheduledScanThread', scheduled_scan: Any) -> None:
-        """
-        Initialize a ScheduledScan instance with configuration and wordlist setup.
-
-        This constructor handles the complete setup of a scan including:
-        - Tool configuration and wordlist preparation
-        - Network interface selection
-        - Scan scope validation and setup
-        - Initial status update to RUNNING
-
-        Args:
-            scheduled_scan_thread (ScheduledScanThread): Parent thread managing this scan
-            scheduled_scan (Any): Server-provided scan configuration object
-
-        Raises:
-            RuntimeError: If scan object or scope is invalid/missing
-
-        Example:
-            >>> thread = ScheduledScanThread(recon_manager)
-            >>> scan = ScheduledScan(thread, server_scan_config)
-        """
-        self.scan_thread = scheduled_scan_thread
-        self.target_id = scheduled_scan.target_id
-        self.scan_id = scheduled_scan.scan_id
-        self.id = scheduled_scan.id
-        self.tool_executor_map: Dict[str, Any] = {}
-        self.tool_executor_lock = threading.Lock()
-
-        # Initialize collection tool map with wordlist preparation
-        self.collection_tool_map: Dict[str, Any] = {}
-        for collection_tool in scheduled_scan.collection_tools:
-
-            wordlist_path = None
-            # Only get wordlists for enabled tools
-            if collection_tool.enabled == 1:
-                # Prepare wordlist if present
-                worlist_arr = []
-                for wordlist in collection_tool.collection_tool.wordlists:
-                    wordlist_id = wordlist.id
-                    wordlist_hash = wordlist.hash
-                    wordlist_json = None
-
-                    # Check if wordlist file exists locally
-                    file_path = os.path.join(
-                        data_model.wordlist_path, str(wordlist_id))
-                    if not os.path.exists(file_path):
-                        # Download wordlist from server
-                        wordlist_json = self.scan_thread.recon_manager.get_wordlist(
-                            wordlist_id)
-                        with open(file_path, 'w') as f:
-                            json.dump(wordlist_json, f)
-
-                    else:
-                        try:
-                            # Load existing wordlist and verify hash
-                            with open(file_path, 'r') as f:
-                                wordlist_json = json.load(f)
-
-                            if 'hash' in wordlist_json:
-                                if wordlist_json['hash'] != wordlist_hash:
-                                    # Hash mismatch - re-download wordlist
-                                    wordlist_json = self.scan_thread.recon_manager.get_wordlist(
-                                        wordlist_id)
-                                    with open(file_path, 'w') as f:
-                                        json.dump(wordlist_json, f)
-                            else:
-                                raise Exception("No hash field")
-
-                        except:
-                            # Error loading wordlist - re-download
-                            os.remove(file_path)
-                            wordlist_json = self.scan_thread.recon_manager.get_wordlist(
-                                wordlist_id)
-                            with open(file_path, 'w') as f:
-                                json.dump(wordlist_json, f)
-
-                    # Add words to wordlist array
-                    if wordlist_json and 'words' in wordlist_json:
-                        worlist_arr.extend(wordlist_json['words'])
-
-                # Create combined wordlist file for scan
-                if len(worlist_arr) > 0:
-                    wordlist_path = os.path.join(
-                        data_model.wordlist_path, str(collection_tool.id))
-                    with open(wordlist_path, 'w') as f:
-                        f.write("\n".join(worlist_arr) + "\n")
-
-            # Configure tool with wordlist path
-            collection_tool.collection_tool.wordlist_path = wordlist_path
-            self.collection_tool_map[collection_tool.id] = collection_tool
-
-        # Initialize execution state
-        self.current_tool = None
-        self.current_tool_instance_id = None
-        self.selected_interface = None
-
-        # Validate and retrieve scan configuration from server
-        scan_obj = self.scan_thread.recon_manager.get_scheduled_scan(
-            self.id)
-        if scan_obj is None or 'scan_id' not in scan_obj or scan_obj['scan_id'] is None:
-            raise RuntimeError(
-                "[-] No scan object returned for scheduled scan.")
-        else:
-            self.scan_id = scan_obj['scan_id']
-
-        # Validate scan scope
-        if 'scope' not in scan_obj or scan_obj['scope'] is None:
-            raise RuntimeError(
-                "[-] No scan scope returned for scheduled scan.")
-
-        # Initialize scan data with scope
-        scope_dict = scan_obj['scope']
-        self.scan_data = data_model.ScanData(
-            scope_dict, record_tags=set([data_model.RecordTag.REMOTE.value]))
-
-        # Configure selected network interface
-        if 'interface' in scan_obj and scan_obj['interface']:
-            self.selected_interface = scan_obj['interface']
-
-        # Update scan status to running
-        self.update_scan_status(ScanStatus.RUNNING.value)
-
-    def update_scan_status(self, scan_status: int, err_msg: Optional[str] = None) -> None:
-        """
-        Update the overall scan status on the management server.
-
-        Args:
-            scan_status (int): New scan status value (from ScanStatus enum)
-            err_msg (Optional[str]): Error message if status indicates failure
-
-        Example:
-            >>> scan.update_scan_status(ScanStatus.COMPLETED.value)
-            >>> scan.update_scan_status(ScanStatus.ERROR.value, "Connection failed")
-        """
-        # Send update to the server
-        self.scan_thread.recon_manager.update_scan_status(
-            self.id, scan_status)
-
-    def update_tool_status(self, tool_id: str, tool_status: int, tool_status_msg: str = '') -> None:
-        """
-        Update the status of a specific collection tool.
-
-        Args:
-            tool_id (str): Unique identifier of the tool to update
-            tool_status (int): New tool status value (from CollectionToolStatus enum)
-            tool_status_msg (str): Optional status message or error details
-
-        Example:
-            >>> scan.update_tool_status("nmap", CollectionToolStatus.RUNNING.value)
-            >>> scan.update_tool_status("nuclei", CollectionToolStatus.ERROR.value, "Template load failed")
-        """
-        # Send update to the server
-        self.scan_thread.recon_manager.update_tool_status(
-            tool_id, tool_status, tool_status_msg)
-
-        # Update in local collection tool map
-        if tool_id in self.collection_tool_map:
-            tool_obj = self.collection_tool_map[tool_id]
-            tool_obj.status = tool_status
-
-    def register_tool_executor(self, tool_id: str, tool_executor: Any) -> None:
-        """
-        Register tool executor for process and thread management.
-
-        This method registers executors (processes and threads) associated with
-        a tool so they can be properly cancelled or terminated if needed. It
-        handles cleanup of completed futures to prevent memory leaks.
-
-        Args:
-            tool_id (str): Unique identifier of the tool
-            tool_executor (Any): Executor instance with process PIDs and thread futures
-
-        Example:
-            >>> executor = ToolExecutor()
-            >>> scan.register_tool_executor("nmap", executor)
-
-        Note:
-            This method has known memory leak issues and should be optimized
-        """
-        with self.tool_executor_lock:
-
-            thread_future_array = tool_executor.get_thread_futures()
-            proc_pids = tool_executor.get_process_pids()
-
-            if tool_id in self.tool_executor_map:
-                tool_executor_map_main = self.tool_executor_map[tool_id]
-            else:
-                tool_executor_map_main = data_model.ToolExecutor()
-                self.tool_executor_map[tool_id] = tool_executor_map_main
-
-            # Remove any completed futures to prevent memory leaks
-            tool_executor_map_main.thread_future_array = [
-                f for f in tool_executor_map_main.thread_future_array if not f.done()
-            ]
-
-            # Update the executor state
-            if len(thread_future_array) > 0:
-                tool_executor_map_main.thread_future_array.extend(
-                    thread_future_array)
-            tool_executor_map_main.proc_pids.update(proc_pids)
-
-    def kill_scan_processes(self, tool_id_list: List[str] = []) -> None:
-        """
-        Terminate scan processes and cancel running threads.
-
-        This method forcefully terminates all processes and cancels threads
-        associated with specified tools or all tools if no list is provided.
-
-        Args:
-            tool_id_list (List[str]): List of tool IDs to terminate. 
-                                    If empty, terminates all tools
-
-        Example:
-            >>> scan.kill_scan_processes(["nmap", "masscan"])  # Kill specific tools
-            >>> scan.kill_scan_processes()  # Kill all tools
-
-        Note:
-            Uses SIGKILL for process termination - processes cannot ignore this signal
-        """
-        with self.tool_executor_lock:
-
-            # Get the list of tool executors to process
-            tool_executor_map_list = (
-                [self.tool_executor_map[tool_id]
-                    for tool_id in tool_id_list if tool_id in self.tool_executor_map]
-                if tool_id_list else self.tool_executor_map.values()
-            )
-
-            # Terminate processes and cancel threads
-            for executor in tool_executor_map_list:
-                # Kill all processes with SIGKILL
-                for pid in executor.get_process_pids():
-                    try:
-                        os.kill(pid, signal.SIGKILL)
-                    except:
-                        pass
-                # Cancel all thread futures
-                for future in executor.get_thread_futures():
-                    try:
-                        future.cancel()
-                    except:
-                        pass
-
-            # Cleanup tool_executor_map
-            if tool_id_list:
-                # Remove only specified tools
-                self.tool_executor_map = {
-                    k: v for k, v in self.tool_executor_map.items() if k not in tool_id_list}
-            else:
-                # Clear all tools
-                self.tool_executor_map.clear()
-
-    def cleanup(self) -> None:
-        """
-        Clean up temporary files and resources used during the scan.
-
-        This method removes temporary wordlist files created for the scan
-        and performs other cleanup operations to free system resources.
-
-        Example:
-            >>> scan.cleanup()  # Called after scan completion
-
-        Note:
-            Automatically called when scan completes successfully
-        """
-        collection_tools = self.collection_tool_map.values()
-        for collection_tool_inst in collection_tools:
-            # Remove the wordlist file if it exists
-            if (collection_tool_inst.collection_tool.wordlist_path and
-                    os.path.exists(collection_tool_inst.collection_tool.wordlist_path)):
-                os.remove(collection_tool_inst.collection_tool.wordlist_path)
-
-    def __hash__(self) -> int:
-        """
-        Return hash value for Luigi task compatibility.
-
-        Luigi requires hashable input parameters for task deduplication.
-        Since this object contains complex data structures that aren't
-        naturally hashable, we return a constant value.
-
-        Returns:
-            int: Constant hash value (0) for Luigi compatibility
-
-        Note:
-            This is necessary because Luigi hashes input parameters and
-            dictionaries won't work as task parameters
-        """
-        return 0
-
-
 class ScheduledScanThread(threading.Thread):
     """
     Thread-based executor for managing scheduled security scans with polling capabilities.
@@ -721,7 +285,7 @@ class ScheduledScanThread(threading.Thread):
         self.checkin_interval = 30  # Default polling interval in seconds
         self.scan_thread_lock = threading.Lock()
         self.log_queue: Optional[Any] = None
-        self.scheduled_scan_map: Dict[str, ScheduledScan] = {}
+        self.scheduled_scan_map: Dict[str, data_model.ScheduledScan] = {}
 
     @luigi.Task.event_handler(luigi.Event.FAILURE)
     def catch_failure(task: Any, exception: Exception) -> None:
@@ -764,7 +328,7 @@ class ScheduledScanThread(threading.Thread):
             self._enabled = True
             logging.getLogger(__name__).debug("Scan poller enabled.")
 
-    def execute_scan_jobs(self, scheduled_scan_obj: ScheduledScan) -> Optional[str]:
+    def execute_scan_jobs(self, scheduled_scan_obj: data_model.ScheduledScan) -> Optional[str]:
         """
         Execute all collection tools for a scheduled scan in proper order.
 
@@ -831,7 +395,7 @@ class ScheduledScanThread(threading.Thread):
                     continue
 
                 # Set initial status after continue checks
-                ret_status = CollectionToolStatus.RUNNING.value
+                ret_status = data_model.CollectionToolStatus.RUNNING.value
 
                 # Apply argument overrides if specified
                 if collection_tool_inst.args_override:
@@ -844,7 +408,7 @@ class ScheduledScanThread(threading.Thread):
                 # Check for scan cancellation from server
                 scan_status = self.recon_manager.get_scan_status(
                     scheduled_scan_obj.scan_id)
-                if scan_status is None or scan_status.scan_status == ScanStatus.CANCELLED.value:
+                if scan_status is None or scan_status.scan_status == data_model.ScanStatus.CANCELLED.value:
                     err_msg = "Scan cancelled or doesn't exist"
                     logging.getLogger(__name__).debug(err_msg)
                     # Perform cleanup for cancelled scan
@@ -858,7 +422,7 @@ class ScheduledScanThread(threading.Thread):
 
                 # Update tool status to running
                 scheduled_scan_obj.update_tool_status(
-                    collection_tool_inst.id, CollectionToolStatus.RUNNING.value)
+                    collection_tool_inst.id, data_model.CollectionToolStatus.RUNNING.value)
 
                 # Handle active scanning tools that require target connection
                 if tool_obj.tool_type == 2:
@@ -873,7 +437,7 @@ class ScheduledScanThread(threading.Thread):
                         if self.recon_manager.scan_func(scheduled_scan_obj) == False:
                             err_msg = "Scan function failed"
                             logging.getLogger(__name__).debug(err_msg)
-                            ret_status = CollectionToolStatus.ERROR.value
+                            ret_status = data_model.CollectionToolStatus.ERROR.value
                             break
 
                     except Exception as e:
@@ -881,7 +445,7 @@ class ScheduledScanThread(threading.Thread):
                         logging.getLogger(__name__).error(err_msg)
                         logging.getLogger(__name__).debug(
                             traceback.format_exc())
-                        ret_status = CollectionToolStatus.ERROR.value
+                        ret_status = data_model.CollectionToolStatus.ERROR.value
                         break
                     finally:
                         # Handle Luigi task failures and update status
@@ -902,15 +466,15 @@ class ScheduledScanThread(threading.Thread):
                     if self.recon_manager.import_func(scheduled_scan_obj) == False:
                         err_msg = "Import function failed"
                         logging.getLogger(__name__).debug(err_msg)
-                        ret_status = CollectionToolStatus.ERROR.value
+                        ret_status = data_model.CollectionToolStatus.ERROR.value
                         break
                     else:
-                        ret_status = CollectionToolStatus.COMPLETED.value
+                        ret_status = data_model.CollectionToolStatus.COMPLETED.value
                 except Exception as e:
                     err_msg = "Error calling import function: %s" % str(e)
                     logging.getLogger(__name__).error(err_msg)
                     logging.getLogger(__name__).debug(traceback.format_exc())
-                    ret_status = CollectionToolStatus.ERROR.value
+                    ret_status = data_model.CollectionToolStatus.ERROR.value
                     break
 
                 finally:
@@ -929,7 +493,7 @@ class ScheduledScanThread(threading.Thread):
                 scheduled_scan_obj.current_tool_instance_id = None
 
         # Perform scan cleanup on successful completion
-        if ret_status == CollectionToolStatus.COMPLETED.value:
+        if ret_status == data_model.CollectionToolStatus.COMPLETED.value:
             scan_cleanup.scan_cleanup_func(scheduled_scan_obj.id)
             err_msg = None
 
@@ -975,7 +539,7 @@ class ScheduledScanThread(threading.Thread):
                 "Error processing collector settings: %s" % str(e))
             logging.getLogger(__name__).debug(traceback.format_exc())
 
-    def process_scan_obj(self, scheduled_scan_obj: ScheduledScan) -> None:
+    def process_scan_obj(self, scheduled_scan_obj: data_model.ScheduledScan) -> None:
         """
         Process a single scheduled scan from creation to completion.
 
@@ -1006,7 +570,7 @@ class ScheduledScanThread(threading.Thread):
         err_msg = None
 
         # Default to error status for safety
-        scan_status = ScanStatus.ERROR.value
+        scan_status = data_model.ScanStatus.ERROR.value
         try:
             # Execute all scan jobs
             err_msg = self.execute_scan_jobs(scheduled_scan_obj)
@@ -1019,7 +583,7 @@ class ScheduledScanThread(threading.Thread):
 
             if err_msg is None:
                 # Scan completed successfully
-                scan_status = ScanStatus.COMPLETED.value
+                scan_status = data_model.ScanStatus.COMPLETED.value
 
                 # Perform resource cleanup
                 scheduled_scan_obj.cleanup()
@@ -1122,7 +686,7 @@ class ScheduledScanThread(threading.Thread):
                                     if sched_scan_obj.id not in self.scheduled_scan_map:
 
                                         # Create new scheduled scan instance
-                                        scheduled_scan_obj = ScheduledScan(
+                                        scheduled_scan_obj = data_model.ScheduledScan(
                                             self, sched_scan_obj)
                                         self.scheduled_scan_map[sched_scan_obj.id] = scheduled_scan_obj
 
@@ -1137,7 +701,7 @@ class ScheduledScanThread(threading.Thread):
                                             scheduled_scan_obj.scan_id)
 
                                         # Process scan cancellation
-                                        if status_obj is None or status_obj.scan_status == ScanStatus.CANCELLED.value:
+                                        if status_obj is None or status_obj.scan_status == data_model.ScanStatus.CANCELLED.value:
                                             logging.getLogger(__name__).debug(
                                                 "Scan cancelled")
                                             scheduled_scan_obj.kill_scan_processes()
@@ -1368,7 +932,7 @@ class ReconManager:
         """
         return self.waluigi_tool_map
 
-    def scan_func(self, scan_input: ScheduledScan) -> bool:
+    def scan_func(self, scan_input: data_model.ScheduledScan) -> bool:
         """
         Execute the scan function for the currently active tool.
 
@@ -1405,7 +969,7 @@ class ReconManager:
 
         return ret_val
 
-    def import_func(self, scan_input: ScheduledScan) -> bool:
+    def import_func(self, scan_input: data_model.ScheduledScan) -> bool:
         """
         Import scan results using the appropriate tool's import function.
 

@@ -46,7 +46,7 @@ from waluigi import data_model
 from types import SimpleNamespace
 from waluigi import nmap_scan
 from waluigi import nuclei_scan
-from waluigi.recon_manager import ScheduledScan
+from waluigi.data_model import ScheduledScan
 from typing import Dict, List, Any, Optional
 
 import logging
