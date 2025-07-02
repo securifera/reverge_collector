@@ -17,7 +17,7 @@ jobs:
     - name: Test
       run: |
         source ~/venv/bin/activate
-        sudo pytest tests/
+        pytest tests/
     - name: Execute
       run: |
         cd /opt/collector
