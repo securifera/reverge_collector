@@ -1,7 +1,8 @@
 import base64
 import os
 import shutil
-from waluigi.recon_manager import ReconManager, ScheduledScan, ScheduledScanThread
+from waluigi.recon_manager import ReconManager, ScheduledScanThread
+from waluigi.data_model import ScheduledScan
 from types import SimpleNamespace
 from unittest.mock import patch
 from waluigi.scan_utils import get_port_byte_array

@@ -5,11 +5,11 @@ import json
 import logging
 import uuid
 
-from waluigi.recon_manager import ReconManager, ScheduledScan, ScheduledScanThread
+from waluigi.recon_manager import ReconManager, ScheduledScanThread
 from types import SimpleNamespace
 from unittest.mock import patch
 from waluigi.scan_utils import get_port_byte_array
-from waluigi.data_model import ScanData
+from waluigi.data_model import ScanData, ScheduledScan
 
 
 def test_webcap_scan_success(recon_manager):
@@ -73,12 +73,14 @@ def test_webcap_scan_success(recon_manager):
         input_conf = "%s/webcap-outputs/screenshots.json" % (output_dir)
         assert os.path.exists(input_conf) == True
 
-        with open(input_conf, 'r') as f:
-            file_contents = f.read()
-            json_data = json.loads(file_contents)
-            assert isinstance(json_data, list)
-            assert len(json_data) > 0
-            for item in json_data:
+        with open(input_conf, 'r') as import_fd:
+            for line in import_fd:
+                line = line.strip()
+                if not line:
+                    continue
+                item = json.loads(line)
+
+                assert len(item) > 0
                 assert 'image_data' in item
                 assert 'url' in item
                 assert 'status_code' in item
@@ -141,9 +143,13 @@ def test_webcap_import_success(recon_manager):
                     output_dir)
                 assert os.path.exists(output_json) == True
 
-                import_arr = None
-                with open(output_json, 'r') as f:
-                    import_arr = json.load(f)
+                import_arr = []
+                with open(output_json, 'r') as import_fd:
+                    for line in import_fd:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        import_arr.extend(json.loads(line))
 
                 if import_arr:
                     # Create a ScanData object to hold the scan data
