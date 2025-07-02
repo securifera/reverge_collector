@@ -16,11 +16,7 @@ jobs:
         sh ./install.sh
     - name: Test
       run: |
-        pwd
-        sudo cp -r ./tests /opt/reverge_collector/
-        cd /opt/reverge_collector
         source ~/venv/bin/activate
-        ls
         sudo pytest tests/
     - name: Execute
       run: |
