@@ -30,7 +30,7 @@ Functions:
 
 Constants:
     TCP (str): TCP protocol identifier
-    UDP (str): UDP protocol identifier
+    UDP (str): UDP protocol identifier 
 """
 
 from functools import partial
