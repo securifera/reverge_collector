@@ -405,7 +405,6 @@ pip install -r requirements.txt
 ### Community
 - **Issues**: [GitHub Issues](https://github.com/securifera/reverge_collector/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/securifera/reverge_collector/discussions)
-- **Security**: See [SECURITY.md](SECURITY.md) for reporting vulnerabilities
 
 ### Commercial Support
 For enterprise support and consulting:
