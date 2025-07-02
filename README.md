@@ -1,4 +1,4 @@
-# Waluigi - Automated Security Reconnaissance Framework
+# Waluigi - reverge collector framework
 
 <div align="center">
 
@@ -17,7 +17,7 @@
 
 ## 🎯 Overview
 
-**Waluigi** is a powerful, distributed security reconnaissance framework designed for bug bounty hunters, penetration testers, and security researchers. Built with Python and Luigi task orchestration, it provides automated, scalable scanning capabilities across multiple security tools and methodologies.
+**Waluigi** is a powerful, distributed security reconnaissance framework designed for red teamers, offensive security engineers, penetration testers, bug bounty hunters, and security researchers. It acts as the collector component for the [reverge](https://www.reverge.io/) attack surface management tool. Built with Python and Luigi task orchestration, it provides automated, scalable scanning capabilities across multiple security tools and methodologies.
 
 ### Key Highlights
 
@@ -70,7 +70,7 @@
 
 - **Operating System**: Linux (Ubuntu 20.04+ recommended)
 - **Python**: 3.9 or higher
-- **Memory**: 4GB RAM minimum (8GB+ recommended)
+- **Memory**: 2GB RAM minimum (4GB+ recommended)
 - **Storage**: 10GB available space
 - **Network**: Internet connectivity for tool downloads
 
@@ -126,21 +126,13 @@ sudo dpkg -i feroxbuster_amd64.deb
 # 3. Install Python dependencies
 pip install -r requirements.txt
 
-# 4. Set up configuration
-mkdir -p ~/.config/waluigi
 ```
 
 </details>
 
 ### Docker Installation
 
-```bash
-# Build the Docker image
-docker build -t waluigi .
-
-# Run with Docker Compose
-docker-compose up -d
-```
+[Collector Docker](https://github.com/securifera/collector-docker)
 
 ---
 
@@ -150,27 +142,8 @@ docker-compose up -d
 
 ```bash
 # Start the scan collector
-python -m waluigi.scan_poller -x YOUR_TOKEN
-
-# Or with debugging enabled
-python -m waluigi.scan_poller -x YOUR_TOKEN -d
-```
-
-### Configuration
-
-```python
-# Basic configuration example
-from waluigi import recon_manager
-
-# Initialize the reconnaissance manager
-manager = recon_manager.ReconManager(
-    token="your-api-token",
-    manager_url="https://your-manager-url.com"
-)
-
-# Get available tools
-tools = manager.get_tools()
-print(f"Available tools: {len(tools)}")
+source venv/bin/activate
+python3 waluigi/scan_poller.py -x COLLECTOR_API_KEY
 ```
 
 ### Interactive Console
@@ -184,57 +157,28 @@ Once running, the interactive console provides real-time control:
 > q                    # Quit application
 ```
 
-### API Integration
-
-```python
-# Example: Submit a scan programmatically
-import requests
-
-headers = {
-    'Authorization': 'Bearer YOUR_TOKEN',
-    'Content-Type': 'application/json'
-}
-
-scan_data = {
-    "target": "example.com",
-    "tools": ["subfinder", "httpx", "nuclei"],
-    "scope": {
-        "domains": ["example.com"],
-        "ports": [80, 443, 8080]
-    }
-}
-
-response = requests.post(
-    'https://manager-url/api/scans',
-    headers=headers,
-    json=scan_data
-)
-```
-
----
-
 ## 🏛️ Architecture
 
 ### System Overview
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Web Manager   │    │   API Gateway   │    │   Collectors    │
-│                 │◄──►│                 │◄──►│                 │
-│  - Dashboard    │    │  - Authentication│    │  - Tool Exec    │
-│  - Scan Config  │    │  - Load Balancer│    │  - Data Proc    │
-│  - Results View │    │  - Rate Limiting│    │  - Status Report│
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         └───────────────────────┼───────────────────────┘
-                                 │
-                    ┌─────────────────┐
-                    │    Database     │
-                    │                 │
-                    │  - Scan Data    │
-                    │  - Tool Results │
-                    │  - User Config  │
-                    └─────────────────┘
+┌─────────────────┐    ┌─────────────────┐
+│   Reverge       │    │   Collectors    │
+│                 │◄──►│                 │
+│  - Dashboard    │    │  - Tool Exec    │
+│  - Scan Config  │    │  - Data Proc    │
+│  - Results View │    │  - Status Report│
+└─────────────────┘    └─────────────────┘
+         │                                             
+         │
+         │
+┌─────────────────┐
+│    Database     │
+│                 │
+│  - Scan Data    │
+│  - Tool Results │
+│  - User Config  │
+└─────────────────┘
 ```
 
 ### Component Details
@@ -273,13 +217,13 @@ Comprehensive object-oriented representation:
 | **Masscan** | Fast port scanning | Native binary | ✅ Active |
 | **Nmap** | Comprehensive port scanning | python-libnmap | ✅ Active |
 | **HTTPX** | HTTP/HTTPS probing | Native binary | ✅ Active |
-| **Subfinder** | Subdomain enumeration | Native binary | ✅ Active |
+| **Subfinder** | Subdomain enumeration | Native binary | ✅ Passive |
 | **Nuclei** | Vulnerability scanning | Native binary | ✅ Active |
 | **Feroxbuster** | Directory enumeration | Native binary | ✅ Active |
-| **Shodan** | Search engine integration | Python API | ✅ Active |
-| **Screenshot** | Visual documentation | Selenium/Chrome | ✅ Active |
+| **Shodan** | Search engine integration | Python API | ✅ Passive |
+| **Pyshot** | Website Screenshot | PhantomJS | ✅ Active |
 | **BadSecrets** | Secret detection | Custom implementation | ✅ Active |
-| **WebCapture** | Web content analysis | Custom implementation | ✅ Active |
+| **WebCapture** | Website Screenshot | Chrome | ✅ Active |
 
 ### Tool Execution Flow
 
@@ -362,23 +306,6 @@ class ImportToolOutput(luigi.Task):
 
 ## 🔧 Configuration
 
-### Environment Variables
-
-```bash
-# API Configuration
-WALUIGI_TOKEN=your-api-token
-MANAGER_URL=https://your-manager.com
-
-# Tool Paths
-MASSCAN_PATH=/usr/bin/masscan
-NMAP_PATH=/usr/bin/nmap
-HTTPX_PATH=/usr/local/bin/httpx
-
-# Scan Configuration
-MAX_PARALLEL_SCANS=5
-SCAN_TIMEOUT=3600
-OUTPUT_DIRECTORY=/opt/waluigi/outputs
-```
 
 ### Tool Configuration
 
@@ -394,17 +321,6 @@ httpx_tool = Httpx()
 httpx_tool.args = "-favicon -td -t 100 -timeout 5"
 ```
 
-### API Keys
-
-Configure external service API keys:
-
-```yaml
-# ~/.config/subfinder/provider-config.yaml
-shodan: ["your-shodan-key"]
-securitytrails: ["your-securitytrails-key"]
-chaos: ["your-chaos-key"]
-```
-
 ---
 
 ## 🧪 Testing
@@ -413,17 +329,12 @@ chaos: ["your-chaos-key"]
 
 ```bash
 # Run all tests
-pytest
+pytest tests/
 
 # Run specific test modules
 pytest tests/routes/test_nmap_scan.py
 pytest tests/routes/test_httpx_scan.py
 
-# Run with coverage
-pytest --cov=waluigi tests/
-
-# Run integration tests
-pytest tests/integration/
 ```
 
 ### Test Structure
@@ -435,8 +346,6 @@ tests/
 │   ├── test_nmap_scan.py
 │   ├── test_httpx_scan.py
 │   └── test_nuclei_scan.py
-└── integration/             # End-to-end tests
-    └── test_full_scan.py
 ```
 
 ---
@@ -457,10 +366,8 @@ python -m venv venv
 source venv/bin/activate
 
 # Install development dependencies
-pip install -r requirements-dev.txt
+pip install -r requirements.txt
 
-# Install pre-commit hooks
-pre-commit install
 ```
 
 ### Code Standards
@@ -483,7 +390,6 @@ pre-commit install
 - ✅ Advanced process management
 
 ### Roadmap
-- 🔄 Kubernetes deployment support
 - 🔄 Additional tool integrations
 - 🔄 Machine learning result correlation
 - 🔄 Advanced reporting capabilities
@@ -493,19 +399,17 @@ pre-commit install
 ## 📞 Support
 
 ### Documentation
-- **Wiki**: [GitHub Wiki](https://github.com/securifera/reverge_collector/wiki)
+- **Reverge Wiki**: [Reverge Wiki](https://www.reverge.io/)
 - **API Docs**: Auto-generated from docstrings
-- **Examples**: `/examples` directory
 
 ### Community
 - **Issues**: [GitHub Issues](https://github.com/securifera/reverge_collector/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/securifera/reverge_collector/discussions)
-- **Security**: See [SECURITY.md](SECURITY.md) for reporting vulnerabilities
 
 ### Commercial Support
 For enterprise support and consulting:
-- **Website**: [reverge.io](https://www.reverge.io/)
-- **Email**: support@reverge.io
+- **Website**: [Securifera](https://www.securifera.com/)
+- **Email**: contact@securifera.com
 
 ---
 
@@ -525,8 +429,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 <div align="center">
 
-**Built with ❤️ by the security community**
-
-[⬆ Back to Top](#waluigi---automated-security-reconnaissance-framework)
+**Built with ❤️ by [Securifera](https://www.securifera.com/)**
 
 </div>
