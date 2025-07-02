@@ -1,3 +1,57 @@
+"""
+Webcap Screenshot Capture Module.
+
+This module provides comprehensive web page screenshot capabilities using Webcap,
+a Python library that leverages Chrome/Chromium for automated web page rendering
+and high-quality image capture. It integrates with the Waluigi framework to perform
+automated screenshot collection of discovered web endpoints with advanced features.
+
+The module supports:
+    - High-quality Chrome-based screenshot capture
+    - Asynchronous concurrent processing for performance
+    - Configurable timeout, thread count, and image quality settings
+    - Support for both HTTP and HTTPS targets with custom headers
+    - Domain-based and IP-based screenshot collection
+    - Advanced error handling and browser restart capabilities
+    - Base64 image encoding and hash-based deduplication
+    - Integration with HTTP endpoint discovery results
+
+Classes:
+    Webcap: Main tool class implementing the Chrome-based screenshot interface
+    WebcapScan: Luigi task for executing screenshot capture operations
+    ImportWebcapOutput: Luigi task for importing and processing screenshot results
+
+Functions:
+    parse_args: Parses command-line arguments for Webcap configuration
+    webcap_asyncio: Asynchronous screenshot capture using Chrome browser
+    webcap_wrapper: Synchronous wrapper for async screenshot operations
+    queue_scan: Manages screenshot target queuing with deduplication
+
+Global Variables:
+    future_map: Thread-safe mapping for tracking queued screenshot targets
+
+Example:
+    Basic usage through the Waluigi framework::
+    
+        # Initialize the tool
+        webcap = Webcap()
+        
+        # Execute screenshot capture
+        success = webcap.scan_func(scan_input_obj)
+        
+        # Import results
+        imported = webcap.import_func(scan_input_obj)
+
+Note:
+    This module requires Chrome/Chromium to be installed and accessible.
+    The tool performs active web requests and should be used responsibly with proper
+    authorization on target systems. Webcap provides superior performance and
+    quality compared to PhantomJS-based solutions.
+
+.. moduleauthor:: Waluigi Framework Team
+.. version:: 1.0.0
+"""
+
 import json
 import os
 import binascii
@@ -8,6 +62,7 @@ import base64
 import logging
 import asyncio
 import shlex
+from typing import Dict, Tuple, Any, Optional, List
 
 from luigi.util import inherits
 from webcap import Browser
@@ -15,13 +70,64 @@ from webcap.errors import WebCapError
 from waluigi import scan_utils
 from waluigi import data_model
 
-
-future_map = {}
+# Global future mapping for screenshot target management and deduplication
+future_map: Dict[str, Tuple[int, Optional[int], Optional[str], str]] = {}
 
 
 class Webcap(data_model.WaluigiTool):
+    """
+    Webcap Chrome-based screenshot capture integration for the Waluigi framework.
 
-    def __init__(self):
+    This class provides integration with Webcap, a modern Python library that uses
+    Chrome/Chromium for automated web page screenshot capture. It implements the
+    WaluigiTool interface to provide high-quality visual reconnaissance capabilities
+    within the security scanning workflow.
+
+    Webcap offers several advantages over PhantomJS-based solutions:
+        - Modern Chrome rendering engine for accurate page representation
+        - Asynchronous processing for superior performance
+        - Configurable quality, timeout, and concurrency settings
+        - Better JavaScript execution and modern web standard support
+        - Robust error handling with automatic browser restart capabilities
+
+    Attributes:
+        name (str): The tool identifier ('webcap')
+        description (str): Human-readable description of the tool's capabilities
+        project_url (str): URL to the official Webcap project repository
+        collector_type (int): Identifies this as an active scanning tool
+        scan_order (int): Execution priority within the scanning workflow (8)
+        args (str): Default command-line arguments for optimal performance
+        scan_func (callable): Static method for executing screenshot operations
+        import_func (callable): Static method for importing screenshot results
+
+    Methods:
+        webcap_scan_func: Executes Chrome-based screenshot capture operations
+        webcap_import: Imports and processes screenshot results
+
+    Example:
+        >>> tool = Webcap()
+        >>> print(tool.name)
+        webcap
+
+        >>> # Execute screenshot capture through the framework
+        >>> success = tool.scan_func(scan_input_obj)
+        >>> if success:
+        ...     imported = tool.import_func(scan_input_obj)
+
+    Note:
+        Default arguments include 5-second timeout, 5 concurrent threads, and 100%
+        quality for optimal balance of performance and output quality. The scan_order
+        of 8 positions this tool to run after endpoint discovery phases.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize the Webcap tool with default configuration.
+
+        Sets up the tool with optimized parameters for Chrome-based screenshot
+        capture, including performance tuning and logging configuration to
+        reduce verbose websocket output.
+        """
         self.name = 'webcap'
         self.description = 'A python library that can be used for taking screenshots of web pages using Chrome and Webcap. Currently only the timeout and threads options can be set.'
         self.project_url = 'https://github.com/blacklanternsecurity/webcap'
@@ -35,7 +141,30 @@ class Webcap(data_model.WaluigiTool):
         logging.getLogger("websockets.client").setLevel(logging.WARNING)
 
     @staticmethod
-    def webcap_scan_func(scan_input):
+    def webcap_scan_func(scan_input: Any) -> bool:
+        """
+        Execute Webcap Chrome-based screenshot capture operations.
+
+        This static method serves as the entry point for executing Chrome-based
+        screenshot capture operations within the Waluigi framework. It builds and
+        runs the WebcapScan Luigi task with the provided scan input configuration.
+
+        Args:
+            scan_input (Any): The scan input object containing target information,
+                            endpoint data, and execution parameters
+
+        Returns:
+            bool: True if the screenshot capture completed successfully, False otherwise
+
+        Example:
+            >>> scan_obj = create_scan_input(...)  # Configure scan
+            >>> success = Webcap.webcap_scan_func(scan_obj)
+            >>> print(f"Chrome screenshot capture successful: {success}")
+
+        Note:
+            Uses Luigi's local scheduler for task execution and provides detailed
+            summary information for debugging and monitoring purposes.
+        """
         luigi_run_result = luigi.build([WebcapScan(
             scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
         if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
@@ -43,7 +172,31 @@ class Webcap(data_model.WaluigiTool):
         return True
 
     @staticmethod
-    def webcap_import(scan_input):
+    def webcap_import(scan_input: Any) -> bool:
+        """
+        Import and process Webcap screenshot results.
+
+        This static method handles the import phase of the screenshot workflow,
+        processing captured screenshots and importing findings into the database
+        structure with proper metadata, titles, and relationships.
+
+        Args:
+            scan_input (Any): The scan input object containing configuration
+                            and metadata for the import operation
+
+        Returns:
+            bool: True if the import completed successfully, False otherwise
+
+        Example:
+            >>> # After successful screenshot capture
+            >>> imported = Webcap.webcap_import(scan_obj)
+            >>> print(f"Import successful: {imported}")
+
+        Note:
+            This method depends on the successful completion of the Chrome-based
+            screenshot capture phase and processes all generated screenshot files
+            and metadata including page titles and status codes.
+        """
         luigi_run_result = luigi.build([ImportWebcapOutput(
             scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
         if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
@@ -51,7 +204,38 @@ class Webcap(data_model.WaluigiTool):
         return True
 
 
-def parse_args(args_str):
+def parse_args(args_str: str) -> Tuple[int, int, int]:
+    """
+    Parse command-line arguments for Webcap configuration.
+
+    This function extracts timeout, thread count, and quality settings from
+    a command-line argument string, providing defaults for any missing values.
+    It uses shell-like parsing to handle quoted arguments properly.
+
+    Args:
+        args_str (str): Command-line argument string containing Webcap parameters.
+                       Expected format: "--timeout 5 --threads 5 --quality 100"
+
+    Returns:
+        Tuple[int, int, int]: A tuple containing (timeout, threads, quality)
+                             where timeout is in seconds, threads is the concurrent
+                             browser count, and quality is image quality percentage
+
+    Example:
+        >>> timeout, threads, quality = parse_args("--timeout 10 --threads 3 --quality 90")
+        >>> print(f"Config: {timeout}s timeout, {threads} threads, {quality}% quality")
+        Config: 10s timeout, 3 threads, 90% quality
+
+        >>> # With defaults for missing values
+        >>> timeout, threads, quality = parse_args("--timeout 15")
+        >>> print(f"Config: {timeout}s timeout, {threads} threads, {quality}% quality")
+        Config: 15s timeout, 5 threads, 100% quality
+
+    Note:
+        Default values are: timeout=5, threads=5, quality=100
+        Invalid numeric values are silently ignored and defaults are used.
+        Uses shlex.split() for proper shell-like argument parsing.
+    """
     timeout = 5
     threads = 5
     quality = 100
@@ -76,7 +260,43 @@ def parse_args(args_str):
     return timeout, threads, quality
 
 
-async def webcap_asyncio(future_map, meta_file_path, webcap_args):
+async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
+                         webcap_args: str) -> None:
+    """
+    Asynchronous Chrome-based screenshot capture operation.
+
+    This async function manages the complete Chrome browser lifecycle and screenshot
+    capture process. It handles browser initialization, concurrent screenshot capture,
+    error recovery with browser restart, and metadata file generation.
+
+    Args:
+        future_map (Dict[str, Tuple]): Mapping of URLs to screenshot target metadata
+                                      containing port_id, endpoint_id, domain, and path
+        meta_file_path (str): File path where screenshot metadata will be written
+        webcap_args (str): Command-line arguments for Webcap configuration
+
+    Returns:
+        None: Screenshots and metadata are written to files during execution
+
+    Side Effects:
+        - Creates and manages Chrome browser instances
+        - Captures screenshots and saves metadata to JSON line format
+        - Handles browser restarts on WebCapError exceptions
+        - Logs errors and warnings for failed screenshot attempts
+
+    Raises:
+        WebCapError: Handled internally with browser restart
+        Exception: Various exceptions related to screenshot capture or file I/O
+
+    Example:
+        >>> target_map = {"https://example.com": (123, 456, "example.com", "/")}
+        >>> await webcap_asyncio(target_map, "/tmp/screenshots.json", "--timeout 10")
+
+    Note:
+        The function implements automatic browser restart on WebCapError to handle
+        Chrome crashes or unresponsive states. Each screenshot includes URL, image
+        data (Base64), status code, title, and associated metadata.
+    """
 
     # Get the arguments for timeout and threads
     timeout, threads, quality = parse_args(webcap_args)
@@ -132,12 +352,74 @@ async def webcap_asyncio(future_map, meta_file_path, webcap_args):
     await browser.stop()
 
 
-def webcap_wrapper(future_map, meta_file_path, webcap_scan_args):
+def webcap_wrapper(future_map: Dict[str, Tuple], meta_file_path: str,
+                   webcap_scan_args: str) -> Any:
+    """
+    Synchronous wrapper for asynchronous Webcap screenshot operations.
+
+    This function provides a synchronous interface to the asynchronous Webcap
+    screenshot capture functionality, enabling integration with synchronous
+    workflow systems while maintaining the performance benefits of async operations.
+
+    Args:
+        future_map (Dict[str, Tuple]): Mapping of URLs to screenshot target metadata
+        meta_file_path (str): File path where screenshot metadata will be written
+        webcap_scan_args (str): Command-line arguments for Webcap configuration
+
+    Returns:
+        Any: The result of the async operation (typically None)
+
+    Example:
+        >>> target_map = {"https://example.com": (123, 456, "example.com", "/")}
+        >>> result = webcap_wrapper(target_map, "/tmp/screenshots.json", "--timeout 10")
+
+    Note:
+        Uses asyncio.run() to execute the async screenshot capture in a new
+        event loop. This allows the function to be called from synchronous
+        code while maintaining async performance benefits.
+    """
 
     return asyncio.run(webcap_asyncio(future_map, meta_file_path, webcap_scan_args))
 
 
-def queue_scan(host, port_str, secure, port_id, query_arg="", domain_str=None, http_endpoint_data_id=None):
+def queue_scan(host: str, port_str: str, secure: bool, port_id: int,
+               query_arg: str = "", domain_str: Optional[str] = None,
+               http_endpoint_data_id: Optional[int] = None) -> None:
+    """
+    Queue a screenshot capture target with deduplication and priority management.
+
+    This function manages the queuing of screenshot targets while preventing
+    duplicates and handling priority-based updates. It maintains a global mapping
+    of URLs to their associated screenshot tasks and metadata for efficient
+    processing.
+
+    Args:
+        host (str): The target host (IP address or hostname)
+        port_str (str): The target port number as a string
+        secure (bool): Whether to use HTTPS (True) or HTTP (False)
+        port_id (int): Database identifier for the target port
+        query_arg (str, optional): URL path/query string to append. Defaults to "".
+        domain_str (str, optional): Domain name for the target. Defaults to None.
+        http_endpoint_data_id (int, optional): Database ID for endpoint data. Defaults to None.
+
+    Returns:
+        None: This function modifies the global future_map dictionary in-place
+
+    Side Effects:
+        - Modifies the global future_map to track queued screenshot targets
+        - Implements priority-based replacement for existing targets
+        - Constructs URLs for deduplication purposes
+
+    Example:
+        >>> queue_scan("192.168.1.1", "443", True, 123,
+        ...           query_arg="/admin", domain_str="example.com")
+        >>> # Target is now queued for Chrome screenshot capture
+
+    Note:
+        If a URL is already queued and the new request has an endpoint data ID
+        while the existing one doesn't, the new request takes priority.
+        This ensures more specific endpoint data is preserved for better metadata.
+    """
 
     global future_map
 
@@ -164,10 +446,63 @@ def queue_scan(host, port_str, secure, port_id, query_arg="", domain_str=None, h
 
 
 class WebcapScan(luigi.Task):
+    """
+    Luigi task for executing Webcap Chrome-based screenshot capture operations.
+
+    This task orchestrates the execution of Chrome-based screenshot capture against
+    discovered web endpoints, managing input parameters, output file generation, and
+    execution flow within the Luigi workflow framework. It processes HTTP endpoints
+    from previous scanning phases and generates high-quality visual documentation.
+
+    Attributes:
+        scan_input (luigi.Parameter): The scan input object containing target information,
+                                    endpoint data, and configuration parameters
+
+    Methods:
+        output: Defines the output file target for the screenshot metadata
+        requires: Specifies task dependencies (inherited from parent tasks)
+        run: Executes the actual Chrome-based screenshot capture operations
+
+    Example:
+        >>> scan_obj = ScanInputObject(...)  # Configured scan input
+        >>> task = WebcapScan(scan_input=scan_obj)
+        >>> luigi.build([task])
+
+    Note:
+        This class inherits from luigi.Task and follows Luigi's task execution model.
+        The task processes HTTP endpoints discovered by previous scanning phases
+        and generates Chrome-rendered screenshots with comprehensive metadata.
+    """
 
     scan_input = luigi.Parameter()
 
-    def output(self):
+    def output(self) -> luigi.LocalTarget:
+        """
+        Define the output file target for Chrome screenshot metadata.
+
+        Creates a unique JSON metadata file path based on the scan ID and tool name,
+        ensuring that screenshot metadata is properly organized and accessible to
+        downstream tasks in the Luigi workflow.
+
+        Returns:
+            luigi.LocalTarget: A Luigi target representing the JSON metadata file where
+                             Chrome screenshot information will be stored
+
+        Side Effects:
+            - Initializes the tool output directory structure if it doesn't exist
+            - Creates directory paths as needed for organized output storage
+
+        Example:
+            >>> task = WebcapScan(scan_input=scan_obj)
+            >>> target = task.output()
+            >>> print(target.path)
+            /path/to/outputs/webcap/scan_123/screenshots.json
+
+        Note:
+            The metadata file contains JSON lines with screenshot information
+            including Base64 image data, URLs, titles, status codes, and
+            associated endpoint data for comprehensive documentation.
+        """
 
         scheduled_scan_obj = self.scan_input
         scan_id = scheduled_scan_obj.id
@@ -181,7 +516,45 @@ class WebcapScan(luigi.Task):
 
         return luigi.LocalTarget(meta_file)
 
-    def run(self):
+    def run(self) -> None:
+        """
+        Execute the Webcap Chrome-based screenshot capture operation.
+
+        This method orchestrates the complete Chrome screenshot workflow including:
+        - Processing discovered HTTP endpoints and web paths
+        - Queuing screenshot targets with intelligent deduplication
+        - Handling both IP-based and domain-based targets
+        - Chrome browser-based screenshot execution with async processing
+        - Intelligent filtering for likely web endpoints
+        - Advanced error handling and recovery
+
+        The method processes all HTTP endpoints from previous scan phases,
+        constructs appropriate URLs, and executes Chrome-based screenshot capture
+        with configurable timeout, thread count, and quality settings.
+
+        Returns:
+            None: Screenshots and metadata are written to the output JSON file
+
+        Side Effects:
+            - Modifies the global future_map to track screenshot targets
+            - Creates Chrome browser instances for screenshot capture
+            - Generates JSON metadata file with screenshot information
+            - Registers tool executors with the scan management system
+
+        Raises:
+            OSError: If output directories cannot be created or accessed
+            WebCapError: If Chrome browser fails to start or capture screenshots
+            Exception: Various exceptions related to screenshot capture or file I/O
+
+        Example:
+            >>> task = WebcapScan(scan_input=scan_obj)
+            >>> task.run()  # Executes all configured Chrome screenshot captures
+
+        Note:
+            This method includes intelligent filtering to avoid screenshot attempts
+            on non-web ports and uses asynchronous Chrome browser execution for
+            superior performance compared to synchronous alternatives.
+        """
 
         global future_map
         # Ensure output folder exists
@@ -314,12 +687,106 @@ class WebcapScan(luigi.Task):
 
 @inherits(WebcapScan)
 class ImportWebcapOutput(data_model.ImportToolXOutput):
+    """
+    Luigi task for importing and processing Webcap Chrome screenshot results.
 
-    def requires(self):
+    This task handles the post-processing of Webcap screenshot outputs, parsing
+    JSON metadata files, processing screenshot images with titles and status codes,
+    and importing the findings into the database structure with proper relationships
+    and comprehensive metadata.
+
+    The class inherits from both WebcapScan (via @inherits decorator) and
+    ImportToolXOutput, providing access to scan parameters and import functionality.
+
+    Processing includes:
+        - Loading screenshot metadata from JSON line files
+        - Hash-based screenshot deduplication using image content
+        - Processing page titles and HTTP status codes
+        - Creation of database objects for screenshots, domains, and endpoints
+        - Batch import of processed data with relationship mapping
+        - Real-time scope updates for immediate availability
+
+    Attributes:
+        Inherits all attributes from WebcapScan including scan_input parameter
+
+    Methods:
+        requires: Specifies that WebcapScan must complete before import
+        run: Processes Chrome screenshot files and imports results to database
+
+    Example:
+        >>> import_task = ImportWebcapOutput(scan_input=scan_obj)
+        >>> luigi.build([import_task])  # Runs WebcapScan then ImportWebcapOutput
+
+    Note:
+        This task automatically depends on WebcapScan completion and processes
+        all screenshot data and metadata generated during the Chrome capture phase.
+        Uses SHA-1 hashing for both screenshot and path deduplication with
+        comprehensive title and status code processing.
+    """
+
+    def requires(self) -> WebcapScan:
+        """
+        Define task dependencies for the import operation.
+
+        Ensures that the WebcapScan task completes successfully before attempting
+        to import and process the Chrome screenshot results and metadata.
+
+        Returns:
+            WebcapScan: The Chrome screenshot capture task that must complete before import
+
+        Example:
+            >>> task = ImportWebcapOutput(scan_input=scan_obj)
+            >>> deps = task.requires()
+            >>> print(type(deps).__name__)
+            WebcapScan
+        """
         # Requires WebcapScan Task to be run prior
         return WebcapScan(scan_input=self.scan_input)
 
-    def run(self):
+    def run(self) -> None:
+        """
+        Process and import Webcap Chrome screenshot results into the database.
+
+        This method performs comprehensive processing of Chrome screenshot files and
+        metadata, including image hashing, title extraction, status code processing,
+        and database object creation. It handles the complete import workflow from
+        JSON line file processing to database insertion with proper relationship mapping.
+
+        The processing workflow includes:
+        - Loading screenshot metadata from JSON line files
+        - Processing Base64-encoded screenshot images with hash-based deduplication
+        - Extracting page titles and HTTP status codes from Chrome capture
+        - Creating domain, path, endpoint, and screenshot database objects
+        - Real-time batch importing with proper relationship mapping
+        - Updating scan scope with imported data for immediate availability
+        - Comprehensive logging and error handling
+
+        Returns:
+            None: Results are imported directly into the database via batch operations
+
+        Side Effects:
+            - Creates database records for screenshots, domains, paths, and endpoints
+            - Updates deduplication maps for screenshots and paths
+            - Processes all screenshot metadata from the preceding WebcapScan task
+            - Writes import results to the tool import file with JSON line format
+            - Updates scan scope for real-time data availability
+
+        Raises:
+            json.JSONDecodeError: If metadata files contain invalid JSON
+            FileNotFoundError: If expected screenshot metadata files are missing
+            base64.binascii.Error: If Base64 image data cannot be decoded
+            Exception: Various exceptions related to image processing or database operations
+
+        Example:
+            >>> task = ImportWebcapOutput(scan_input=scan_obj)
+            >>> task.run()  # Processes and imports all Chrome screenshot results
+
+        Note:
+            Uses SHA-1 hashing for both screenshot and web path deduplication.
+            Screenshot images are processed as Base64-encoded strings from Chrome.
+            The method handles both existing and new HTTP endpoint data objects
+            with comprehensive title and status code metadata.
+        """
 
         meta_file = self.input().path
         scheduled_scan_obj = self.scan_input
