@@ -20,7 +20,8 @@ jobs:
         sudo cp -r ./tests /opt/reverge_collector/
         cd /opt/reverge_collector
         source ~/venv/bin/activate
-        pytest tests/
+        ls
+        sudo pytest tests/
     - name: Execute
       run: |
         cd /opt/collector
