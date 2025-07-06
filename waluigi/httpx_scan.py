@@ -478,7 +478,10 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
     def run(self):
 
         scheduled_scan_obj = self.scan_input
+        scope_obj = scheduled_scan_obj.scan_data
         tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+        tool_obj = scheduled_scan_obj.current_tool
+        tool_id = tool_obj.id
 
         http_output_file = self.input().path
         with open(http_output_file, 'r') as file_fd:
@@ -760,6 +763,48 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                             component_obj.name = tech_entry
 
                         ret_arr.append(component_obj)
+
+                # Add collection module
+                if 'raw_header' in httpx_scan:
+                    output = httpx_scan['raw_header']
+                    if output and len(output) > 0:
+                        module_obj = data_model.CollectionModule(
+                            parent_id=tool_id)
+                        module_obj.collection_tool_instance_id = tool_instance_id
+                        module_obj.name = 'http-response-headers'
+
+                        ret_arr.append(module_obj)
+                        temp_module_id = module_obj.id
+
+                        # Add module output
+                        module_output_obj = data_model.CollectionModuleOutput(
+                            parent_id=temp_module_id)
+                        module_output_obj.collection_tool_instance_id = tool_instance_id
+                        module_output_obj.data = output
+                        module_output_obj.port_id = port_obj.id
+
+                        ret_arr.append(module_output_obj)
+
+                # Add http body
+                if 'body' in httpx_scan:
+                    output = httpx_scan['body']
+                    if output and len(output) > 0:
+                        module_obj = data_model.CollectionModule(
+                            parent_id=tool_id)
+                        module_obj.collection_tool_instance_id = tool_instance_id
+                        module_obj.name = 'http-response-body'
+
+                        ret_arr.append(module_obj)
+                        temp_module_id = module_obj.id
+
+                        # Add module output
+                        module_output_obj = data_model.CollectionModuleOutput(
+                            parent_id=temp_module_id)
+                        module_output_obj.collection_tool_instance_id = tool_instance_id
+                        module_output_obj.data = output
+                        module_output_obj.port_id = port_obj.id
+
+                        ret_arr.append(module_output_obj)
 
                 # Add http endpoint
                 http_endpoint_obj = data_model.HttpEndpoint(
