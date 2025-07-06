@@ -137,8 +137,10 @@ class Webcap(data_model.WaluigiTool):
         self.scan_func = Webcap.webcap_scan_func
         self.import_func = Webcap.webcap_import
 
-        # Set logging higher for websockets to avoid too much output
+        # Set logging higher for websockets and httpcore to avoid too much output
         logging.getLogger("websockets.client").setLevel(logging.WARNING)
+        logging.getLogger("httpcore.http11").setLevel(logging.WARNING)
+        logging.getLogger("httpcore.connection").setLevel(logging.WARNING)
 
     @staticmethod
     def webcap_scan_func(scan_input: Any) -> bool:

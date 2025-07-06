@@ -2822,7 +2822,7 @@ class CollectionModuleOutput(Record):
 
     Example:
         >>> output = CollectionModuleOutput(parent_id="module_123")
-        >>> output.data = "Port 80 is open"
+        >>> output.output = "Port 80 is open"
         >>> output.port_id = "port_456"
     """
 
@@ -2836,7 +2836,7 @@ class CollectionModuleOutput(Record):
         """
         super().__init__(id=id, parent=CollectionModule(id=parent_id))
 
-        self.data: Optional[str] = None
+        self.output: Optional[str] = None
         self.port_id: Optional[str] = None
 
     def _data_to_jsonable(self) -> Dict[str, Any]:
@@ -2848,12 +2848,12 @@ class CollectionModuleOutput(Record):
 
         Example:
             >>> output = CollectionModuleOutput()
-            >>> output.data = "Service detected: HTTP"
+            >>> output.output = "Service detected: HTTP"
             >>> output.port_id = "port_80"
             >>> data = output._data_to_jsonable()
             >>> print(data)  # {"output": "Service detected: HTTP", "port_id": "port_80"}
         """
-        ret = {'output': self.data, 'port_id': self.port_id}
+        ret = {'output': self.output, 'port_id': self.port_id}
         return ret
 
     def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
@@ -2874,7 +2874,7 @@ class CollectionModuleOutput(Record):
         """
         try:
 
-            self.data = str(input_data_dict['output'])
+            self.output = str(input_data_dict['output'])
             self.port_id = str(input_data_dict['port_id'])
 
         except Exception as e:

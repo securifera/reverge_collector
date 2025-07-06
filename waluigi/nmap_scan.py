@@ -955,7 +955,7 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
                                                 module_output_obj = data_model.CollectionModuleOutput(
                                                     parent_id=temp_module_id)
                                                 module_output_obj.collection_tool_instance_id = tool_instance_id
-                                                module_output_obj.data = output
+                                                module_output_obj.output = output
                                                 module_output_obj.port_id = port_id
 
                                                 ret_arr.append(

@@ -3,7 +3,6 @@ import logging
 import os
 import shutil
 import json
-import netaddr
 from waluigi.recon_manager import ReconManager, ScheduledScanThread
 from waluigi.data_model import ScheduledScan, ScanData
 from types import SimpleNamespace
@@ -11,7 +10,7 @@ from unittest.mock import patch
 from waluigi.scan_utils import get_port_byte_array
 
 
-def test_httpx_success(recon_manager):
+def test_httpx_scan_success(recon_manager):
 
     scan_id = 'f35c684c61da412c8aaf7d386540f663'
     scheduled_scan_id = 'f35c684c61da412c8aaf7d386540f664'
