@@ -9,7 +9,7 @@ from waluigi.scan_utils import get_port_byte_array
 import json
 
 
-def test_subfinder_success(recon_manager):
+def test_subfinder_scan_success(recon_manager):
 
     scan_id = 'f35c684c61da412c8aaf7d386540f662'
     scheduled_scan_id = 'f35c684c61da412c8aaf7d386540f663'

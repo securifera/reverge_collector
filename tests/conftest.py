@@ -19,7 +19,8 @@ def mock_update_collector_and_session_key():
                                                          'nuclei': '323482209708942791672081599309763638885',
                                                          'pyshot': '323482209708942791672081599309763638886',
                                                          'shodan': '323482209708942791672081599309763638887',
-                                                         'webcap': '323482209708942791672081599309763638888'}}) as mock_update_collector, \
+                                                         'webcap': '323482209708942791672081599309763638888',
+                                                         'feroxbuster': '323482209708942791672081599309763638889'}}) as mock_update_collector, \
             patch.object(ReconManager, '_get_session_key', return_value='mock_session_key') as mock_get_session_key, \
             patch.object(ReconManager, 'update_scan_status', return_value=''):
         yield mock_update_collector, mock_get_session_key
