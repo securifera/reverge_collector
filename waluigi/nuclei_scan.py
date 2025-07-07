@@ -491,7 +491,7 @@ class ImportNucleiOutput(data_model.ImportToolXOutput):
                         module_output_obj = data_model.CollectionModuleOutput(
                             parent_id=module_id)
                         module_output_obj.collection_tool_instance_id = tool_instance_id
-                        module_output_obj.data = nuclei_scan_result
+                        module_output_obj.output = nuclei_scan_result
                         module_output_obj.port_id = port_id
                         ret_arr.append(module_output_obj)
 
