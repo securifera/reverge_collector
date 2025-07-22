@@ -29,7 +29,7 @@ import importlib
 import logging
 import traceback
 
-from waluigi import scan_utils
+from waluigi.scan_utils import get_ports, construct_url
 
 # Configuration: Available security scanning tools
 # Each tuple contains (module_name, class_name) for dynamic tool loading
@@ -1625,7 +1625,7 @@ class ScanData:
             b64_port_bitmap = scan_data['b64_port_bitmap']
             if len(b64_port_bitmap) > 0:
                 port_map = base64.b64decode(b64_port_bitmap)
-                self.port_number_list = scan_utils.get_ports(port_map)
+                self.port_number_list = get_ports(port_map)
 
         # Process scan objects if present
         if 'obj_list' in scan_data and scan_data['obj_list']:
@@ -2443,7 +2443,7 @@ class HttpEndpoint(Record):
             query_str = path_obj.web_path
 
         # Construct the complete URL
-        url_str = scan_utils.construct_url(
+        url_str = construct_url(
             host_ip, port_str, secure, query_str)
 
         return url_str
@@ -2588,7 +2588,7 @@ class HttpEndpointData(Record):
             if domain_obj:
                 host_ip = domain_obj.name
 
-        url_str = scan_utils.construct_url(
+        url_str = construct_url(
             host_ip, port_str, secure, query_str)
 
         return url_str
