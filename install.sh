@@ -157,7 +157,7 @@ python3 -m pip install badsecrets
 
 # Install Google Chrome
 wget -O /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-apt-get install -y /tmp/google-chrome-stable_current_amd64.deb
+install_packages /tmp/google-chrome-stable_current_amd64.deb
 rm -f /tmp/google-chrome-stable_current_amd64.deb
 
 # Install Webcap
