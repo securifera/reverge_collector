@@ -36,6 +36,7 @@ from luigi.util import inherits
 from libnmap.parser import NmapParser
 from waluigi import scan_utils
 from waluigi import data_model
+from waluigi.proc_utils import process_wrapper
 from datetime import datetime
 
 
@@ -483,7 +484,7 @@ class NmapScan(luigi.Task):
                 scheduled_scan_obj.current_tool_instance_id)
 
             futures.append(scan_utils.executor.submit(
-                scan_utils.process_wrapper,
+                process_wrapper,
                 cmd_args=command,
                 pid_callback=callback_with_tool_id))
             counter += 1

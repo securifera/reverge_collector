@@ -43,6 +43,7 @@ from typing import List, Dict, Set, Optional, Any, Tuple
 from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
+from waluigi.proc_utils import process_wrapper
 
 
 class Subfinder(data_model.WaluigiTool):
@@ -180,7 +181,7 @@ def subfinder_wrapper(scheduled_scan_obj: Any, scan_output_file_path: str,
     callback_with_tool_id = partial(
         scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
 
-    scan_utils.process_wrapper(
+    process_wrapper(
         command, use_shell, my_env, callback_with_tool_id)
 
     # Parse the output
@@ -270,12 +271,12 @@ def update_config_file(collection_tools: Optional[List[Any]], my_env: Dict[str, 
     if os.path.isfile(config_file_path) == False:
         cmd_arr = ["subfinder", "-d", "localhost", "-timeout", "1"]
         future = scan_utils.executor.submit(
-            scan_utils.process_wrapper, cmd_args=cmd_arr, my_env=my_env)
+            process_wrapper, cmd_args=cmd_arr, my_env=my_env)
         future.result()
 
         cmd_arr = ["subfinder", "-h"]
         future = scan_utils.executor.submit(
-            scan_utils.process_wrapper, cmd_args=cmd_arr, my_env=my_env)
+            process_wrapper, cmd_args=cmd_arr, my_env=my_env)
         future.result()
 
     # Update provider config file

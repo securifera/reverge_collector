@@ -63,6 +63,7 @@ from luigi.util import inherits
 from waluigi import scan_utils
 from urllib.parse import urlparse
 from waluigi import data_model
+from waluigi.proc_utils import process_wrapper
 
 # Global URL tracking set to prevent duplicate scanning
 url_set: Set[str] = set()
@@ -449,7 +450,7 @@ class FeroxScan(luigi.Task):
                 scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
 
             futures.append(scan_utils.executor.submit(
-                scan_utils.process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id))
+                process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id))
 
         # Register futures
         scan_proc_inst = data_model.ToolExecutor(futures)

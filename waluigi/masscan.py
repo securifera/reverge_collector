@@ -46,6 +46,7 @@ from typing import List, Dict, Set, Optional, Any, Union
 from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
+from waluigi.proc_utils import process_wrapper
 
 # Protocol constants for network scanning
 TCP: str = 'tcp'  # TCP protocol identifier
@@ -188,7 +189,7 @@ def get_mac_address(ip_address: str) -> Optional[str]:
     arp_cmd = ["arp", "-n", ip_address]
 
     future = scan_utils.executor.submit(
-        scan_utils.process_wrapper, cmd_args=arp_cmd, store_output=True)
+        process_wrapper, cmd_args=arp_cmd, store_output=True)
 
     output = None
     try:
@@ -483,7 +484,7 @@ class MasscanScan(luigi.Task):
                 scheduled_scan_obj.current_tool_instance_id)
 
             future = scan_utils.executor.submit(
-                scan_utils.process_wrapper,
+                process_wrapper,
                 cmd_args=command,
                 pid_callback=callback_with_tool_id)
 
