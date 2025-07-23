@@ -602,16 +602,18 @@ class ScheduledScanThread(threading.Thread):
             # Always release connection lock
             if self.connection_manager:
                 self.connection_manager.connect_to_extender()
-                self.connection_manager.free_connection_lock()
 
             # Update final scan status on server
-            logging.getLogger(__name__).debug(
-                "Updating scan status on server: %s" % scan_status)
             scheduled_scan_obj.update_scan_status(scan_status)
 
-        with self.scan_thread_lock:
-            # Remove scan from active tracking
-            del self.scheduled_scan_map[scheduled_scan_obj.id]
+            if self.connection_manager:
+                self.connection_manager.free_connection_lock()
+
+        # Remove the scan from the map
+        if data_model.ScanStatus.COMPLETED.value == scan_status:
+            with self.scan_thread_lock:
+                # Remove scan from active tracking
+                del self.scheduled_scan_map[scheduled_scan_obj.id]
 
         return
 
