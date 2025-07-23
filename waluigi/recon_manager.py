@@ -573,19 +573,9 @@ class ScheduledScanThread(threading.Thread):
 
         # Default to error status for safety
         scan_status = data_model.ScanStatus.ERROR.value
-        lock_val = None
         try:
             if self.connection_manager:
-                for _ in range(20):
-                    lock_val = self.connection_manager.get_connection_lock()
-                    if lock_val is None:
-                        logging.getLogger(__name__).debug(
-                            "Connection lock is currently held. Retrying later")
-                        time.sleep(1)
-
-                    logging.getLogger(__name__).debug(
-                        "ScanProcessThread obtained lock")
-                    break
+                self.connection_manager.get_connection_lock()
 
             err_msg = self.execute_scan_jobs(scheduled_scan_obj)
 
@@ -607,10 +597,8 @@ class ScheduledScanThread(threading.Thread):
             logging.getLogger(__name__).debug(traceback.format_exc())
         finally:
             # Always release connection lock
-            if self.connection_manager and lock_val is not None:
-                logging.getLogger(__name__).debug(
-                    "ScanProcessThread freeing lock")
-                self.connection_manager.free_connection_lock(lock_val)
+            if self.connection_manager:
+                self.connection_manager.free_connection_lock()
 
         with self.scan_thread_lock:
             # Update final scan status on server
@@ -665,23 +653,10 @@ class ScheduledScanThread(threading.Thread):
                     # Wait for next polling cycle or exit signal
                     self.exit_event.wait(self.checkin_interval)
                     if self._enabled:
-                        lock_val = None
                         try:
                             # Acquire connection lock if using connection manager
                             if self.connection_manager:
-                                lock_val = self.connection_manager.get_connection_lock()
-                                if lock_val:
-                                    logging.getLogger(__name__).debug(
-                                        "ScheduledScanThread obtained lock")
-                                    ret_val = self.connection_manager.connect_to_extender()
-                                    if ret_val == False:
-                                        logging.getLogger(__name__).error(
-                                            "Failed connecting to extender")
-                                        continue
-                                else:
-                                    logging.getLogger(__name__).debug(
-                                        "Connection lock is currently held. Retrying later")
-                                    continue
+                                self.connection_manager.get_connection_lock()
 
                             # Collect log messages for transmission
                             result_str = None
@@ -747,11 +722,8 @@ class ScheduledScanThread(threading.Thread):
                             pass
                         finally:
                             # Always release connection lock
-                            if self.connection_manager and lock_val is not None:
-                                logging.getLogger(__name__).debug(
-                                    "ScheduledScanThread releasing lock")
-                                self.connection_manager.free_connection_lock(
-                                    lock_val)
+                            if self.connection_manager:
+                                self.connection_manager.free_connection_lock()
 
     def stop(self, timeout: Optional[float] = None) -> None:
         """
