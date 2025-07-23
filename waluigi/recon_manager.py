@@ -593,17 +593,23 @@ class ScheduledScanThread(threading.Thread):
                 scheduled_scan_obj.cleanup()
 
         except Exception as e:
+            if 'outage' in str(e):
+                scan_status = data_model.ScanStatus.CANCELLED.value
             logging.getLogger(__name__).error("Error executing scan job")
             logging.getLogger(__name__).debug(traceback.format_exc())
         finally:
+
+            # Update final scan status on server
+            logging.getLogger(__name__).debug(
+                "Updating scan status on server: %s" % scan_status)
+            scheduled_scan_obj.update_scan_status(scan_status)
+
             # Always release connection lock
             if self.connection_manager:
                 self.connection_manager.connect_to_extender()
                 self.connection_manager.free_connection_lock()
 
         with self.scan_thread_lock:
-            # Update final scan status on server
-            scheduled_scan_obj.update_scan_status(scan_status)
             # Remove scan from active tracking
             del self.scheduled_scan_map[scheduled_scan_obj.id]
 
