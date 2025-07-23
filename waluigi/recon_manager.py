@@ -598,6 +598,7 @@ class ScheduledScanThread(threading.Thread):
         finally:
             # Always release connection lock
             if self.connection_manager:
+                self.connection_manager.connect_to_extender()
                 self.connection_manager.free_connection_lock()
 
         with self.scan_thread_lock:
