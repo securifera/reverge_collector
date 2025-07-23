@@ -599,15 +599,15 @@ class ScheduledScanThread(threading.Thread):
             logging.getLogger(__name__).debug(traceback.format_exc())
         finally:
 
-            # Update final scan status on server
-            logging.getLogger(__name__).debug(
-                "Updating scan status on server: %s" % scan_status)
-            scheduled_scan_obj.update_scan_status(scan_status)
-
             # Always release connection lock
             if self.connection_manager:
                 self.connection_manager.connect_to_extender()
                 self.connection_manager.free_connection_lock()
+
+            # Update final scan status on server
+            logging.getLogger(__name__).debug(
+                "Updating scan status on server: %s" % scan_status)
+            scheduled_scan_obj.update_scan_status(scan_status)
 
         with self.scan_thread_lock:
             # Remove scan from active tracking
