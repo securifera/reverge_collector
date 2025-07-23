@@ -576,14 +576,15 @@ class ScheduledScanThread(threading.Thread):
         lock_val = None
         try:
             if self.connection_manager:
-                logging.getLogger(__name__).debug(
-                    "ScanProcessThread obtaining lock")
                 for _ in range(20):
                     lock_val = self.connection_manager.get_connection_lock()
                     if lock_val is None:
                         logging.getLogger(__name__).debug(
                             "Connection lock is currently held. Retrying later")
                         time.sleep(1)
+
+                    logging.getLogger(__name__).debug(
+                        "ScanProcessThread obtained lock")
                     break
 
             err_msg = self.execute_scan_jobs(scheduled_scan_obj)
@@ -671,7 +672,7 @@ class ScheduledScanThread(threading.Thread):
                                 lock_val = self.connection_manager.get_connection_lock()
                                 if lock_val:
                                     logging.getLogger(__name__).debug(
-                                        "ScheduledScanThread obtaining lock")
+                                        "ScheduledScanThread obtained lock")
                                     ret_val = self.connection_manager.connect_to_extender()
                                     if ret_val == False:
                                         logging.getLogger(__name__).error(
