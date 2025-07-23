@@ -1770,21 +1770,21 @@ class Record:
         obj: Optional['Record'] = None
         record_tags_inst: Set[str] = set(record_tags or [])
 
-        obj_id = input_dict['id']
-        record_data = input_dict['data']
-
-        parent_id: Optional[str] = None
-        if 'parent' in input_dict:
-            parent_record = input_dict['parent']
-            if parent_record:
-                parent_id = parent_record['id']
-
-        if 'tags' in input_dict:
-            record_tags_set = input_dict['tags']
-            record_tags_inst.update(record_tags_set)
-
         # Create record based on type
         try:
+            obj_id = input_dict['id']
+            record_data = input_dict['data']
+
+            parent_id: Optional[str] = None
+            if 'parent' in input_dict:
+                parent_record = input_dict['parent']
+                if parent_record:
+                    parent_id = parent_record['id']
+
+            if 'tags' in input_dict:
+                record_tags_set = input_dict['tags']
+                record_tags_inst.update(record_tags_set)
+
             record_type = input_dict['type']
             if record_type == 'host':
                 obj = Host(id=obj_id)
@@ -1823,9 +1823,6 @@ class Record:
             if obj:
                 if 'collection_tool_instance_id' in input_dict:
                     obj.collection_tool_instance_id = input_dict['collection_tool_instance_id']
-                # else:
-                #    logging.getLogger(__name__).warning(
-                #        "No collection tool instance ID found for record type: %s" % record_type)
 
                 obj.scan_data = scan_data
                 obj.tags.update(record_tags_inst)
@@ -1833,7 +1830,7 @@ class Record:
 
         except Exception as e:
             logging.getLogger(__name__).error(traceback.format_exc())
-            raise Exception('Invalid scan object: %s' % str(e))
+            raise Exception('Invalid scan object:\n%s' % str(input_dict))
 
         return obj
 
