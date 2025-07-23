@@ -412,9 +412,11 @@ class HttpXScan(luigi.Task):
                 command.extend(script_args)
 
             callback_with_tool_id = partial(
-                scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)        # Add process dict to process array
-        futures.append(scan_utils.executor.submit(
-            process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id))
+                scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
+
+            # Add process dict to process array
+            futures.append(scan_utils.executor.submit(
+                process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id))
 
         # Register futures
         scan_proc_inst = data_model.ToolExecutor(futures)
