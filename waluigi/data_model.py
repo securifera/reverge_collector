@@ -28,6 +28,7 @@ import json
 import importlib
 import logging
 import traceback
+import signal
 
 from waluigi.scan_utils import get_ports, construct_url
 

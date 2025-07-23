@@ -50,13 +50,11 @@ Constants:
     recon_mgr_inst: Global singleton instance of ReconManager
 """
 
-import signal
-import time
 from Cryptodome.PublicKey import RSA
 from Cryptodome.Cipher import AES, PKCS1_OAEP
 from types import SimpleNamespace
 from threading import Event, Thread
-from waluigi import scan_cleanup, scan_utils
+from waluigi import scan_cleanup
 from waluigi import data_model
 from functools import partial
 
@@ -712,6 +710,13 @@ class ScheduledScanThread(threading.Thread):
                                             logging.getLogger(__name__).debug(
                                                 "Scan cancelled")
                                             scheduled_scan_obj.kill_scan_processes()
+
+                                            # Update to completed so it'll stop trying
+                                            scheduled_scan_obj.update_scan_status(
+                                                data_model.ScanStatus.COMPLETED.value)
+                                            # Remove from the map
+                                            del self.scheduled_scan_map[scheduled_scan_obj.id]
+
                                         else:
                                             # Process individual tool cancellation
                                             cancelled_tool_ids = status_obj.cancelled_tool_ids
