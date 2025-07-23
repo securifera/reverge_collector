@@ -454,12 +454,14 @@ class ScheduledScanThread(threading.Thread):
                             err_msg = f"{ScheduledScanThread.failed_task_exception[0]}\n{ScheduledScanThread.failed_task_exception[1]}"
                             ScheduledScanThread.failed_task_exception = None
 
-                        scheduled_scan_obj.update_tool_status(
-                            collection_tool_inst.id, ret_status, err_msg)
                         if self.connection_manager and self.connection_manager.connect_to_extender() == False:
                             err_msg = "Failed connecting to extender"
                             logging.getLogger(__name__).error(err_msg)
                             return err_msg
+
+                        # Update the tool status after connecting back to extender
+                        scheduled_scan_obj.update_tool_status(
+                            collection_tool_inst.id, ret_status, err_msg)
 
                 # Import scan results regardless of tool type
                 try:
@@ -664,9 +666,10 @@ class ScheduledScanThread(threading.Thread):
                             # Collect log messages for transmission
                             result_str = None
                             result_list = []
-                            while not self.log_queue.empty() and len(result_list) < 100:
-                                result_list.append(
-                                    self.log_queue.get())
+                            if self.log_queue:
+                                while not self.log_queue.empty() and len(result_list) < 100:
+                                    result_list.append(
+                                        self.log_queue.get())
                             if len(result_list) > 0:
                                 result_str = "\n".join(result_list)
 
