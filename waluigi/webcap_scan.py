@@ -361,6 +361,9 @@ async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
                     logging.getLogger(__name__).warning(
                         f"Failed to take screenshot for {url}")
 
+                # Force cleanup after each screenshot to manage resources
+                await browser.force_aggressive_cleanup()
+
     finally:
         # stop the browser
         await browser.stop()
