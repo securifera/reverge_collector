@@ -318,50 +318,52 @@ async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
     # start the browser
     await browser.start()
 
-    with open(meta_file_path, 'w') as f:
-        for url, scan_tuple in future_map.items():
-            port_id, http_endpoint_data_id, domain_str, path = scan_tuple
-            url_entry = {'port_id': port_id,
-                         'http_endpoint_data_id': http_endpoint_data_id, 'path': path, 'domain': domain_str}
+    try:
+        with open(meta_file_path, 'w') as f:
+            for url, scan_tuple in future_map.items():
+                port_id, http_endpoint_data_id, domain_str, path = scan_tuple
+                url_entry = {'port_id': port_id,
+                             'http_endpoint_data_id': http_endpoint_data_id, 'path': path, 'domain': domain_str}
 
-            # take a screenshot
-            webscreenshot = None
-            try:
-                webscreenshot = await browser.screenshot(url)
-            except WebCapError as e:
-                # stop the browser
-                await browser.stop()
-                logging.getLogger(__name__).error(
-                    f"WebCapError, restarting browser: {str(e)}")
-                # Restart the browser
-                browser = Browser(timeout=timeout, threads=threads)
-                await browser.start()
-                continue
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    f"Error taking screenshot for {url}: {str(e)}")
-                logging.getLogger(__name__).debug(traceback.format_exc())
-                break
-
-            if webscreenshot and webscreenshot.status_code != 0:
-                url_entry['url'] = url
+                # take a screenshot
+                webscreenshot = None
                 try:
-                    url_entry['image_data'] = base64.b64encode(
-                        webscreenshot.blob).decode()
-                except ValueError as e:
-                    # Skip if there is no image data
+                    webscreenshot = await browser.screenshot(url)
+                except WebCapError as e:
+                    # stop the browser
+                    await browser.stop()
+                    logging.getLogger(__name__).error(
+                        f"WebCapError, restarting browser: {str(e)}")
+                    # Restart the browser
+                    browser = Browser(timeout=timeout, threads=threads)
+                    await browser.start()
                     continue
-                url_entry['status_code'] = webscreenshot.status_code
-                url_entry['title'] = webscreenshot.title
+                except Exception as e:
+                    logging.getLogger(__name__).error(
+                        f"Error taking screenshot for {url}: {str(e)}")
+                    logging.getLogger(__name__).debug(traceback.format_exc())
+                    break
 
-                # Write as JSON line
-                f.write(json.dumps(url_entry) + '\n')
-            else:
-                logging.getLogger(__name__).warning(
-                    f"Failed to take screenshot for {url}")
+                if webscreenshot and webscreenshot.status_code != 0:
+                    url_entry['url'] = url
+                    try:
+                        url_entry['image_data'] = base64.b64encode(
+                            webscreenshot.blob).decode()
+                    except ValueError as e:
+                        # Skip if there is no image data
+                        continue
+                    url_entry['status_code'] = webscreenshot.status_code
+                    url_entry['title'] = webscreenshot.title
 
-    # stop the browser
-    await browser.stop()
+                    # Write as JSON line
+                    f.write(json.dumps(url_entry) + '\n')
+                else:
+                    logging.getLogger(__name__).warning(
+                        f"Failed to take screenshot for {url}")
+
+    finally:
+        # stop the browser
+        await browser.stop()
 
 
 def webcap_wrapper(future_map: Dict[str, Tuple], meta_file_path: str,
