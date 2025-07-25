@@ -133,7 +133,7 @@ class Webcap(data_model.WaluigiTool):
         self.project_url = 'https://github.com/blacklanternsecurity/webcap'
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 8
-        self.args = "--timeout 5 --threads 5 --quality 100"
+        self.args = "--timeout 5 --threads 5 --quality 20 --format jpeg"
         self.scan_func = Webcap.webcap_scan_func
         self.import_func = Webcap.webcap_import
 
@@ -241,6 +241,7 @@ def parse_args(args_str: str) -> Tuple[int, int, int]:
     timeout = 5
     threads = 5
     quality = 100
+    image_format = "jpeg"
     if args_str and len(args_str) > 0:
         tokens = shlex.split(args_str)
         for i, token in enumerate(tokens):
@@ -257,9 +258,17 @@ def parse_args(args_str: str) -> Tuple[int, int, int]:
             if token == "--quality" and i + 1 < len(tokens):
                 try:
                     quality = int(tokens[i + 1])
+                    # Ensure quality is between 1 and 100
+                    quality = max(1, min(quality, 100))
                 except ValueError:
                     pass
-    return timeout, threads, quality
+            if token == "--format" and i + 1 < len(tokens):
+                tmp_format = tokens[i + 1]
+                # Ensure image format is one of the supported types jpeg, png, webp
+                if tmp_format in ["jpeg", "png", "webp"]:
+                    image_format = tmp_format
+
+    return timeout, threads, image_format, quality
 
 
 async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
@@ -301,10 +310,11 @@ async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
     """
 
     # Get the arguments for timeout and threads
-    timeout, threads, quality = parse_args(webcap_args)
+    timeout, threads, image_format, quality = parse_args(webcap_args)
 
     # create a browser instance
-    browser = Browser(timeout=timeout, threads=threads, quality=quality)
+    browser = Browser(timeout=timeout, threads=threads,
+                      image_format=image_format, quality=quality)
     # start the browser
     await browser.start()
 

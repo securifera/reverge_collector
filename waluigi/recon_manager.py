@@ -711,9 +711,6 @@ class ScheduledScanThread(threading.Thread):
                                                 "Scan cancelled")
                                             scheduled_scan_obj.kill_scan_processes()
 
-                                            # Update to completed so it'll stop trying
-                                            # scheduled_scan_obj.update_scan_status(
-                                            #    data_model.ScanStatus.COMPLETED.value)
                                             # Remove from the map
                                             del self.scheduled_scan_map[scheduled_scan_obj.id]
 
