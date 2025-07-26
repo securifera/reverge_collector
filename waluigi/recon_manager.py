@@ -487,6 +487,9 @@ class ScheduledScanThread(threading.Thread):
                     scheduled_scan_obj.update_tool_status(
                         collection_tool_inst.id, ret_status, err_msg)
 
+            except Exception:
+                logging.getLogger(__name__).error("Error executing scan job")
+                logging.getLogger(__name__).error(traceback.format_exc())
             finally:
                 # Clean up current tool references
                 scheduled_scan_obj.current_tool = None
