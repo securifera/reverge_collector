@@ -335,7 +335,8 @@ async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
                     logging.getLogger(__name__).error(
                         f"WebCapError, restarting browser: {str(e)}")
                     # Restart the browser
-                    browser = Browser(timeout=timeout, threads=threads)
+                    browser = Browser(timeout=timeout, threads=threads,
+                                      image_format=image_format, quality=quality)
                     await browser.start()
                     continue
                 except Exception as e:
@@ -362,8 +363,15 @@ async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
                         f"Failed to take screenshot for {url}")
 
                 if browser.orphaned_session:
-                    # If the browser session is orphaned, we need to force cleanup
-                    await browser.force_target_cleanup()
+                    # stop the browser
+                    await browser.stop()
+                    logging.getLogger(__name__).debug(
+                        f"Orphaned session detected. Restarting")
+                    # Restart the browser
+                    browser = Browser(timeout=timeout, threads=threads,
+                                      image_format=image_format, quality=quality)
+                    await browser.start()
+                    continue
 
     finally:
         # stop the browser
