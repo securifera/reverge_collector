@@ -734,11 +734,11 @@ class ScheduledScanThread(threading.Thread):
                         except requests.exceptions.ConnectionError as e:
                             logging.getLogger(__name__).error(
                                 "Unable to connect to server.")
-                            pass
+                            if self.connection_manager:
+                                self.connection_manager.connect_to_extender()
                         except Exception as e:
                             logging.getLogger(__name__).debug(
                                 traceback.format_exc())
-                            pass
                         finally:
                             # Always release connection lock
                             if self.connection_manager:
