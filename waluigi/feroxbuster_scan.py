@@ -232,7 +232,7 @@ def queue_url(url_to_id_map: Dict[str, Dict[str, Any]], domain_str: str, port_st
     global url_set
     url_str = scan_utils.construct_url(domain_str, port_str, secure)
 
-    if url_str not in url_set:
+    if url_str and url_str not in url_set:
         url_set.add(url_str)
         rand_str = str(random.randint(1000000, 2000000))
 

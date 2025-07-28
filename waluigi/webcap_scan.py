@@ -62,6 +62,8 @@ import base64
 import logging
 import asyncio
 import shlex
+import time
+import validators
 from typing import Dict, Tuple, Any, Optional, List
 
 from luigi.util import inherits
@@ -365,6 +367,7 @@ async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
                 if browser.orphaned_session:
                     # stop the browser
                     await browser.stop()
+                    time.sleep(3)
                     logging.getLogger(__name__).debug(
                         f"Orphaned session detected. Restarting")
                     # Restart the browser
@@ -454,6 +457,9 @@ def queue_scan(host: str, port_str: str, secure: bool, port_id: int,
         target_str = domain_str
 
     url = scan_utils.construct_url(target_str, port_str, secure, query_arg)
+    if url is None:
+        return
+
     if url in future_map:
         scan_tuple = future_map[url]
         port_id, prev_http_endpoint_data_id, domain_str, path = scan_tuple

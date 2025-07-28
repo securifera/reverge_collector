@@ -289,6 +289,8 @@ def queue_scan(host: str, port_str: str, dir_path: str, secure: bool, port_id: i
         target_str = domain_str
 
     url = scan_utils.construct_url(target_str, port_str, secure, query_arg)
+    if url is None:
+        return
     if url in future_map:
         prev_http_endpoint_data_id, scan_tuple = future_map[url]
         # the previous http endoint is None then switch it out to avoid duplicates

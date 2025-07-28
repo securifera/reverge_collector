@@ -254,9 +254,10 @@ class NucleiScan(luigi.Task):
             # Construct URL for IP address
             url_str: str = scan_utils.construct_url(
                 ip_addr, port_str, secure_flag)
+
             port_obj_instance: Dict[str, int] = {"port_id": port_id}
 
-            if url_str not in total_endpoint_set:
+            if url_str and url_str not in total_endpoint_set:
                 endpoint_port_obj_map[url_str] = port_obj_instance
                 total_endpoint_set.add(url_str)
 
@@ -265,7 +266,7 @@ class NucleiScan(luigi.Task):
                 domain_str: str = target_arr[0]
                 url_str = scan_utils.construct_url(
                     domain_str, port_str, secure_flag)
-                if url_str not in total_endpoint_set:
+                if url_str and url_str not in total_endpoint_set:
                     endpoint_port_obj_map[url_str] = port_obj_instance
                     total_endpoint_set.add(url_str)
 

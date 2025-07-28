@@ -63,7 +63,7 @@ Note:
 from functools import wraps
 import math
 import os
-import subprocess
+import validators
 import re
 import threading
 import time
@@ -359,6 +359,11 @@ def construct_url(target_str: str, port: int, secure: bool,
 
     if query_str:
         url += query_str
+
+    if validators.url(url) == False:
+        logging.getLogger(__name__).debug(
+            f"Invalid URL constructed: {url}. Skipping scan queue.")
+        return None
 
     return url
 

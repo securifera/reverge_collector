@@ -262,8 +262,8 @@ class HttpXScan(luigi.Task):
                     port_target_list_map[port_str] = ip_set
 
                 # Add IP to list
-                # ip_set.add(ip_addr)
-                ip_set.add(url_str)
+                if url_str:
+                    ip_set.add(url_str)
 
                 # Get domains
                 host_id = host_obj.id
@@ -275,7 +275,8 @@ class HttpXScan(luigi.Task):
                         # ip_set.add(domain_name)
                         url_str = scan_utils.construct_url(
                             domain_name, port_str, secure_flag)
-                        ip_set.add(url_str)
+                        if url_str:
+                            ip_set.add(url_str)
 
         else:
 
@@ -353,10 +354,8 @@ class HttpXScan(luigi.Task):
 
                             url_str = scan_utils.construct_url(
                                 ip_addr, port_str, False)
-                            ip_set.add(url_str)
-
-                            # Add IP to list
-                            # ip_set.add(ip_addr)
+                            if url_str:
+                                ip_set.add(url_str)
 
                             # Get domains
                             if host_id in scope_obj.domain_host_id_map:
@@ -366,8 +365,8 @@ class HttpXScan(luigi.Task):
                                     domain_name = domain_obj.name
                                     url_str = scan_utils.construct_url(
                                         domain_name, port_str, False)
-                                    ip_set.add(url_str)
-                                    # ip_set.add(domain_name)
+                                    if url_str:
+                                        ip_set.add(url_str)
 
         futures = []
         for port_str in port_target_list_map:

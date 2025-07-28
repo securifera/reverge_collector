@@ -477,21 +477,21 @@ class BadSecretsScan(luigi.Task):
 
                     url_str = scan_utils.construct_url(
                         ip_addr, port_str, secure)
+                    if url_str:
+                        for endpoint_obj in http_endpoint_list:
+                            http_endpoint_id = endpoint_obj.id
+                            path_id = endpoint_obj.web_path_id
+                            if path_id in scheduled_scan_obj.scan_data.path_map:
+                                path_obj = scheduled_scan_obj.scan_data.path_map[path_id]
+                                web_path = path_obj.web_path
+                                endpoint_url = url_str + web_path
 
-                    for endpoint_obj in http_endpoint_list:
-                        http_endpoint_id = endpoint_obj.id
-                        path_id = endpoint_obj.web_path_id
-                        if path_id in scheduled_scan_obj.scan_data.path_map:
-                            path_obj = scheduled_scan_obj.scan_data.path_map[path_id]
-                            web_path = path_obj.web_path
-                            endpoint_url = url_str + web_path
-
-                            # Add the URL
-                            url_obj = {
-                                'port_id': port_id, 'http_endpoint_id': http_endpoint_id, 'url': endpoint_url}
-                            future_inst = queue_scan(url_obj)
-                            if future_inst:
-                                futures.append(future_inst)
+                                # Add the URL
+                                url_obj = {
+                                    'port_id': port_id, 'http_endpoint_id': http_endpoint_id, 'url': endpoint_url}
+                                future_inst = queue_scan(url_obj)
+                                if future_inst:
+                                    futures.append(future_inst)
 
         elif len(url_list) > 0:
 
