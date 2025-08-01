@@ -68,13 +68,13 @@ if [ "$NEED_INSTALL" = "yes" ]; then
 
     curl -sS https://bootstrap.pypa.io/get-pip.py | python3
 
-    python3 -m venv ~/venv
+    sudo python3 -m venv ~/venv
     . ~/venv/bin/activate
 
     echo "Python 3.13 installed successfully."
 else
     install_packages python3-venv
-    python3 -m venv ~/venv
+    sudo python3 -m venv ~/venv
     . ~/venv/bin/activate
 fi 
 
