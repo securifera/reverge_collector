@@ -38,11 +38,11 @@ elif command -v python &>/dev/null; then
         PYTHON_CMD="python"
         PYTHON3="yes"
     else
-        echo "Python 3.x not found. Installing Python 3.12..."
+        echo "Python 3.x not found. Installing Python 3.13..."
         NEED_INSTALL="yes"
     fi
 else
-    echo "Python 3.x not found. Installing Python 3.12..."
+    echo "Python 3.x not found. Installing Python 3.13..."
     NEED_INSTALL="yes"
 fi
 
@@ -51,7 +51,7 @@ if [ "$PYTHON3" = "yes" ]; then
     echo "Current Python version: 3.$PYTHON_VERSION"
 
     if [ `echo "$PYTHON_VERSION 12" | awk '{print ($1 < $2)}'` -eq 1 ]; then
-        echo "Python version is less than 3.12. Installing Python 3.12..."
+        echo "Python version is less than 3.13. Installing Python 3.13..."
         NEED_INSTALL="yes"
     fi
 fi
@@ -63,18 +63,18 @@ if [ "$NEED_INSTALL" = "yes" ]; then
     # Add the deadsnakes PPA
     sudo add-apt-repository -y ppa:deadsnakes/ppa
 
-    # Install Python 3.12
-    install_packages python3.12 python3.12.dev python3.12-distutils python3.12-venv
+    # Install Python 3.13
+    install_packages python3.13 python3.13.dev python3.13-distutils python3.13-venv
 
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
+    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.13
 
-    python3.12 -m venv ~/venv
+    python3.13 -m venv ~/venv
     . ~/venv/bin/activate
 
-    echo "Python 3.12 installed successfully."
+    echo "Python 3.13 installed successfully."
 else
-    install_packages python3.12-venv
-    python3.12 -m venv ~/venv
+    install_packages python3.13-venv
+    python3.13 -m venv ~/venv
     . ~/venv/bin/activate
 fi 
 
