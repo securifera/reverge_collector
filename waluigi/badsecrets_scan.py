@@ -6,10 +6,14 @@ a pure Python library for identifying the use of known or very weak cryptographi
 secrets across a variety of web application platforms. It integrates with the Waluigi
 framework to perform automated detection of common cryptographic vulnerabilities.
 
+The module focuses on scanning base URLs (root paths) only, filtering out URLs with
+specific paths to concentrate vulnerability analysis on the primary endpoints where
+cryptographic secrets are most commonly exposed.
+
 The module supports:
     - Detection of known weak cryptographic secrets and keys
     - Analysis of various web application platforms and frameworks
-    - HTTP endpoint scanning for cryptographic vulnerabilities
+    - HTTP endpoint scanning for cryptographic vulnerabilities focused on base URLs
     - Support for both discovered endpoints and custom URL lists
     - Concurrent processing for performance optimization
     - Comprehensive vulnerability reporting with details
@@ -330,6 +334,10 @@ class BadSecretsScan(luigi.Task):
     and execution flow within the Luigi workflow framework. It processes HTTP endpoints
     from previous scanning phases and custom URL lists to identify cryptographic weaknesses.
 
+    The scan focuses on base URLs (root paths) only, filtering out URLs with specific
+    paths to concentrate cryptographic vulnerability analysis on the primary endpoints
+    where secrets are most commonly exposed.
+
     Attributes:
         scan_input (luigi.Parameter): The scan input object containing target information,
                                     endpoint data, and configuration parameters
@@ -347,7 +355,7 @@ class BadSecretsScan(luigi.Task):
     Note:
         This class inherits from luigi.Task and follows Luigi's task execution model.
         The task processes both discovered HTTP endpoints and custom URL lists to
-        provide comprehensive cryptographic vulnerability coverage.
+        provide comprehensive cryptographic vulnerability coverage focused on base URLs.
     """
 
     scan_input = luigi.Parameter()
@@ -395,15 +403,15 @@ class BadSecretsScan(luigi.Task):
         Execute the BadSecrets cryptographic vulnerability scanning operation.
 
         This method orchestrates the complete vulnerability scanning workflow including:
-        - Processing discovered HTTP endpoints and custom URL lists
-        - Constructing target URLs from host, port, and endpoint data
-        - Handling both IP-based and domain-based targets
+        - Processing discovered HTTP endpoints using scan_data.get_urls()
+        - Filtering to only scan base URLs (root paths) for focused analysis
+        - Handling custom URL lists for additional target coverage
         - Concurrent execution of cryptographic vulnerability analysis
         - Collection and aggregation of vulnerability findings
 
-        The method processes all HTTP endpoints from previous scan phases and
-        any custom URL lists, executing BadSecrets analysis against each unique
-        target to identify cryptographic weaknesses and implementation flaws.
+        The method uses the same URL extraction pattern as NucleiScan and FeroxScan,
+        filtering URLs to only include base URLs (path is None or "/") to focus
+        cryptographic analysis on primary endpoints where secrets are typically exposed.
 
         Returns:
             None: Vulnerability findings are written to the output file
@@ -425,9 +433,9 @@ class BadSecretsScan(luigi.Task):
             >>> task.run()  # Executes all configured vulnerability scans
 
         Note:
-            The method handles both discovered HTTP endpoints from previous scans
-            and custom URL lists. It uses concurrent execution for performance
-            and includes comprehensive error handling for network operations.
+            The method filters to base URLs only and uses concurrent execution for
+            performance. It includes comprehensive error handling for network operations
+            and fallback to custom scope URLs when no base URLs are available.
         """
 
         scheduled_scan_obj = self.scan_input
@@ -435,66 +443,40 @@ class BadSecretsScan(luigi.Task):
         # Get output file path
         output_file_path = self.output().path
         output_file_list = []
-        url_list = []
 
+        # Get all the endpoints to scan using the same pattern as NucleiScan and FeroxScan
+        # Filter to only base URLs (skip non-default paths)
+        all_endpoint_port_obj_map = scheduled_scan_obj.scan_data.get_urls()
+        endpoint_port_obj_map = {}
+
+        # Filter URLs to only include base URLs (path is None or "/")
+        for url, port_data in all_endpoint_port_obj_map.items():
+            # Only include URLs with no specific path or root path
+            if port_data.get('path') is None or port_data.get('path') == '/':
+                endpoint_port_obj_map[url] = port_data
+
+        # Also get any custom scope URLs
         scope_obj = scheduled_scan_obj.scan_data
         url_list = scope_obj.get_scope_urls()
 
         futures = []
-        target_map = scope_obj.host_port_obj_map
-        if len(target_map) > 0:
 
-            for target_key in target_map:
+        # Process the filtered endpoint URLs
+        for url_str, url_metadata in endpoint_port_obj_map.items():
+            port_id = url_metadata.get('port_id')
+            http_endpoint_id = url_metadata.get('http_endpoint_id')
 
-                ip_set = set()
-                target_obj_dict = target_map[target_key]
-                port_obj = target_obj_dict['port_obj']
-                port_id = port_obj.id
-                port_str = port_obj.port
-                secure = port_obj.secure
+            url_obj = {
+                'port_id': port_id,
+                'http_endpoint_id': http_endpoint_id,
+                'url': url_str
+            }
+            future_inst = queue_scan(url_obj)
+            if future_inst:
+                futures.append(future_inst)
 
-                host_obj = target_obj_dict['host_obj']
-                ip_addr = host_obj.ipv4_addr
-                ip_set.add(ip_addr)
-
-                # Get endpoint map
-                http_endpoint_list = []
-                http_endpoint_port_id_map = scheduled_scan_obj.scan_data.http_endpoint_port_id_map
-                if port_id in http_endpoint_port_id_map:
-                    http_endpoint_list = http_endpoint_port_id_map[port_id]
-
-                # Add each of the domains for the host
-                host_id = host_obj.id
-                if host_id in scope_obj.domain_host_id_map:
-                    temp_domain_list = scope_obj.domain_host_id_map[host_id]
-                    for domain_obj in temp_domain_list:
-
-                        domain_name = domain_obj.name
-                        ip_set.add(domain_name)
-
-                # Loop through the IP set and construct URLs
-                for ip_addr in ip_set:
-
-                    url_str = scan_utils.construct_url(
-                        ip_addr, port_str, secure)
-                    if url_str:
-                        for endpoint_obj in http_endpoint_list:
-                            http_endpoint_id = endpoint_obj.id
-                            path_id = endpoint_obj.web_path_id
-                            if path_id in scheduled_scan_obj.scan_data.path_map:
-                                path_obj = scheduled_scan_obj.scan_data.path_map[path_id]
-                                web_path = path_obj.web_path
-                                endpoint_url = url_str + web_path
-
-                                # Add the URL
-                                url_obj = {
-                                    'port_id': port_id, 'http_endpoint_id': http_endpoint_id, 'url': endpoint_url}
-                                future_inst = queue_scan(url_obj)
-                                if future_inst:
-                                    futures.append(future_inst)
-
-        elif len(url_list) > 0:
-
+        # Process custom scope URLs if no endpoint URLs found
+        if len(endpoint_port_obj_map) == 0 and len(url_list) > 0:
             for url in url_list:
                 url_obj = {'port_id': None,
                            'http_endpoint_id': None, 'url': url}
@@ -502,7 +484,7 @@ class BadSecretsScan(luigi.Task):
                 if future_inst:
                     futures.append(future_inst)
 
-        else:
+        if len(futures) == 0:
             logging.getLogger(__name__).debug(
                 "No targets to scan for BadSecrets")
 
@@ -517,6 +499,9 @@ class BadSecretsScan(luigi.Task):
                 ret_obj = future.result()
                 if ret_obj:
                     output_file_list.append(ret_obj)
+        else:
+            logging.getLogger(__name__).debug(
+                "No targets to scan for BadSecrets")
 
         results_dict = {'output_list': output_file_list}
 

@@ -5,6 +5,9 @@ This module provides vulnerability scanning capabilities using Nuclei, a fast an
 vulnerability scanner based on YAML templates. It performs automated security scans on
 web applications and services to identify potential vulnerabilities and components.
 
+The module focuses on scanning base URLs (root paths) only, filtering out URLs with
+specific paths to concentrate vulnerability scanning efforts on the primary endpoints.
+
 The module implements both scanning and data import functionality through Luigi tasks,
 supporting modular scanning operations and comprehensive result processing.
 
@@ -141,8 +144,9 @@ class NucleiScan(luigi.Task):
     Nuclei with appropriate templates and configuration.
 
     The scan supports both IP addresses and domain names, constructing appropriate
-    URLs for HTTP/HTTPS endpoints. Results are collected and prepared for import
-    processing.
+    URLs for HTTP/HTTPS endpoints. Only base URLs (root paths) are scanned - URLs
+    with specific paths are filtered out to focus vulnerability scanning on the
+    primary endpoints. Results are collected and prepared for import processing.
 
     Attributes:
         scan_input (luigi.Parameter): Scheduled scan configuration parameter
@@ -196,10 +200,14 @@ class NucleiScan(luigi.Task):
         with configured templates and arguments. Handles both IP addresses and
         domain names, constructing appropriate URLs for scanning.
 
+        The method filters URLs to only scan base URLs (root paths), skipping
+        any URLs with specific paths to focus vulnerability scanning on the
+        primary endpoints.
+
         The method:
         1. Sets up environment variables and paths
         2. Processes target host-port mappings 
-        3. Constructs target URLs (HTTP/HTTPS)
+        3. Constructs target URLs (HTTP/HTTPS) - filtering to base URLs only
         4. Creates input file for Nuclei
         5. Executes Nuclei scan command
         6. Collects and stores results
@@ -229,46 +237,24 @@ class NucleiScan(luigi.Task):
         output_dir: str = os.path.dirname(output_file_path)
 
         total_endpoint_set: Set[str] = set()
-        endpoint_port_obj_map: Dict[str, Dict[str, Any]] = {}
+        # endpoint_port_obj_map: Dict[str, Dict[str, Any]] = {}
         nuclei_output_file: Optional[str] = None
 
         custom_args: Optional[List[str]] = None
         if scheduled_scan_obj.current_tool.args:
             custom_args = scheduled_scan_obj.current_tool.args.split(" ")
 
-        target_map: Dict[str, Dict[str, Any]
-                         ] = scheduled_scan_obj.scan_data.host_port_obj_map
+        # Get all the endpoints to scan - filter to only base URLs (skip non-default paths)
+        all_endpoint_port_obj_map = scheduled_scan_obj.scan_data.get_urls()
+        endpoint_port_obj_map = {}
 
-        # Process each target to build endpoint list
-        for target_key in target_map:
-            target_obj_dict = target_map[target_key]
-            port_obj = target_obj_dict['port_obj']
-            port_id: int = port_obj.id
-            port_str: str = port_obj.port
-            secure_flag: bool = port_obj.secure
+        # Filter URLs to only include base URLs (path is None or "/")
+        for url, port_data in all_endpoint_port_obj_map.items():
+            # Only include URLs with no specific path or root path
+            if port_data.get('path') is None or port_data.get('path') == '/':
+                endpoint_port_obj_map[url] = port_data
 
-            host_obj = target_obj_dict['host_obj']
-            ip_addr: str = host_obj.ipv4_addr
-            target_arr: List[str] = target_key.split(":")
-
-            # Construct URL for IP address
-            url_str: str = scan_utils.construct_url(
-                ip_addr, port_str, secure_flag)
-
-            port_obj_instance: Dict[str, int] = {"port_id": port_id}
-
-            if url_str and url_str not in total_endpoint_set:
-                endpoint_port_obj_map[url_str] = port_obj_instance
-                total_endpoint_set.add(url_str)
-
-            # Add the domain url as well if different from IP
-            if target_arr[0] != ip_addr:
-                domain_str: str = target_arr[0]
-                url_str = scan_utils.construct_url(
-                    domain_str, port_str, secure_flag)
-                if url_str and url_str not in total_endpoint_set:
-                    endpoint_port_obj_map[url_str] = port_obj_instance
-                    total_endpoint_set.add(url_str)
+        total_endpoint_set = set(endpoint_port_obj_map.keys())
 
         # Write to nuclei input file if endpoints exist
         counter: int = 0

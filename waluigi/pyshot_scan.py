@@ -422,121 +422,27 @@ class PyshotScan(luigi.Task):
 
         scheduled_scan_obj = self.scan_input
 
-        scope_obj = scheduled_scan_obj.scan_data
-        target_map = scope_obj.host_port_obj_map
-        http_endpoint_port_id_map = scope_obj.http_endpoint_port_id_map
-        web_path_map = scope_obj.path_map
-        domain_map = scope_obj.domain_map
-        endpoint_data_endpoint_id_map = scope_obj.endpoint_data_endpoint_id_map
+        # Get all URLs with metadata and submit tasks directly
+        url_metadata_map = scheduled_scan_obj.scan_data.get_urls()
 
-        future_map = {}
-        for target_key in target_map:
-
-            query_arg = "/"
-            target_obj_dict = target_map[target_key]
-            port_obj = target_obj_dict['port_obj']
-
-            port_id = port_obj.id
-            port_str = port_obj.port
-            secure = port_obj.secure
-
-            host_obj = target_obj_dict['host_obj']
-            host_id = host_obj.id
-            ip_addr = host_obj.ipv4_addr
-
-            # Add domain if it is different from the IP
-            domain_str_orig = None
-            target_arr = target_key.split(":")
-            if target_arr[0] != ip_addr:
-                domain_str_orig = target_arr[0]
-
-            if port_id in http_endpoint_port_id_map:
-                http_endpoint_obj_list = http_endpoint_port_id_map[port_id]
-                for http_endpoint_obj in http_endpoint_obj_list:
-
-                    query_arg = "/"
-                    domain_str = domain_str_orig
-                    http_endpoint_data_id = None
-                    host = ip_addr
-                    web_path_id = http_endpoint_obj.web_path_id
-                    if web_path_id and web_path_id in web_path_map:
-                        web_path_obj = web_path_map[web_path_id]
-                        query_arg = web_path_obj.web_path
-
-                    if http_endpoint_obj.id in endpoint_data_endpoint_id_map:
-                        http_endpoint_data_obj_list = endpoint_data_endpoint_id_map[
-                            http_endpoint_obj.id]
-
-                        for http_endpoint_data_obj in http_endpoint_data_obj_list:
-
-                            domain_str = None
-                            http_endpoint_data_id = http_endpoint_data_obj.id
-                            domain_id = http_endpoint_data_obj.domain_id
-                            if domain_id and domain_id in domain_map:
-                                domain_obj = domain_map[domain_id]
-                                domain_str = domain_obj.name
-                                host = domain_str
-                            elif host_id in scope_obj.domain_host_id_map:
-
-                                # Take screenshots for any domains associated with the host
-                                temp_domain_list = scope_obj.domain_host_id_map[host_id]
-                                for domain_obj in temp_domain_list:
-                                    domain_name = domain_obj.name
-                                    queue_scan(domain_name, port_str, dir_path,
-                                               secure, port_id, query_arg, domain_name, http_endpoint_data_id)
-
-                            queue_scan(host, port_str, dir_path,
-                                       secure, port_id, query_arg, domain_str, http_endpoint_data_id)
-
-                    else:
-                        queue_scan(
-                            host, port_str, dir_path, secure, port_id, query_arg, domain_str)
-
-            else:
-
-                # For hosts without HTTP endpoints, let's try to confirm this is likely a web
-                # endpoint so we aren't trying to screencap regular ports
-                # First we'll check for the http component, next we'll check if it's port 80 or 443
-                likely_http = False
-                component_port_id_map = scope_obj.component_port_id_map
-                if port_id in component_port_id_map:
-                    component_obj_list = component_port_id_map[port_id]
-                    for component_obj in component_obj_list:
-                        component_name = component_obj.name
-                        if 'http' in component_name.lower():
-                            likely_http = True
-                            break
-
-                if port_str in ['80', '443']:
-                    likely_http = True
-
-                if likely_http:
-
-                    # Add for IP address
-                    queue_scan(ip_addr, port_str, dir_path,
-                               secure, port_id, query_arg, domain_str_orig)
-
-                    # Add for domains in the scope
-                    if host_id in scope_obj.domain_host_id_map:
-                        temp_domain_list = scope_obj.domain_host_id_map[host_id]
-                        for domain_obj in temp_domain_list:
-
-                            domain_name = domain_obj.name
-                            queue_scan(domain_name, port_str, dir_path,
-                                       secure, port_id, query_arg, domain_name)
-                else:
-                    logging.getLogger(__name__).debug(
-                        "Skipping port %s on host %s as it does not appear to be a web endpoint." % (port_str, ip_addr))
-
-        # Submit the tuples
+        from urllib.parse import urlparse
         futures = []
-        for url, (http_endpoint_data_id, scan_tuple) in future_map.items():
-            # Unpack the tuple
-            func, host, port_str, dir_path, secure, port_id, query_arg, domain_str, http_endpoint_data_id = scan_tuple
 
-            # Submit the scan task
+        for url, metadata in url_metadata_map.items():
+            # Extract host from URL for pyshot_wrapper
+            parsed_url = urlparse(url)
+            host = parsed_url.hostname
+            port_str = str(parsed_url.port) if parsed_url.port else (
+                '443' if parsed_url.scheme == 'https' else '80')
+            secure = parsed_url.scheme == 'https'
+            query_arg = parsed_url.path + \
+                ('?' + parsed_url.query if parsed_url.query else '')
+
+            # Submit the scan task directly
             future_inst = scan_utils.executor.submit(
-                func, host, port_str, dir_path, secure, port_id, query_arg, domain_str, http_endpoint_data_id)
+                pyshot_wrapper, host, port_str, dir_path, secure,
+                metadata["port_id"], query_arg, metadata.get("domain"),
+                metadata.get("http_endpoint_data_id"))
             futures.append(future_inst)
 
         scan_proc_inst = data_model.ToolExecutor(futures)

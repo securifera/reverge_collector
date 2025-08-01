@@ -163,7 +163,8 @@ class ThreadExecutorWrapper:
 
         try:
             result = future.result()
-            logging.getLogger(__name__).debug(f"Task {task_id} completed")
+            logging.getLogger(__name__).debug(
+                f"Task {task_id}/{len(self.futures_map)} completed")
         except Exception as e:
             tb = traceback.format_exc()
             logging.getLogger(__name__).debug(
@@ -360,12 +361,13 @@ def construct_url(target_str: str, port: int, secure: bool,
     if query_str:
         url += query_str
 
-    if validators.url(url) == False:
+    try:
+        validators.url(url)
+        return url
+    except Exception as e:
         logging.getLogger(__name__).debug(
-            f"Invalid URL constructed: {url}. Skipping scan queue.")
+            f"Invalid URL constructed: {url}. Skipping scan queue. Error: {e}")
         return None
-
-    return url
 
 
 def get_ports(byte_array: bytearray) -> List[str]:

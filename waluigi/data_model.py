@@ -1110,6 +1110,171 @@ class ScanData:
 
         return list(endpoint_urls)
 
+    def get_urls(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Extract all URLs suitable for screenshot capture with associated metadata.
+
+        Returns:
+            Dict[str, Dict[str, Any]]: Mapping of URLs to their metadata
+            {
+                "https://example.com:443/admin": {
+                    "host_id": 123,
+                    "port_id": 456,
+                    "domain_id": 789,
+                    "http_endpoint_id": 101,
+                    "http_endpoint_data_id": 202,
+                    "path": "/admin",
+                    "domain": "example.com",
+                    "secure": True
+                }
+            }
+        """
+        url_map = {}
+
+        for target_key in self.host_port_obj_map:
+            target_obj_dict = self.host_port_obj_map[target_key]
+            port_obj = target_obj_dict['port_obj']
+            host_obj = target_obj_dict['host_obj']
+
+            port_id = port_obj.id
+            port_str = port_obj.port
+            secure = port_obj.secure
+            host_id = host_obj.id
+            ip_addr = host_obj.ipv4_addr
+            domain_set = set()
+
+            # Get all domains associated with the host
+            if host_id and host_id in self.domain_host_id_map:
+                temp_domain_list = self.domain_host_id_map[host_id]
+                domain_set.update(
+                    domain_obj.name for domain_obj in temp_domain_list)
+
+            # Get all domains associated with the port
+            if port_id and port_id in self.certificate_port_id_map:
+                temp_cert_list = self.certificate_port_id_map[port_id]
+                for cert_obj in temp_cert_list:
+                    domain_set.update(cert_obj.domain_name_id_map.keys())
+
+            # Extract domain from target if different from IP
+            target_arr = target_key.split(":")
+            if target_arr[0] != ip_addr:
+                domain_set.add(target_arr[0])
+
+            # Process HTTP endpoints
+            if port_id in self.http_endpoint_port_id_map:
+                self._process_http_endpoints(url_map, port_id, host_id, ip_addr,
+                                             port_str, secure, domain_set)
+            else:
+                # Process likely HTTP ports without explicit endpoints
+                self._process_likely_http_ports(url_map, port_id, host_id, ip_addr,
+                                                port_str, secure, domain_set)
+
+        return url_map
+
+    def _process_http_endpoints(self, url_map, port_id, host_id, ip_addr,
+                                port_str, secure, domain_set):
+        """Process ports with known HTTP endpoints"""
+        http_endpoint_obj_list = self.http_endpoint_port_id_map[port_id]
+
+        for http_endpoint_obj in http_endpoint_obj_list:
+            path = "/"
+            web_path_id = http_endpoint_obj.web_path_id
+            if web_path_id and web_path_id in self.path_map:
+                web_path_obj = self.path_map[web_path_id]
+                path = web_path_obj.web_path
+
+            base_metadata = {
+                "host_id": host_id,
+                "port_id": port_id,
+                "http_endpoint_id": http_endpoint_obj.id,
+                "path": path,
+                "secure": secure
+            }
+
+            if http_endpoint_obj.id in self.endpoint_data_endpoint_id_map:
+                # Process endpoint data objects
+                endpoint_data_list = self.endpoint_data_endpoint_id_map[http_endpoint_obj.id]
+                for endpoint_data_obj in endpoint_data_list:
+                    self._add_endpoint_data_urls(url_map, base_metadata, endpoint_data_obj,
+                                                 ip_addr, port_str, secure, path)
+
+            # Add base URL without endpoint data
+            self._add_base_url(url_map, base_metadata, ip_addr, port_str,
+                               secure, path, domain_set)
+
+    def _process_likely_http_ports(self, url_map, port_id, host_id, ip_addr,
+                                   port_str, secure, domain_set):
+        """Process ports that are likely HTTP but don't have explicit endpoints"""
+        likely_http = self._is_likely_http_port(port_id, port_str)
+
+        if likely_http:
+            base_metadata = {
+                "host_id": host_id,
+                "port_id": port_id,
+                "path": "/",
+                "secure": secure
+            }
+            self._add_base_url(url_map, base_metadata, ip_addr, port_str,
+                               secure, "/", domain_set)
+
+            # Add domain variants
+            if host_id in self.domain_host_id_map:
+                for domain_obj in self.domain_host_id_map[host_id]:
+                    domain_metadata = base_metadata.copy()
+                    domain_metadata["domain"] = domain_obj.name
+                    domain_metadata["domain_id"] = domain_obj.id
+
+                    url = construct_url(domain_obj.name, port_str, secure, "/")
+                    if url:
+                        url_map[url] = domain_metadata
+
+    def _add_endpoint_data_urls(self, url_map, base_metadata, endpoint_data_obj,
+                                ip_addr, port_str, secure, path):
+        """Add URLs for endpoint data objects"""
+        metadata = base_metadata.copy()
+        metadata["http_endpoint_data_id"] = endpoint_data_obj.id
+
+        host = ip_addr
+        domain_id = endpoint_data_obj.domain_id
+        if domain_id and domain_id in self.domain_map:
+            domain_obj = self.domain_map[domain_id]
+            metadata["domain"] = domain_obj.name
+            metadata["domain_id"] = domain_id
+            host = domain_obj.name
+
+        # Add primary URL
+        url = construct_url(host, port_str, secure, path)
+        if url:
+            url_map[url] = metadata
+
+    def _add_base_url(self, url_map, base_metadata, ip_addr, port_str, secure, path, domain_set):
+        """Add base URL without endpoint data"""
+        for domain_str in domain_set:
+            metadata = base_metadata.copy()
+            metadata["domain"] = domain_str
+
+            url = construct_url(domain_str, port_str, secure, path)
+            if url:
+                url_map[url] = metadata
+
+        # Add IP version
+        metadata = base_metadata.copy()
+        url = construct_url(ip_addr, port_str, secure, path)
+        if url:
+            url_map[url] = metadata
+
+    def _is_likely_http_port(self, port_id, port_str):
+        """Determine if a port is likely HTTP"""
+        if port_str in ['80', '443']:
+            return True
+
+        if port_id in self.component_port_id_map:
+            for component_obj in self.component_port_id_map[port_id]:
+                if 'http' in component_obj.name.lower():
+                    return True
+
+        return False
+
     def update(self, record_map: Union[Dict[str, Any], List[Any]]) -> None:
         """
         Update the scan data with new records from scan results.
@@ -1423,13 +1588,13 @@ class ScanData:
                 # Get port id
                 port_id = record_obj.parent.id
                 if port_id in self.certificate_port_id_map:
-                    temp_endpoint_list = self.certificate_port_id_map[port_id]
+                    temp_cert_list = self.certificate_port_id_map[port_id]
                 else:
-                    temp_endpoint_list = []
-                    self.certificate_port_id_map[port_id] = temp_endpoint_list
+                    temp_cert_list = []
+                    self.certificate_port_id_map[port_id] = temp_cert_list
 
                 # Add port obj to list to be updated
-                temp_endpoint_list.append(record_obj)
+                temp_cert_list.append(record_obj)
 
                 # Add certificate obj to list for being imported
                 self.certificate_map[record_obj.id] = record_obj
@@ -3016,27 +3181,3 @@ class Certificate(Record):
 
             self.domain_name_id_map[domain_str] = domain_obj.id
             return domain_obj
-
-
-# =============================================================================
-# END OF WALUIGI DATA MODEL MODULE
-# =============================================================================
-#
-# This module provides comprehensive data structures for the Waluigi security
-# scanning framework. All classes are fully documented with type hints and
-# docstrings suitable for automated documentation generation.
-#
-# Key Features:
-# - Type annotations throughout for IDE support and automated docs
-# - Comprehensive docstrings with parameters, returns, and examples
-# - Hierarchical record structure with parent-child relationships
-# - JSON serialization/deserialization for all record types
-# - Tag-based filtering and organization
-# - Extensive mapping structures for efficient data access
-#
-# For automated wiki generation, this module supports:
-# - Sphinx documentation generation
-# - IDE IntelliSense and autocompletion
-# - Type checking with mypy
-# - API documentation extraction
-# =============================================================================

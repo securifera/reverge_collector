@@ -5,6 +5,9 @@ This module provides comprehensive HTTP/HTTPS scanning capabilities using HTTPX,
 a fast and multi-purpose HTTP toolkit. It performs web application discovery,
 technology detection, certificate analysis, and screenshot capture for web assets.
 
+The module uses the centralized get_urls() method for consistent URL extraction
+across the framework, grouping URLs by port for efficient parallel processing.
+
 The module implements both scanning and data import functionality through Luigi tasks,
 supporting parallel HTTP probing and comprehensive web asset enumeration.
 
@@ -152,8 +155,9 @@ class HttpXScan(luigi.Task):
     across hosts, domains, and ports.
 
     The scan process includes:
-    - Target URL construction from hosts, domains, and ports
-    - Port-based scan optimization when masscan results are available
+    - URL extraction using scan_data.get_urls() when masscan results are available
+    - Port-based URL grouping for optimized parallel scanning
+    - Fallback to traditional host/domain/port enumeration when no masscan data
     - Parallel HTTPX execution for performance
     - JSON output collection for import processing
 
@@ -220,6 +224,9 @@ class HttpXScan(luigi.Task):
         if script_args:
             script_args = script_args.split(" ")
 
+        # Use get_urls() to get all URLs and group them by port for HTTPX parallel processing
+        scope_urls = scheduled_scan_obj.scan_data.get_urls()
+
         host_list = scope_obj.get_hosts(
             [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
         domain_list = scope_obj.get_domains(
@@ -235,48 +242,23 @@ class HttpXScan(luigi.Task):
                 break
 
         if mass_scan_ran:
+            # Use get_urls() for masscan optimization - group URLs by port for parallel processing
+            for url_str in scope_urls.keys():
+                # Extract port from URL for grouping
+                port_str = scan_utils.get_url_port(url_str)
+                if port_str is None:
+                    continue
 
-            # If there a domains in the scope they aren't scanned by httpx currently
+                port_str = str(port_str)
 
-            # Create scan jobs for each port and only scan the IPs mapped to that port
-            target_map = scheduled_scan_obj.scan_data.host_port_obj_map
-            for target_key in target_map:
-
-                target_obj_dict = target_map[target_key]
-                port_obj = target_obj_dict['port_obj']
-                port_str = port_obj.port
-                secure_flag = port_obj.secure
-
-                host_obj = target_obj_dict['host_obj']
-                ip_addr = host_obj.ipv4_addr
-
-                # Construct URL
-                url_str = scan_utils.construct_url(
-                    ip_addr, port_str, secure_flag)
-
-                # Add to ip set
+                # Add to port-based grouping
                 if port_str in port_target_list_map:
-                    ip_set = port_target_list_map[port_str]
+                    url_set = port_target_list_map[port_str]
                 else:
-                    ip_set = set()
-                    port_target_list_map[port_str] = ip_set
+                    url_set = set()
+                    port_target_list_map[port_str] = url_set
 
-                # Add IP to list
-                if url_str:
-                    ip_set.add(url_str)
-
-                # Get domains
-                host_id = host_obj.id
-                if host_id in scope_obj.domain_host_id_map:
-                    temp_domain_list = scope_obj.domain_host_id_map[host_id]
-                    for domain_obj in temp_domain_list:
-
-                        domain_name = domain_obj.name
-                        # ip_set.add(domain_name)
-                        url_str = scan_utils.construct_url(
-                            domain_name, port_str, secure_flag)
-                        if url_str:
-                            ip_set.add(url_str)
+                url_set.add(url_str)
 
         else:
 
@@ -303,7 +285,6 @@ class HttpXScan(luigi.Task):
             scan_port_list = scope_obj.get_port_number_list_from_scope()
             if len(scan_port_list) > 0:
 
-                url_list = scope_obj.get_scope_urls()
                 for port_str in scan_port_list:
 
                     # Add a port entry for each host
@@ -422,8 +403,7 @@ class HttpXScan(luigi.Task):
         for future in futures:
             future.result()  # This blocks until the individual task is complete
 
-        results_dict = {  # 'port_to_id_map': port_to_id_map,
-            'output_file_list': output_file_list}
+        results_dict = {'output_file_list': output_file_list}
 
         # Write output file
         with open(output_file_path, 'w') as file_fd:

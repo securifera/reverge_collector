@@ -50,10 +50,8 @@ import json
 import os
 from typing import Dict, Any, Set, Optional, List, Union
 import netaddr
-import socket
 import luigi
 import traceback
-import socket
 import random
 import hashlib
 import binascii
@@ -191,55 +189,58 @@ class Feroxbuster(data_model.WaluigiTool):
         return True
 
 
-def queue_url(url_to_id_map: Dict[str, Dict[str, Any]], domain_str: str, port_str: str,
-              secure: bool, output_dir: str, host_id: int, port_id: int) -> None:
-    """
-    Queue a URL for Feroxbuster scanning with associated metadata.
+# def queue_url(url_to_id_map: Dict[str, Dict[str, Any]], domain_str: str, port_str: str,
+#               secure: bool, output_dir: str, host_id: int, port_id: int) -> None:
+#     """
+#     Queue a URL for Feroxbuster scanning with associated metadata.
 
-    This function constructs a URL from the provided components and queues it for
-    directory scanning if it hasn't been queued already. It maintains a mapping
-    of URLs to their associated database IDs and output file paths.
+#     This function constructs a URL from the provided components and queues it for
+#     directory scanning if it hasn't been queued already. It maintains a mapping
+#     of URLs to their associated database IDs and output file paths.
 
-    Args:
-        url_to_id_map (Dict[str, Dict[str, Any]]): Mapping of URLs to their metadata
-                                                  including port_id, host_id, and output_file
-        domain_str (str): The target domain or IP address
-        port_str (str): The port number as a string
-        secure (bool): Whether to use HTTPS (True) or HTTP (False)
-        output_dir (str): Directory path where scan output files will be stored
-        host_id (int): Database identifier for the target host
-        port_id (int): Database identifier for the target port
+#     Note: This function is deprecated. Use scan_data.get_urls() instead for cleaner
+#     URL extraction that handles domains and paths automatically.
 
-    Returns:
-        None: This function modifies the url_to_id_map dictionary in-place
+#     Args:
+#         url_to_id_map (Dict[str, Dict[str, Any]]): Mapping of URLs to their metadata
+#                                                   including port_id, host_id, and output_file
+#         domain_str (str): The target domain or IP address
+#         port_str (str): The port number as a string
+#         secure (bool): Whether to use HTTPS (True) or HTTP (False)
+#         output_dir (str): Directory path where scan output files will be stored
+#         host_id (int): Database identifier for the target host
+#         port_id (int): Database identifier for the target port
 
-    Side Effects:
-        - Modifies the global url_set to track queued URLs
-        - Updates the url_to_id_map with new URL metadata
-        - Creates unique output file paths for each URL
+#     Returns:
+#         None: This function modifies the url_to_id_map dictionary in-place
 
-    Example:
-        >>> url_map = {}
-        >>> queue_url(url_map, "example.com", "80", False, "/tmp", 1, 2)
-        >>> print(url_map)
-        {'http://example.com:80': {'port_id': 2, 'host_id': 1, 'output_file': '/tmp/ferox_out_1234567'}}
+#     Side Effects:
+#         - Modifies the global url_set to track queued URLs
+#         - Updates the url_to_id_map with new URL metadata
+#         - Creates unique output file paths for each URL
 
-    Note:
-        Uses a random number generator to create unique output file names.
-        The global url_set prevents duplicate URL queuing across function calls.
-    """
+#     Example:
+#         >>> url_map = {}
+#         >>> queue_url(url_map, "example.com", "80", False, "/tmp", 1, 2)
+#         >>> print(url_map)
+#         {'http://example.com:80': {'port_id': 2, 'host_id': 1, 'output_file': '/tmp/ferox_out_1234567'}}
 
-    global url_set
-    url_str = scan_utils.construct_url(domain_str, port_str, secure)
+#     Note:
+#         Uses a random number generator to create unique output file names.
+#         The global url_set prevents duplicate URL queuing across function calls.
+#     """
 
-    if url_str and url_str not in url_set:
-        url_set.add(url_str)
-        rand_str = str(random.randint(1000000, 2000000))
+#     global url_set
+#     url_str = scan_utils.construct_url(domain_str, port_str, secure)
 
-        # Add to port id map
-        scan_output_file_path = output_dir + os.path.sep + "ferox_out_" + rand_str
-        url_to_id_map[url_str] = {
-            'port_id': port_id, 'host_id': host_id, 'output_file': scan_output_file_path}
+#     if url_str and url_str not in url_set:
+#         url_set.add(url_str)
+#         rand_str = str(random.randint(1000000, 2000000))
+
+#         # Add to port id map
+#         scan_output_file_path = output_dir + os.path.sep + "ferox_out_" + rand_str
+#         url_to_id_map[url_str] = {
+#             'port_id': port_id, 'host_id': host_id, 'output_file': scan_output_file_path}
 
 
 class FeroxScan(luigi.Task):
@@ -313,14 +314,14 @@ class FeroxScan(luigi.Task):
         Execute the Feroxbuster directory scanning operation.
 
         This method orchestrates the complete scanning workflow including:
-        - Target URL preparation and queuing
+        - Target URL extraction using scan_data.get_urls()
         - Command construction with appropriate arguments
         - Concurrent execution of multiple scan processes
         - Result collection and output file generation
 
-        The method processes all targets from the scan input, constructs appropriate
-        URLs for both IP addresses and domain names, and executes Feroxbuster scans
-        against each target concurrently.
+        The method uses the same URL extraction pattern as NucleiScan, leveraging
+        the get_urls() method to handle URL construction, domain resolution, and
+        path discovery automatically.
 
         Returns:
             None: Results are written to the output file specified by self.output()
@@ -335,16 +336,16 @@ class FeroxScan(luigi.Task):
             OSError: If output directories cannot be created or accessed
             subprocess.SubprocessError: If Feroxbuster execution fails
             json.JSONEncodeError: If results cannot be serialized to JSON
-            Exception: Various exceptions related to network resolution or file I/O
+            Exception: Various exceptions related to file I/O
 
         Example:
             >>> task = FeroxScan(scan_input=scan_obj)
             >>> task.run()  # Executes all configured scans
 
         Note:
-            This method uses concurrent execution for performance and includes
-            error handling for network resolution failures. The scan results
-            are organized by URL with associated database IDs for later import.
+            This method uses concurrent execution for performance and follows
+            the same URL extraction pattern as other web scanning tools in the
+            framework for consistency.
         """
 
         global url_set
@@ -365,51 +366,31 @@ class FeroxScan(luigi.Task):
         if scheduled_scan_obj.current_tool.wordlist_path and os.path.exists(scheduled_scan_obj.current_tool.wordlist_path):
             scan_wordlist = scheduled_scan_obj.current_tool.wordlist_path
 
-        target_map = scheduled_scan_obj.scan_data.host_port_obj_map
-        domain_host_id_map = scheduled_scan_obj.scan_data.domain_host_id_map
+        # Get all the URLs to scan using the same pattern as NucleiScan
+        endpoint_url_map = scheduled_scan_obj.scan_data.get_urls()
 
-        for target_key in target_map:
+        # Convert the endpoint URL map to the format expected by FeroxScan
+        # Skip URLs that already have specific paths (not "/") since Feroxbuster discovers paths
+        for url_str, url_metadata in endpoint_url_map.items():
+            host_id = url_metadata.get('host_id')
+            port_id = url_metadata.get('port_id')
+            path = url_metadata.get('path')
 
-            target_obj_dict = target_map[target_key]
-            port_obj = target_obj_dict['port_obj']
-            port_id = port_obj.id
-            port_str = port_obj.port
-            secure = port_obj.secure
+            # Skip entries that have non-default paths since Feroxbuster is for path discovery
+            if path is not None and path != "/":
+                continue
 
-            host_obj = target_obj_dict['host_obj']
-            ip_addr = host_obj.ipv4_addr
-            host_id = host_obj.id
+            if url_str and url_str not in url_set:
+                url_set.add(url_str)
+                rand_str = str(random.randint(1000000, 2000000))
 
-            # NEED TO REWORK THIS TO DETERMINE THIS BEST DOMAIN TO USE. SENDING FOR ALL DOMAINS IS EXCESSIVE
-            # ADD FOR IP
-            target_arr = target_key.split(":")
-            if target_arr[0] != ip_addr:
-                domain_str = target_arr[0]
-
-                # Get the IP of the TLD
-                try:
-                    socket.gethostbyname(domain_str).strip()
-                    ip_addr = domain_str
-                except Exception:
-                    logging.getLogger(__name__).error(
-                        "Exception resolving domain: %s" % domain_str)
-                    continue
-
-                queue_url(url_to_id_map, ip_addr, port_str,
-                          secure, output_dir, host_id, port_id)
-
-            else:
-                # Add for IP
-                queue_url(url_to_id_map, ip_addr, port_str,
-                          secure, output_dir, host_id, port_id)
-
-                # Add for each domain
-                if host_id in domain_host_id_map:
-                    domain_list = domain_host_id_map[host_id]
-                    for domain_obj in domain_list:
-                        domain_str = domain_obj.name
-                        queue_url(url_to_id_map, domain_str, port_str,
-                                  secure, output_dir, host_id, port_id)
+                # Add to url_to_id_map
+                scan_output_file_path = output_dir + os.path.sep + "ferox_out_" + rand_str
+                url_to_id_map[url_str] = {
+                    'port_id': port_id,
+                    'host_id': host_id,
+                    'output_file': scan_output_file_path
+                }
 
         futures = []
         for target_url in url_to_id_map:
