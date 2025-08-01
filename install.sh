@@ -51,7 +51,7 @@ if [ "$PYTHON3" = "yes" ]; then
     echo "Current Python version: 3.$PYTHON_VERSION"
 
     if [ `echo "$PYTHON_VERSION 12" | awk '{print ($1 < $2)}'` -eq 1 ]; then
-        echo "Python version is less than 3.12. Installing Python 3.13..."
+        echo "Python version is less than 3.13. Installing Python 3.13..."
         NEED_INSTALL="yes"
     fi
 fi
@@ -66,15 +66,15 @@ if [ "$NEED_INSTALL" = "yes" ]; then
     # Install Python 3.13
     install_packages python3.13 python3.13.dev python3.13-venv
 
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3
+    curl -sS https://bootstrap.pypa.io/get-pip.py | sudo python3.13
 
-    sudo python3 -m venv ~/venv
+    sudo python3.13 -m venv ~/venv
     . ~/venv/bin/activate
 
     echo "Python 3.13 installed successfully."
 else
-    install_packages python3-venv
-    sudo python3 -m venv ~/venv
+    install_packages python3.13-venv
+    sudo python3.13 -m venv ~/venv
     . ~/venv/bin/activate
 fi 
 
@@ -111,10 +111,6 @@ cp ./waluigi/scan_poller.py /opt/collector/
 install_packages libssl-dev libpcap-dev masscan autoconf build-essential
 
 # install nmap
-#cd /opt
-#sudo git clone -c http.sslVerify=false https://github.com/securifera/nmap.git
-#cd nmap && sudo ./configure --without-ncat --without-zenmap --without-nping && sudo make -j"$(nproc)" && sudo make install
-
 cd /tmp; curl -k -s https://api.github.com/repos/securifera/nmap/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf nmap*.tar.gz -C / ; sudo rm nmap*.tar.gz
 
 # Install nuclei
