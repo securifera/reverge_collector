@@ -51,7 +51,7 @@ if [ "$PYTHON3" = "yes" ]; then
     echo "Current Python version: 3.$PYTHON_VERSION"
 
     if [ `echo "$PYTHON_VERSION 12" | awk '{print ($1 < $2)}'` -eq 1 ]; then
-        echo "Python version is less than 3.13. Installing Python 3.13..."
+        echo "Python version is less than 3.12. Installing Python 3.13..."
         NEED_INSTALL="yes"
     fi
 fi
@@ -64,17 +64,17 @@ if [ "$NEED_INSTALL" = "yes" ]; then
     sudo add-apt-repository -y ppa:deadsnakes/ppa
 
     # Install Python 3.13
-    install_packages python3.13 python3.13.dev python3.13-distutils python3.13-venv
+    install_packages python3.13 python3.13.dev python3.13-venv
 
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.13
+    curl -sS https://bootstrap.pypa.io/get-pip.py | python3
 
-    python3.13 -m venv ~/venv
+    python3 -m venv ~/venv
     . ~/venv/bin/activate
 
     echo "Python 3.13 installed successfully."
 else
-    install_packages python3.13-venv
-    python3.13 -m venv ~/venv
+    install_packages python3-venv
+    python3 -m venv ~/venv
     . ~/venv/bin/activate
 fi 
 
