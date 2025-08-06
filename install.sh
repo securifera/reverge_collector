@@ -118,7 +118,7 @@ cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/nuclei/release
 sudo chmod +x /usr/local/bin/nuclei
 
 # Screenshot dependencies
-install_packages fonts-liberation libgbm1 libappindicator3-1 openssl libasound2
+install_packages fonts-liberation libgbm1 libappindicator3-1 openssl libasound2t64
 
 # Pyshot & PhantomJs
 cd /tmp
