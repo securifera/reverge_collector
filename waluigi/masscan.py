@@ -489,7 +489,17 @@ class MasscanScan(luigi.Task):
                 pid_callback=callback_with_tool_id)
 
             # Wait for the scanning process to complete
-            future.result()
+            ret_dict = future.result()
+            if ret_dict and 'exit_code' in ret_dict:
+                exit_code = ret_dict['exit_code']
+                if exit_code != 0:
+                    err_msg = ''
+                    if 'stderr' in ret_dict and ret_dict['stderr']:
+                        err_msg = ret_dict['stderr']
+                    logging.getLogger(__name__).error(
+                        "Masscan scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+                    raise RuntimeError("Masscan scan for scan ID %s exited with code %d: %s" % (
+                        scheduled_scan_obj.id, exit_code, err_msg))
 
         else:
             # Handle case where no targets are available for scanning

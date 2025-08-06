@@ -496,7 +496,17 @@ class NmapScan(luigi.Task):
 
         # Wait for all scans to complete
         for future in futures:
-            future.result()
+            ret_dict = future.result()
+            if ret_dict and 'exit_code' in ret_dict:
+                exit_code = ret_dict['exit_code']
+                if exit_code != 0:
+                    err_msg = ''
+                    if 'stderr' in ret_dict and ret_dict['stderr']:
+                        err_msg = ret_dict['stderr']
+                    logging.getLogger(__name__).error(
+                        "Nmap scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+                    raise RuntimeError("Nmap scan for scan ID %s exited with code %d: %s" % (
+                        scheduled_scan_obj.id, exit_code, err_msg))
 
         # Store scan metadata
         nmap_scan_data['nmap_scan_list'] = nmap_scan_cmd_list

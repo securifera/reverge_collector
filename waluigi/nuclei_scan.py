@@ -305,7 +305,17 @@ class NucleiScan(luigi.Task):
                 process_wrapper, cmd_args=command, use_shell=use_shell, my_env=my_env, pid_callback=callback_with_tool_id, store_output=True)
 
             # Wait for scan completion
-            future_inst.result()
+            ret_dict = future_inst.result()
+            if ret_dict and 'exit_code' in ret_dict:
+                exit_code = ret_dict['exit_code']
+                if exit_code != 0:
+                    err_msg = ''
+                    if 'stderr' in ret_dict and ret_dict['stderr']:
+                        err_msg = ret_dict['stderr']
+                    logging.getLogger(__name__).error(
+                        "Nuclei scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+                    raise RuntimeError("Nuclei scan for scan ID %s exited with code %d: %s" % (
+                        scheduled_scan_obj.id, exit_code, err_msg))
 
         # Prepare results dictionary
         results_dict: Dict[str, Any] = {

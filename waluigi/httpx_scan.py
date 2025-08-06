@@ -401,7 +401,17 @@ class HttpXScan(luigi.Task):
 
         # Wait for the tasks to complete and retrieve results
         for future in futures:
-            future.result()  # This blocks until the individual task is complete
+            ret_dict = future.result()  # This blocks until the individual task is complete
+            if ret_dict and 'exit_code' in ret_dict:
+                exit_code = ret_dict['exit_code']
+                if exit_code != 0:
+                    err_msg = ''
+                    if 'stderr' in ret_dict and ret_dict['stderr']:
+                        err_msg = ret_dict['stderr']
+                    logging.getLogger(__name__).error(
+                        "Nuclei scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+                    raise RuntimeError("Nuclei scan for scan ID %s exited with code %d: %s" % (
+                        scheduled_scan_obj.id, exit_code, err_msg))
 
         results_dict = {'output_file_list': output_file_list}
 

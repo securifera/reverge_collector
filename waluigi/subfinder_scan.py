@@ -181,8 +181,19 @@ def subfinder_wrapper(scheduled_scan_obj: Any, scan_output_file_path: str,
     callback_with_tool_id = partial(
         scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
 
-    process_wrapper(
+    ret_dict = process_wrapper(
         command, use_shell, my_env, callback_with_tool_id)
+
+    if ret_dict and 'exit_code' in ret_dict:
+        exit_code = ret_dict['exit_code']
+        if exit_code != 0:
+            err_msg = ''
+            if 'stderr' in ret_dict and ret_dict['stderr']:
+                err_msg = ret_dict['stderr']
+            logging.getLogger(__name__).error(
+                "Subfinder scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+            raise RuntimeError("Subfinder scan for scan ID %s exited with code %d: %s" % (
+                scheduled_scan_obj.id, exit_code, err_msg))
 
     # Parse the output
     obj_arr = scan_utils.parse_json_blob_file(scan_output_file_path)

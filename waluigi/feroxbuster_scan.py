@@ -401,6 +401,8 @@ class FeroxScan(luigi.Task):
                         err_msg = ret_dict['stderr']
                     logging.getLogger(__name__).error(
                         "Feroxbuster scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+                    raise RuntimeError("Feroxbuster scan for scan ID %s exited with code %d: %s" % (
+                        scheduled_scan_obj.id, exit_code, err_msg))
 
 
 @inherits(FeroxScan)
