@@ -189,60 +189,6 @@ class Feroxbuster(data_model.WaluigiTool):
         return True
 
 
-# def queue_url(url_to_id_map: Dict[str, Dict[str, Any]], domain_str: str, port_str: str,
-#               secure: bool, output_dir: str, host_id: int, port_id: int) -> None:
-#     """
-#     Queue a URL for Feroxbuster scanning with associated metadata.
-
-#     This function constructs a URL from the provided components and queues it for
-#     directory scanning if it hasn't been queued already. It maintains a mapping
-#     of URLs to their associated database IDs and output file paths.
-
-#     Note: This function is deprecated. Use scan_data.get_urls() instead for cleaner
-#     URL extraction that handles domains and paths automatically.
-
-#     Args:
-#         url_to_id_map (Dict[str, Dict[str, Any]]): Mapping of URLs to their metadata
-#                                                   including port_id, host_id, and output_file
-#         domain_str (str): The target domain or IP address
-#         port_str (str): The port number as a string
-#         secure (bool): Whether to use HTTPS (True) or HTTP (False)
-#         output_dir (str): Directory path where scan output files will be stored
-#         host_id (int): Database identifier for the target host
-#         port_id (int): Database identifier for the target port
-
-#     Returns:
-#         None: This function modifies the url_to_id_map dictionary in-place
-
-#     Side Effects:
-#         - Modifies the global url_set to track queued URLs
-#         - Updates the url_to_id_map with new URL metadata
-#         - Creates unique output file paths for each URL
-
-#     Example:
-#         >>> url_map = {}
-#         >>> queue_url(url_map, "example.com", "80", False, "/tmp", 1, 2)
-#         >>> print(url_map)
-#         {'http://example.com:80': {'port_id': 2, 'host_id': 1, 'output_file': '/tmp/ferox_out_1234567'}}
-
-#     Note:
-#         Uses a random number generator to create unique output file names.
-#         The global url_set prevents duplicate URL queuing across function calls.
-#     """
-
-#     global url_set
-#     url_str = scan_utils.construct_url(domain_str, port_str, secure)
-
-#     if url_str and url_str not in url_set:
-#         url_set.add(url_str)
-#         rand_str = str(random.randint(1000000, 2000000))
-
-#         # Add to port id map
-#         scan_output_file_path = output_dir + os.path.sep + "ferox_out_" + rand_str
-#         url_to_id_map[url_str] = {
-#             'port_id': port_id, 'host_id': host_id, 'output_file': scan_output_file_path}
-
-
 class FeroxScan(luigi.Task):
     """
     Luigi task for executing Feroxbuster directory scanning operations.
@@ -438,15 +384,23 @@ class FeroxScan(luigi.Task):
         scheduled_scan_obj.register_tool_executor(
             scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
-        # Wait for the tasks to complete and retrieve results
-        for future in futures:
-            future.result()
-
         results_dict = {'url_to_id_map': url_to_id_map}
 
         # Write output file
         with open(output_file_path, 'w') as file_fd:
             file_fd.write(json.dumps(results_dict))
+
+        # Wait for the tasks to complete and retrieve results
+        for future in futures:
+            ret_dict = future.result()
+            if ret_dict and 'exit_code' in ret_dict:
+                exit_code = ret_dict['exit_code']
+                if exit_code != 0:
+                    err_msg = ''
+                    if 'stderr' in ret_dict and ret_dict['stderr']:
+                        err_msg = ret_dict['stderr']
+                    logging.getLogger(__name__).error(
+                        "Feroxbuster scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
 
 
 @inherits(FeroxScan)

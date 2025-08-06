@@ -143,11 +143,11 @@ def process_wrapper(cmd_args: List[str], use_shell: bool = False,
     if store_output:
         stdout_reader = ProcessStreamReader(
             ProcessStreamReader.StreamType.STDOUT, p.stdout, print_output, store_output)
-        stderr_reader = ProcessStreamReader(
-            ProcessStreamReader.StreamType.STDERR, p.stderr, print_output, store_output)
-
         stdout_reader.start()
-        stderr_reader.start()
+
+    stderr_reader = ProcessStreamReader(
+        ProcessStreamReader.StreamType.STDERR, p.stderr, print_output, store_output)
+    stderr_reader.start()
 
     # Wait for process completion
     exit_code = p.wait()
@@ -158,6 +158,6 @@ def process_wrapper(cmd_args: List[str], use_shell: bool = False,
     # Collect output if requested
     if store_output:
         ret_data["stdout"] = stdout_reader.get_output()
-        ret_data["stderr"] = stderr_reader.get_output()
 
+    ret_data["stderr"] = stderr_reader.get_output()
     return ret_data
