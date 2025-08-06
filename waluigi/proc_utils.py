@@ -130,7 +130,7 @@ def process_wrapper(cmd_args: List[str], use_shell: bool = False,
 
     # Start the process
     p = subprocess.Popen(cmd_args, shell=use_shell, stdin=subprocess.PIPE,
-                         stdout=pipe_type, stderr=pipe_type, env=my_env)
+                         stdout=pipe_type, stderr=subprocess.PIPE, env=my_env)
 
     # Provide process ID to callback if specified
     if pid_callback:
@@ -146,7 +146,7 @@ def process_wrapper(cmd_args: List[str], use_shell: bool = False,
         stdout_reader.start()
 
     stderr_reader = ProcessStreamReader(
-        ProcessStreamReader.StreamType.STDERR, p.stderr, print_output, store_output)
+        ProcessStreamReader.StreamType.STDERR, p.stderr, print_output, True)
     stderr_reader.start()
 
     # Wait for process completion
