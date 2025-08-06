@@ -73,8 +73,8 @@ if [ "$NEED_INSTALL" = "yes" ]; then
 
     echo "Python 3.13 installed successfully."
 else
-    install_packages python3.13-venv
-    sudo python3.13 -m venv ~/venv
+    install_packages python3-venv
+    sudo python3 -m venv ~/venv
     . ~/venv/bin/activate
 fi 
 
