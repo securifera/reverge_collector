@@ -122,7 +122,7 @@ class Feroxbuster(data_model.WaluigiTool):
         self.project_url = "https://github.com/epi052/feroxbuster"
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 10
-        self.args = "--rate-limit 50 -s 200 -n"
+        self.args = "--rate-limit 50 -s 200 -n --auto-bail"
         self.scan_func = Feroxbuster.feroxbuster_scan_func
         self.import_func = Feroxbuster.feroxbuster_import
 
@@ -356,7 +356,7 @@ class FeroxScan(luigi.Task):
                 "-A",  # Random User Agent
                 # "--thorough", # Collects words, extensions, and links in content
                 # "--auto-tune", # Resets speed based on errors
-                "--auto-bail",  # Quits after too many errors
+                # "--auto-bail",  # Quits after too many errors
                 "-u",
                 target_url,
                 "-o",
