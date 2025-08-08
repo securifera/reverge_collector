@@ -101,7 +101,7 @@ echo "no_install_shutdown_handler=True" | sudo tee -a /opt/collector/luigi.cfg
 # Build and install waluigi
 poetry build
 python3 -m pip install dist/waluigi*.whl
-cp ./waluigi/scan_poller.py /opt/collector/
+sudo cp ./waluigi/scan_poller.py /opt/collector/
 
 ###############
 # scanner stuff
