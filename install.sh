@@ -90,8 +90,8 @@ install_packages python3-pip
 pip3 config set global.trusted-host "pypi.org files.pythonhosted.org pypi.python.org" --trusted-host=pypi.python.org --trusted-host=pypi.org --trusted-host=files.pythonhosted.org
 
 # install luigi/waluigi
-python3 -m pip install luigi setuptools build poetry
-python3 -m pip install --upgrade requests
+sudo python3 -m pip install luigi setuptools build poetry
+sudo python3 -m pip install --upgrade requests
 
 # Create luigi config file
 sudo mkdir /opt/collector
@@ -99,8 +99,8 @@ echo "[worker]" | sudo tee /opt/collector/luigi.cfg
 echo "no_install_shutdown_handler=True" | sudo tee -a /opt/collector/luigi.cfg
 
 # Build and install waluigi
-poetry build
-python3 -m pip install dist/waluigi*.whl
+sudo poetry build
+sudo python3 -m pip install dist/waluigi*.whl
 cp ./waluigi/scan_poller.py /opt/collector/
 
 ###############
@@ -126,8 +126,8 @@ git clone -c http.sslVerify=false https://github.com/securifera/pyshot.git
 cd pyshot 
 tar -C /tmp -xvf phantomjs-2.1.1-linux-x86_64.tar.gz
 sudo mv /tmp/phantomjs /usr/bin
-python3 -m build
-python3 -m pip install dist/pyshot*.whl
+sudo python3 -m build
+sudo python3 -m pip install dist/pyshot*.whl
 
 # Install HTTPX
 cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/httpx/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o httpx*.zip; sudo mv httpx /usr/local/bin/ ; sudo rm httpx*.zip
@@ -149,7 +149,7 @@ cd /tmp; curl -k -s https://api.github.com/repos/epi052/feroxbuster/releases/lat
 sudo chmod +x /usr/local/bin/feroxbuster
 
 # Badsecrets
-python3 -m pip install badsecrets
+sudo python3 -m pip install badsecrets
 
 # Install Google Chrome
 wget -O /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
@@ -160,8 +160,8 @@ rm -f /tmp/google-chrome-stable_current_amd64.deb
 cd /tmp
 git clone -c http.sslVerify=false https://github.com/securifera/webcap.git
 cd webcap 
-python3 -m build
-python3 -m pip install dist/webcap*.whl
+sudo python3 -m build
+sudo python3 -m pip install dist/webcap*.whl
 
 # Clean seclists in the background
 sudo git clone -c http.sslVerify=false https://github.com/danielmiessler/SecLists.git /usr/share/seclists &
