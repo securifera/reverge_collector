@@ -121,6 +121,8 @@ class Sectrails(data_model.WaluigiTool):
         self.scan_order = 5
         self.args = ""
         self.import_func = Sectrails.import_sectrailsiplookup
+        self.input_records = [data_model.ServerRecordType.HOST]
+        self.output_records = [data_model.ServerRecordType.DOMAIN]
 
     @staticmethod
     def import_sectrailsiplookup(scan_input: data_model.ScheduledScan) -> bool:
@@ -348,6 +350,7 @@ class SecTrailsIPLookupScan(luigi.Task):
         api_key = scheduled_scan_obj.current_tool.api_key
 
         if api_key and len(api_key) > 0:
+
             # Process target hosts from scan input
             target_map = scheduled_scan_obj.scan_data.host_port_obj_map
             if len(target_map) == 0:
@@ -385,6 +388,8 @@ class SecTrailsIPLookupScan(luigi.Task):
                 host_dict['domains'] = ret_dict['domains']
         else:
             logging.getLogger(__name__).error("No api key in scan input")
+            raise Exception(
+                "[-] No API key configured for SecurityTrails lookup.")
 
         # Prepare results dictionary for output
         results_dict = {'ip_to_host_dict_map': ip_to_host_dict_map}

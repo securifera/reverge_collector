@@ -98,6 +98,10 @@ class Masscan(data_model.WaluigiTool):
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 2
         self.args = "--rate 1000"
+        self.input_records = [
+            data_model.ServerRecordType.SUBNET, data_model.ServerRecordType.HOST]
+        self.output_records = [
+            data_model.ServerRecordType.HOST, data_model.ServerRecordType.PORT]
         self.scan_func = Masscan.scan
         self.import_func = Masscan.import_scan
 

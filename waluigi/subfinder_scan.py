@@ -89,6 +89,9 @@ class Subfinder(data_model.WaluigiTool):
         self.collector_type = data_model.CollectorType.PASSIVE.value
         self.scan_order = 1
         self.args = "-all"
+        self.input_records = [data_model.ServerRecordType.DOMAIN]
+        self.output_records = [
+            data_model.ServerRecordType.HOST, data_model.ServerRecordType.DOMAIN]
         self.scan_func = Subfinder.subfinder_lookup
         self.import_func = Subfinder.subfinder_import
 

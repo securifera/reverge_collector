@@ -114,6 +114,10 @@ class Module(data_model.WaluigiTool):
         self.args = ""
         self.scan_func = Module.module_scan_func
         self.import_func = Module.module_import
+        self.input_records = [
+            data_model.ServerRecordType.HOST, data_model.ServerRecordType.PORT, data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+        self.output_records = [data_model.ServerRecordType.COLLECTION_MODULE,
+                               data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT]
 
     @staticmethod
     def module_scan_func(scheduled_scan_obj: ScheduledScan) -> bool:

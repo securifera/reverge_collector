@@ -135,6 +135,14 @@ class Webcap(data_model.WaluigiTool):
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 8
         self.args = "--timeout 5 --threads 5 --quality 20 --format jpeg"
+        self.input_records = [data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+        self.output_records = [
+            data_model.ServerRecordType.SCREENSHOT,
+            data_model.ServerRecordType.DOMAIN,
+            data_model.ServerRecordType.LIST_ITEM,
+            data_model.ServerRecordType.HTTP_ENDPOINT,
+            data_model.ServerRecordType.HTTP_ENDPOINT_DATA
+        ]
         self.scan_func = Webcap.webcap_scan_func
         self.import_func = Webcap.webcap_import
 

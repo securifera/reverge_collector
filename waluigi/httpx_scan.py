@@ -84,6 +84,25 @@ class Httpx(data_model.WaluigiTool):
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 4
         self.args: str = "-favicon -td -t 50 -timeout 3 -maxhr 5 -rstr 10000 -tls-grab"
+        self.input_records = [
+            data_model.ServerRecordType.HOST,
+            data_model.ServerRecordType.PORT,
+            data_model.ServerRecordType.DOMAIN,
+            data_model.ServerRecordType.HTTP_ENDPOINT_DATA
+        ]
+        self.output_records = [
+            data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+            data_model.ServerRecordType.HTTP_ENDPOINT,
+            data_model.ServerRecordType.COLLECTION_MODULE,
+            data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
+            data_model.ServerRecordType.WEB_COMPONENT,
+            data_model.ServerRecordType.DOMAIN,
+            data_model.ServerRecordType.CERTIFICATE,
+            data_model.ServerRecordType.SCREENSHOT,
+            data_model.ServerRecordType.LIST_ITEM,
+            data_model.ServerRecordType.PORT,
+            data_model.ServerRecordType.HOST
+        ]
         self.scan_func = Httpx.httpx_scan_func
         self.import_func = Httpx.httpx_import
 
