@@ -86,6 +86,18 @@ class Nmap(data_model.WaluigiTool):
         self.args: str = "-sV --script +ssl-cert --script-args ssl=True"
         self.scan_func = Nmap.nmap_scan_func
         self.import_func = Nmap.nmap_import
+        self.input_records = [
+            data_model.ServerRecordType.SUBNET, data_model.ServerRecordType.HOST, data_model.ServerRecordType.PORT]
+        self.output_records = [
+            data_model.ServerRecordType.COLLECTION_MODULE,
+            data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
+            data_model.ServerRecordType.WEB_COMPONENT,
+            data_model.ServerRecordType.DOMAIN,
+            data_model.ServerRecordType.CERTIFICATE,
+            data_model.ServerRecordType.LIST_ITEM,
+            data_model.ServerRecordType.PORT,
+            data_model.ServerRecordType.HOST
+        ]
 
     @staticmethod
     def nmap_scan_func(scan_input: data_model.ScheduledScan) -> bool:
