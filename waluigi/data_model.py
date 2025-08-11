@@ -706,6 +706,50 @@ class RecordTag(enum.Enum):
             return None
 
 
+class ServerRecordType(enum.Enum):
+    """
+    Enumeration of data record types for tool input/output validation.
+
+    This enum defines the types of data records that tools can consume as inputs
+    or produce as outputs, enabling validation of tool requirements against
+    available scan data.
+
+    Values:
+        HOST: Host/IP address information
+        PORT: Port and service information
+        DOMAIN: Domain name information
+        HTTP_ENDPOINT: HTTP endpoint information
+        URL: URL information for web targets
+        VULNERABILITY: Vulnerability and security finding data
+        SCREENSHOT: Screenshot and visual data
+        CERTIFICATE: SSL/TLS certificate information
+        WEB_COMPONENT: Web technology stack information
+        SUBNET: Network subnet information
+
+    Example:
+        >>> input_types = [ServerRecordType.HOST, ServerRecordType.PORT]
+        >>> ServerRecordType.validate_type('HOST')
+        True
+    """
+    HOST = "Host"
+    PORT = "Port"
+    DOMAIN = "Domain"
+    HTTP_ENDPOINT = "HttpEndpoint"
+    HTTP_ENDPOINT_DATA = "HttpEndpointData"
+    VULNERABILITY = "Vuln"
+    COLLECTION_MODULE = "CollectionModule"
+    COLLECTION_MODULE_OUTPUT = "CollectionModuleOutput"
+    SCREENSHOT = "Screenshot"
+    CERTIFICATE = "Certificate"
+    LIST_ITEM = "ListItem"
+    WEB_COMPONENT = "WebComponent"
+    SUBNET = "Subnet"
+
+    def __str__(self) -> str:
+        """Return string representation of the record type."""
+        return self.value
+
+
 class WaluigiTool:
     """
     Base class representing a security scanning tool within the Waluigi framework.
@@ -720,6 +764,8 @@ class WaluigiTool:
         args (str): Command-line arguments or configuration parameters
         description (str): Detailed description of the tool's purpose and functionality
         project_url (str): URL to the tool's project page or documentation
+        input_records (List[RecordType]): List of data types this tool can consume as input
+        output_records (List[RecordType]): List of data types this tool produces as output
         scope_func (callable): Function to determine if tool should run on given scope
         scan_func (callable): Main scanning function that executes the tool
         import_func (callable): Function to import and process tool results
@@ -728,6 +774,8 @@ class WaluigiTool:
         >>> tool = WaluigiTool()
         >>> tool.name = "Nmap"
         >>> tool.collector_type = CollectorType.ACTIVE
+        >>> tool.input_records = [RecordType.HOST]
+        >>> tool.output_records = [RecordType.PORT]
         >>> tool_data = tool.to_jsonable()
     """
 
@@ -744,6 +792,8 @@ class WaluigiTool:
         self.args: Optional[str] = None
         self.description: Optional[str] = None
         self.project_url: Optional[str] = None
+        self.input_records: List[ServerRecordType] = []
+        self.output_records: List[ServerRecordType] = []
         self.scope_func: Optional[callable] = None
         self.scan_func: Optional[callable] = None
         self.import_func: Optional[callable] = None
@@ -772,6 +822,10 @@ class WaluigiTool:
         ret_dict['args'] = self.args
         ret_dict['description'] = self.description
         ret_dict['project_url'] = self.project_url
+        ret_dict['input_records'] = [
+            input_type.value for input_type in self.input_records]
+        ret_dict['output_records'] = [
+            output_type.value for output_type in self.output_records]
         return ret_dict
 
 

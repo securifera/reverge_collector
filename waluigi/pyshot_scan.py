@@ -127,6 +127,14 @@ class Pyshot(data_model.WaluigiTool):
         self.args = ""
         self.scan_func = Pyshot.pyshot_scan_func
         self.import_func = Pyshot.pyshot_import
+        self.input_records = [data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+        self.output_records = [
+            data_model.ServerRecordType.SCREENSHOT,
+            data_model.ServerRecordType.DOMAIN,
+            data_model.ServerRecordType.LIST_ITEM,
+            data_model.ServerRecordType.HTTP_ENDPOINT,
+            data_model.ServerRecordType.HTTP_ENDPOINT_DATA
+        ]
 
     @staticmethod
     def pyshot_scan_func(scan_input: Any) -> bool:

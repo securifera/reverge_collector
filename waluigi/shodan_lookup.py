@@ -98,6 +98,17 @@ class Shodan(data_model.WaluigiTool):
         self.scan_order = 3
         self.args = ""
         self.import_func = Shodan.import_shodan
+        self.input_records = [data_model.ServerRecordType.HOST]
+        self.output_records = [
+            data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+            data_model.ServerRecordType.HTTP_ENDPOINT,
+            data_model.ServerRecordType.LIST_ITEM,
+            data_model.ServerRecordType.DOMAIN,
+            data_model.ServerRecordType.CERTIFICATE,
+            data_model.ServerRecordType.WEB_COMPONENT,
+            data_model.ServerRecordType.PORT,
+            data_model.ServerRecordType.HOST
+        ]
 
     @staticmethod
     def import_shodan(scan_input: Any) -> bool:
@@ -600,26 +611,7 @@ class ShodanScan(luigi.Task):
             result = shodan_wrapper(shodan_key, '8.8.8.8', 32)
             if result is not None:
 
-                # futures = []
-                # domain_set = set()
-                # domains = input_data['domain_list']
-                # for domain in domains:
-
-                #     # Ensure no duplicates
-                #     if domain not in domain_set:
-                #         futures.append(scan_utils.executor.submit(
-                #             shodan_wrapper, shodan_key=shodan_key, domain=domain))
-                #         domain_set.add(domain)
-
-                # dns_ip_arr = set()
-                # for future in futures:
-                #     result = future.result()
-                #     dns_ip_arr.update(result)
-
                 ip_subnets = input_data['host_list']
-
-                # # Add the DNS IPs to the list
-                # ip_subnets.extend(dns_ip_arr)
 
                 # Attempt to consolidate subnets to reduce the number of shodan calls
                 logging.getLogger(__name__).debug(
