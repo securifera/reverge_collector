@@ -184,7 +184,7 @@ def subfinder_wrapper(scheduled_scan_obj: Any, scan_output_file_path: str,
         scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
 
     ret_dict = process_wrapper(
-        cmd_args=command, use_shell=use_shell, my_env=my_env, callback_with_tool_id=callback_with_tool_id)
+        cmd_args=command, use_shell=use_shell, my_env=my_env, pid_callback=callback_with_tool_id)
 
     if ret_dict and 'exit_code' in ret_dict:
         exit_code = ret_dict['exit_code']
