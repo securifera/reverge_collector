@@ -118,7 +118,7 @@ cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/nuclei/release
 sudo chmod +x /usr/local/bin/nuclei
 
 # Install gau
-cd /tmp; curl -k -s https://api.github.com/repos/lc/gau/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf gau*.tar.gz -C / ; sudo rm gau*.tar.gz
+cd /tmp; curl -k -s https://api.github.com/repos/lc/gau/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf gau*.tar.gz ; sudo mv gau /usr/local/bin/ ; sudo rm gau*.tar.gz
 sudo chmod +x /usr/local/bin/gau
 
 # Screenshot dependencies
