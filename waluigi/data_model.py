@@ -47,7 +47,8 @@ waluigi_tools: List[Tuple[str, str]] = [
     ('waluigi.sectrails_ip_lookup', 'Sectrails'),
     ('waluigi.module_scan', 'Module'),       # Custom module execution
     ('waluigi.badsecrets_scan', 'Badsecrets'),  # Secret detection
-    ('waluigi.webcap_scan', 'Webcap')        # Web capture and analysis
+    ('waluigi.webcap_scan', 'Webcap'),        # Web capture and analysis
+    ('waluigi.gau_scan', 'Gau'),        # Web capture and analysis
     # ('waluigi.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
 ]
 
@@ -1100,14 +1101,24 @@ class ScanData:
             >>> scope_domains = scan_data.get_domains([RecordTag.SCOPE.value])
         """
         domain_name_list: List['Domain'] = []
+        seen_domain_names: Set[str] = set()
         domain_map = self.domain_map
+        
         for domain_id in domain_map:
             domain_obj = domain_map[domain_id]
+            
+            # Check if domain name has already been seen
+            if domain_obj.name in seen_domain_names:
+                continue
+                
+            # Apply tag filtering if specified
             if tag_list:
-                if domain_obj.tags.intersection(set(tag_list)) and domain_obj.name not in [d.name for d in domain_name_list]:
+                if domain_obj.tags.intersection(set(tag_list)):
                     domain_name_list.append(domain_obj)
-            elif domain_obj.name not in [d.name for d in domain_name_list]:
+                    seen_domain_names.add(domain_obj.name)
+            else:
                 domain_name_list.append(domain_obj)
+                seen_domain_names.add(domain_obj.name)
 
         return domain_name_list
 

@@ -397,8 +397,8 @@ class BadSecretsScan(luigi.Task):
         dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
 
         # path to input file
-        http_outputs_file = dir_path + os.path.sep + "badsecrets_outputs_" + scan_id
-        return luigi.LocalTarget(http_outputs_file)
+        scan_outputs_file = f"{dir_path}{os.path.sep}badsecrets_outputs_{scan_id}.json"
+        return luigi.LocalTarget(scan_outputs_file)
 
     def run(self) -> None:
         """
