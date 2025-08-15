@@ -27,7 +27,8 @@ class Gau(data_model.WaluigiTool):
         self.project_url = 'https://github.com/lc/gau'
         self.collector_type = data_model.CollectorType.PASSIVE.value
         self.scan_order = 1
-        self.args = "--blacklist .png,.jpg,.gif,.ttf,.woff,.svg --retries 3 --timeout 5 --subs"
+        # self.args = "--blacklist .png,.jpg,.gif,.ttf,.woff,.svg --retries 3 --timeout 5 --subs"
+        self.args = "--retries 3 --timeout 5 --subs"
         self.input_records = [data_model.ServerRecordType.DOMAIN]
         self.output_records = [
             data_model.ServerRecordType.DOMAIN,
