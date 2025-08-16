@@ -60,7 +60,7 @@ def test_subfinder_scan_success(recon_manager):
         input_conf = "%s/subfinder-inputs/dns_urls_%s" % (
             output_dir, scheduled_scan_id)
         assert os.path.exists(input_conf) == True
-        output_file = "%s/subfinder-outputs/subfinder_outputs_%s" % (
+        output_file = "%s/subfinder-outputs/subfinder_outputs_%s.json" % (
             output_dir, scheduled_scan_id)
         assert os.path.exists(output_file) == True
 

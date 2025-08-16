@@ -98,6 +98,7 @@ class ProcessStreamReader(Thread):
 
 def process_wrapper(cmd_args: List[str], use_shell: bool = False,
                     my_env: Optional[Dict[str, str]] = None,
+                    stdin_data: Optional[str] = None,
                     print_output: bool = False, store_output: bool = False,
                     pid_callback: Optional[Callable] = None) -> Dict[str, Any]:
     """
@@ -137,6 +138,9 @@ def process_wrapper(cmd_args: List[str], use_shell: bool = False,
         scan_proc_inst = ToolExecutor(proc_pids=set([p.pid]))
         pid_callback(scan_proc_inst)
 
+    # If stdin then send it
+    if stdin_data:
+        p.stdin.write(stdin_data.encode())
     p.stdin.close()
 
     # Set up stream readers for output capture

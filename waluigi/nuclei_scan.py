@@ -16,8 +16,6 @@ Classes:
     NucleiScan: Luigi task for executing Nuclei vulnerability scans
     ImportNucleiOutput: Luigi task for processing and importing Nuclei scan results
 
-Author: Waluigi Security Framework
-License: Internal Use
 """
 
 from functools import partial

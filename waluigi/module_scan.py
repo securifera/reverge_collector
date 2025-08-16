@@ -38,8 +38,6 @@ Note:
     collection_module_map. It dynamically executes Nmap and Nuclei modules
     based on the configured mappings and parameters.
 
-.. moduleauthor:: Waluigi Framework Team
-.. version:: 1.0.0
 """
 
 from waluigi import data_model

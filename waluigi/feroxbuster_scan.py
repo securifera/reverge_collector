@@ -41,8 +41,6 @@ Note:
     The tool performs active scanning and should be used responsibly with proper
     authorization on target systems.
 
-.. moduleauthor:: Waluigi Framework Team
-.. version:: 1.0.0
 """
 
 from functools import partial
@@ -522,6 +520,7 @@ class ImportFeroxOutput(data_model.ImportToolXOutput):
                 obj_data = url_to_id_map[url_str]
                 output_file = obj_data['output_file']
                 port_id = obj_data['port_id']
+                host_id = obj_data['host_id']
 
                 obj_arr = scan_utils.parse_json_blob_file(output_file)
                 for web_result in obj_arr:
@@ -564,7 +563,8 @@ class ImportFeroxOutput(data_model.ImportToolXOutput):
                                         if domain_str in domain_name_id_map:
                                             endpoint_domain_id = domain_name_id_map[domain_str]
                                         else:
-                                            domain_obj = data_model.Domain()
+                                            domain_obj = data_model.Domain(
+                                                parent_id=host_id)
                                             domain_obj.collection_tool_instance_id = tool_instance_id
                                             domain_obj.name = domain_str
 
