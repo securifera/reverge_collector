@@ -17,8 +17,6 @@ Classes:
 Functions:
     remove_dups_from_dict: Utility function to remove duplicate script results
 
-Author: Waluigi Security Framework  
-License: Internal Use
 """
 
 from functools import partial

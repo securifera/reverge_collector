@@ -48,8 +48,6 @@ Note:
     authorization on target systems. Webcap provides superior performance and
     quality compared to PhantomJS-based solutions.
 
-.. moduleauthor:: Waluigi Framework Team
-.. version:: 1.0.0
 """
 
 import json

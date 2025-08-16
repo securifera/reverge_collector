@@ -51,8 +51,6 @@ Note:
     The tool can identify various types of weak secrets including JWT keys,
     API tokens, and framework-specific cryptographic vulnerabilities.
 
-.. moduleauthor:: Waluigi Framework Team
-.. version:: 1.0.0
 """
 
 import binascii

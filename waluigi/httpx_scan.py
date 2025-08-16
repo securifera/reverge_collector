@@ -16,8 +16,6 @@ Classes:
     HttpXScan: Luigi task for executing HTTPX web scans
     ImportHttpXOutput: Luigi task for processing and importing HTTPX scan results
 
-Author: Waluigi Security Framework
-License: Internal Use
 """
 
 from datetime import datetime

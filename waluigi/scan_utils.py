@@ -56,8 +56,6 @@ Note:
     The global executor instance is shared across the framework for efficient
     resource management.
 
-.. moduleauthor:: Waluigi Framework Team
-.. version:: 1.0.0
 """
 
 from functools import wraps

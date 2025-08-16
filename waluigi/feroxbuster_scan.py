@@ -41,8 +41,6 @@ Note:
     The tool performs active scanning and should be used responsibly with proper
     authorization on target systems.
 
-.. moduleauthor:: Waluigi Framework Team
-.. version:: 1.0.0
 """
 
 from functools import partial

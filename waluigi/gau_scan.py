@@ -1,3 +1,52 @@
+"""
+Gau (getallurls) Passive URL Enumeration Module for the Waluigi Framework.
+
+This module provides passive URL enumeration capabilities using Gau (getallurls),
+a tool that fetches known URLs from sources such as AlienVault's Open Threat Exchange,
+the Wayback Machine, Common Crawl, and URLScan for any given domain. Gau is inspired
+by Tomnomnom's waybackurls and is designed for large-scale web asset discovery.
+
+The module integrates with the Waluigi framework to automate the collection of historical
+and public URLs for scoped domains, supporting both scanning and import workflows.
+
+Features:
+    - Passive enumeration of URLs for scoped domains
+    - Integration with multiple public data sources
+    - Efficient batch processing of domain lists
+    - Structured output for downstream analysis and import
+    - Luigi-based workflow orchestration
+
+Classes:
+    Gau: Main tool class implementing the passive URL enumeration interface
+    GauScan: Luigi task for executing Gau scans
+    GauImport: Luigi task for importing and processing Gau scan results
+
+Functions:
+    None (all logic is encapsulated in classes)
+
+Global Variables:
+    None (all state is managed within Luigi tasks and tool classes)
+
+Example:
+    Basic usage through the Waluigi framework::
+        
+        # Initialize the tool
+        gau = Gau()
+        
+        # Execute passive URL enumeration
+        success = gau.scan_func(scan_input_obj)
+        
+        # Import results
+        imported = gau.import_func(scan_input_obj)
+
+Note:
+    This module performs passive enumeration only and does not actively probe targets.
+    It should be used to supplement active scanning workflows with historical and public
+    URL data for comprehensive web asset coverage.
+    Gau requires internet access to query public data sources and may be subject to
+    rate limits or API restrictions.
+
+"""
 
 import json
 import os
@@ -19,9 +68,34 @@ from waluigi.proc_utils import process_wrapper
 
 
 class Gau(data_model.WaluigiTool):
+    """
+    Gau Tool Class for Passive URL Enumeration.
+
+    This class implements the interface for the Gau (getallurls) tool within the Waluigi framework.
+    It provides configuration, metadata, and scan/import function bindings for passive URL enumeration
+    using public data sources. The Gau tool fetches known URLs for domains, supporting asset discovery
+    and historical analysis.
+
+    Attributes:
+        name (str): Tool name identifier ('gau').
+        description (str): Description of the tool and its data sources.
+        project_url (str): URL to the Gau project repository.
+        collector_type (str): Collector type (PASSIVE).
+        scan_order (int): Execution order for scanning.
+        args (str): Default command-line arguments for Gau execution.
+        input_records (List): Types of input records accepted (DOMAIN).
+        output_records (List): Types of output records produced (DOMAIN, LIST_ITEM, HTTP_ENDPOINT, HTTP_ENDPOINT_DATA).
+        scan_func (Callable): Bound function for scan execution.
+        import_func (Callable): Bound function for import execution.
+    """
 
     def __init__(self) -> None:
+        """
+        Initialize the Gau tool class with default configuration and metadata.
 
+        Sets up tool name, description, project URL, collector type, scan order, default arguments,
+        input/output record types, and binds scan/import functions for Luigi workflow integration.
+        """
         self.name = 'gau'
         self.description = "getallurls (gau) fetches known URLs from AlienVault's Open Threat Exchange, the Wayback Machine, Common Crawl, and URLScan for any given domain. Inspired by Tomnomnom's waybackurls."
         self.project_url = 'https://github.com/lc/gau'
@@ -41,6 +115,18 @@ class Gau(data_model.WaluigiTool):
 
     @staticmethod
     def gau_lookup(scan_input: Any) -> bool:
+        """
+        Execute a Gau scan using Luigi workflow.
+
+        Args:
+            scan_input (Any): Input object containing scan parameters and context.
+
+        Returns:
+            bool: True if the scan completed successfully, False otherwise.
+
+        This method triggers the GauScan Luigi task, which performs passive URL enumeration
+        for the provided domains. The scan results are written to output files for later import.
+        """
         luigi_run_result = luigi.build([GauScan(
             scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
         if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
@@ -49,6 +135,18 @@ class Gau(data_model.WaluigiTool):
 
     @staticmethod
     def gau_import(scan_input: Any) -> bool:
+        """
+        Import Gau scan results using Luigi workflow.
+
+        Args:
+            scan_input (Any): Input object containing scan parameters and context.
+
+        Returns:
+            bool: True if the import completed successfully, False otherwise.
+
+        This method triggers the GauImport Luigi task, which processes Gau scan output files
+        and imports discovered URLs, endpoints, and related data into the Waluigi data model.
+        """
         luigi_run_result = luigi.build([GauImport(
             scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
         if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
@@ -57,10 +155,32 @@ class Gau(data_model.WaluigiTool):
 
 
 class GauScan(luigi.Task):
+    """
+    Luigi Task for Executing Gau Passive URL Enumeration.
+
+    This task runs the Gau tool to fetch known URLs for a list of scoped domains. It manages
+    input preparation, output file handling, and process execution, integrating with the Waluigi
+    scan scheduling and data model.
+
+    Parameters:
+        scan_input (luigi.Parameter): Input object containing scan context and parameters.
+
+    Output:
+        luigi.LocalTarget: Path to the Gau scan metadata output file (JSON).
+    """
 
     scan_input = luigi.Parameter()
 
     def output(self) -> luigi.LocalTarget:
+        """
+        Define the output target for the Gau scan task.
+
+        Returns:
+            luigi.LocalTarget: File target for Gau scan metadata output (JSON).
+
+        This method constructs the output file path based on the scan ID and tool name,
+        ensuring results are stored in the appropriate directory for downstream import.
+        """
 
         scheduled_scan_obj = self.scan_input
         scan_id = scheduled_scan_obj.id
@@ -74,6 +194,14 @@ class GauScan(luigi.Task):
         return luigi.LocalTarget(scan_outputs_file)
 
     def run(self) -> None:
+        """
+        Execute the Gau scan process for scoped domains.
+
+        This method prepares the domain list, configures environment variables, builds the Gau
+        command, and submits the process for execution. Results are written to output files,
+        and errors are logged and raised as needed. Integrates with Waluigi's scan_utils and
+        data_model for process management and result tracking.
+        """
 
         scheduled_scan_obj = self.scan_input
         scope_obj = scheduled_scan_obj.scan_data
@@ -151,13 +279,37 @@ class GauScan(luigi.Task):
 
 @inherits(GauScan)
 class GauImport(data_model.ImportToolXOutput):
+    """
+    Luigi Task for Importing Gau Scan Results.
+
+    This task processes the output files generated by GauScan, parsing discovered URLs and
+    endpoints, resolving domains, and importing structured data into the Waluigi data model.
+    It supports enrichment of scan results with host, domain, path, port, and endpoint objects.
+    """
 
     def requires(self) -> GauScan:
+        """
+        Specify the required GauScan task dependency.
+
+        Returns:
+            GauScan: The GauScan task instance that must be completed prior to import.
+
+        Ensures that GauImport only runs after the corresponding GauScan task has produced
+        its output files.
+        """
 
         # Requires GauScan Task to be run prior
         return GauScan(scan_input=self.scan_input)
 
     def run(self) -> None:
+        """
+        Process and import Gau scan results into the Waluigi data model.
+
+        This method reads Gau scan output files, parses URLs, resolves domains, and creates
+        Host, Domain, ListItem, Port, HttpEndpoint, and HttpEndpointData objects as needed.
+        Results are imported and associated with the current scan context. Handles error
+        conditions, DNS resolution, and object deduplication for robust data ingestion.
+        """
 
         scheduled_scan_obj = self.scan_input
         tool_instance_id = scheduled_scan_obj.current_tool_instance_id
