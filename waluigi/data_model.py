@@ -48,7 +48,8 @@ waluigi_tools: List[Tuple[str, str]] = [
     ('waluigi.module_scan', 'Module'),       # Custom module execution
     ('waluigi.badsecrets_scan', 'Badsecrets'),  # Secret detection
     ('waluigi.webcap_scan', 'Webcap'),        # Web capture and analysis
-    ('waluigi.gau_scan', 'Gau'),        # Web capture and analysis
+    ('waluigi.gau_scan', 'Gau'),        # Web endpoint crawling results
+    ('waluigi.python_scan', 'Python'),        # Python script execution
     # ('waluigi.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
 ]
 
@@ -1103,14 +1104,14 @@ class ScanData:
         domain_name_list: List['Domain'] = []
         seen_domain_names: Set[str] = set()
         domain_map = self.domain_map
-        
+
         for domain_id in domain_map:
             domain_obj = domain_map[domain_id]
-            
+
             # Check if domain name has already been seen
             if domain_obj.name in seen_domain_names:
                 continue
-                
+
             # Apply tag filtering if specified
             if tag_list:
                 if domain_obj.tags.intersection(set(tag_list)):

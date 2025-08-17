@@ -307,7 +307,7 @@ class NucleiScan(luigi.Task):
                 scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
 
             future_inst = scan_utils.executor.submit(
-                process_wrapper, cmd_args=command, use_shell=use_shell, my_env=my_env, pid_callback=callback_with_tool_id, store_output=True)
+                process_wrapper, cmd_args=command, use_shell=use_shell, my_env=my_env, pid_callback=callback_with_tool_id)
 
             # Wait for scan completion
             ret_dict = future_inst.result()
