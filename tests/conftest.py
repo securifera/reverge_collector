@@ -22,7 +22,8 @@ def mock_update_collector_and_session_key():
                                                          'webcap': '323482209708942791672081599309763638888',
                                                          'feroxbuster': '323482209708942791672081599309763638889',
                                                          'gau': '323482209708942791672081599309763638890',
-                                                         'python': '323482209708942791672081599309763638891'}}) as mock_update_collector, \
+                                                         'python': '323482209708942791672081599309763638891',
+                                                         'iis_shortname_scanner': '323482209708942791672081599309763638892'}}) as mock_update_collector, \
             patch.object(ReconManager, '_get_session_key', return_value='mock_session_key') as mock_get_session_key, \
             patch.object(ReconManager, 'update_scan_status', return_value=''):
         yield mock_update_collector, mock_get_session_key

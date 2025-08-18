@@ -171,7 +171,6 @@ class PythonScan(luigi.Task):
         else:
             raise RuntimeError("Custom arguments are required for the scan.")
 
-        # Write to nuclei input file if endpoints exist
         scan_results = ''
         if len(target_map) > 0:
 
@@ -259,19 +258,19 @@ class ImportPythonOutput(data_model.ImportToolXOutput):
         ret_arr: List[Any] = []
         if len(data) > 0:
 
+            # Add collection module for non-module scans
+            module_obj = data_model.CollectionModule(
+                parent_id=tool_id)
+            module_obj.collection_tool_instance_id = tool_instance_id
+            module_obj.name = "python-script"
+            module_obj.args = ''
+            ret_arr.append(module_obj)
+            module_id = module_obj.id
+
             for target_key in target_map:
                 target_obj_dict = target_map[target_key]
                 port_obj = target_obj_dict['port_obj']
                 port_id: int = port_obj.id
-
-                # Add collection module for non-module scans
-                module_obj = data_model.CollectionModule(
-                    parent_id=tool_id)
-                module_obj.collection_tool_instance_id = tool_instance_id
-                module_obj.name = "python-script"
-                module_obj.args = ''
-                ret_arr.append(module_obj)
-                module_id = module_obj.id
 
                 # Add module output for all scan results
                 if module_id:

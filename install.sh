@@ -160,6 +160,13 @@ wget -O /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/
 install_packages /tmp/google-chrome-stable_current_amd64.deb
 rm -f /tmp/google-chrome-stable_current_amd64.deb
 
+# IIS Shortname Scanner
+cd /tmp
+git clone -c http.sslVerify=false https://github.com/securifera/IIS_shortname_Scanner.git
+cd IIS_shortname_Scanner
+python3 -m build
+python3 -m pip install dist/iis_shortname_scanner*.whl
+
 # Install Webcap
 cd /tmp
 git clone -c http.sslVerify=false https://github.com/securifera/webcap.git

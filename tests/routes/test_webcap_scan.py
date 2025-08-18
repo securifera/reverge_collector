@@ -2,7 +2,6 @@ import base64
 import os
 import shutil
 import json
-import logging
 import uuid
 
 from waluigi.recon_manager import ReconManager, ScheduledScanThread

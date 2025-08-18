@@ -50,6 +50,8 @@ waluigi_tools: List[Tuple[str, str]] = [
     ('waluigi.webcap_scan', 'Webcap'),        # Web capture and analysis
     ('waluigi.gau_scan', 'Gau'),        # Web endpoint crawling results
     ('waluigi.python_scan', 'Python'),        # Python script execution
+    # IIS Shortname Scanner
+    ('waluigi.iis_short_scan', 'IISShortnameScanner'),
     # ('waluigi.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
 ]
 
@@ -2265,6 +2267,42 @@ class Port(Record):
                     self.secure = False
         except Exception as e:
             raise Exception('Invalid port object: %s' % str(e))
+
+    def get_urls(self, scope_obj):
+
+        url_set = set()
+        if self.parent:
+            host_id = self.parent.id
+            port_id = self.id
+            if host_id in scope_obj.host_map:
+                host_obj = scope_obj.host_map[host_id]
+                ip_addr = host_obj.ipv4_addr
+
+                url_str = construct_url(
+                    ip_addr, self.port, False)
+                if url_str:
+                    url_set.add(url_str)
+
+                # Get domains
+                domain_set = set()
+                if host_id in scope_obj.domain_host_id_map:
+                    temp_domain_list = scope_obj.domain_host_id_map[host_id]
+                    for domain_obj in temp_domain_list:
+                        domain_name = domain_obj.name
+                        domain_set.add(domain_name)
+
+                if port_id and port_id in scope_obj.certificate_port_id_map:
+                    temp_cert_list = scope_obj.certificate_port_id_map[port_id]
+                    for cert_obj in temp_cert_list:
+                        domain_set.update(cert_obj.domain_name_id_map.keys())
+
+                # Add domain urls
+                for domain_name in domain_set:
+                    url_str = construct_url(domain_name, self.port, False)
+                    if url_str:
+                        url_set.add(url_str)
+
+        return list(url_set)
 
 
 class Domain(Record):
