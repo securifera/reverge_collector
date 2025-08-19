@@ -14,7 +14,7 @@ class IISShortnameScanner(data_model.WaluigiTool):
 
     def __init__(self) -> None:
 
-        self.name: str = 'iis_shortname_scanner'
+        self.name: str = 'iis_short_scan'
         self.description: str = 'IIS Shortname Scanner is a tool for discovering short filenames on IIS servers.'
         self.project_url: str = 'https://github.com/lijiejie/IIS_shortname_Scanner'
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
@@ -63,36 +63,44 @@ class IISShortnameScanner(data_model.WaluigiTool):
         return True
 
 
-def iis_short_scan_wrap(target) -> Dict[str, Any]:
+def iis_short_scan_wrap(target_urls: List[str]) -> Dict[str, Any]:
 
-    try:
-        with Scanner(target, silent=True) as scanner:
-            if not scanner.is_vulnerable():
-                return {
+    result_list = []
+    for target in target_urls:
+
+        try:
+            with Scanner(target, silent=True) as scanner:
+                if not scanner.is_vulnerable():
+                    result_list.append({
+                        'target': target,
+                        'vulnerable': False,
+                        'files': [],
+                        'dirs': []
+                    })
+                    continue
+
+                # Run the scanner
+                scanner.run()
+
+                result_list.append({
                     'target': target,
-                    'vulnerable': False,
-                    'files': [],
-                    'dirs': []
-                }
+                    'vulnerable': True,
+                    'files': scanner.files.copy(),
+                    'dirs': scanner.dirs.copy()
+                })
 
-            scanner.run()
-            return {
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                f"Error scanning target {target}: {e}")
+            result_list.append({
                 'target': target,
-                'vulnerable': True,
-                'files': scanner.files.copy(),
-                'dirs': scanner.dirs.copy()
-            }
+                'vulnerable': False,
+                'error': str(e),
+                'files': [],
+                'dirs': []
+            })
 
-    except Exception as e:
-        logging.getLogger(__name__).warning(
-            f"Error scanning target {target}: {e}")
-        return {
-            'target': target,
-            'vulnerable': False,
-            'error': str(e),
-            'files': [],
-            'dirs': []
-        }
+    return result_list
 
 
 class IISShortScan(luigi.Task):
@@ -162,16 +170,15 @@ class IISShortScan(luigi.Task):
                 # Get urls
                 url_list = port_obj.get_urls(scope_obj)
                 port_id_results_map[port_id] = []
-                for url in url_list:
-                    future_inst = scan_utils.executor.submit(
-                        iis_short_scan_wrap, target=url)
-                    futures.append((future_inst, port_id))
+                future_inst = scan_utils.executor.submit(
+                    iis_short_scan_wrap, target_urls=url_list)
+                futures.append((future_inst, port_id))
 
             # Wait for scan completion
             for future_inst, port_id in futures:
                 scan_result = future_inst.result()
                 if scan_result:
-                    port_id_results_map[port_id].append(scan_result)
+                    port_id_results_map[port_id].extend(scan_result)
 
         else:
             raise RuntimeError(
@@ -218,7 +225,6 @@ class ImportIISShortScannerOutput(data_model.ImportToolXOutput):
         scheduled_scan_obj = self.scan_input
         tool_instance_id: int = scheduled_scan_obj.current_tool_instance_id
         scope_obj = scheduled_scan_obj.scan_data
-        target_map: Dict[str, Dict[str, Any]] = scope_obj.host_port_obj_map
 
         # Import the ports to the manager
         tool_id: int = scheduled_scan_obj.current_tool.id

@@ -14,7 +14,7 @@ from tests.conftest import get_tool_id
 
 class TestIISShortScan:
 
-    TOOL_NAME = 'iis_shortname_scanner'
+    TOOL_NAME = 'iis_short_scan'
     TEST_SCAN_ID = format(uuid.uuid4().int, 'x')
     TEST_SCHEDULED_SCAN_ID = format(uuid.uuid4().int, 'x')
 
