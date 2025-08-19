@@ -347,35 +347,6 @@ class HttpXScan(luigi.Task):
 
                     ip_set.update(url_list)
 
-                    # if port_obj.parent:
-                    #     host_id = port_obj.parent.id
-                    #     if host_id in scope_obj.host_map:
-                    #         host_obj = scope_obj.host_map[host_id]
-                    #         ip_addr = host_obj.ipv4_addr
-
-                    #         # Add to ip set
-                    #         if port_str in port_target_list_map:
-                    #             ip_set = port_target_list_map[port_str]
-                    #         else:
-                    #             ip_set = set()
-                    #             port_target_list_map[port_str] = ip_set
-
-                    #         url_str = scan_utils.construct_url(
-                    #             ip_addr, port_str, False)
-                    #         if url_str:
-                    #             ip_set.add(url_str)
-
-                    #         # Get domains
-                    #         if host_id in scope_obj.domain_host_id_map:
-                    #             temp_domain_list = scope_obj.domain_host_id_map[host_id]
-                    #             for domain_obj in temp_domain_list:
-
-                    #                 domain_name = domain_obj.name
-                    #                 url_str = scan_utils.construct_url(
-                    #                     domain_name, port_str, False)
-                    #                 if url_str:
-                    #                     ip_set.add(url_str)
-
         futures = []
         for port_str in port_target_list_map:
 

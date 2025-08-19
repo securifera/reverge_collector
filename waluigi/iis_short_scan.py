@@ -20,7 +20,8 @@ class IISShortnameScanner(data_model.WaluigiTool):
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 8
         self.args: str = ""
-        self.input_records = [data_model.ServerRecordType.PORT]
+        self.input_records = [data_model.ServerRecordType.PORT,
+                              data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
         self.output_records = [
             data_model.ServerRecordType.COLLECTION_MODULE,
             data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
@@ -63,16 +64,22 @@ class IISShortnameScanner(data_model.WaluigiTool):
         return True
 
 
-def iis_short_scan_wrap(target_urls: List[str]) -> Dict[str, Any]:
+def iis_short_scan_wrap(target_url_list: List[str]) -> List[Dict[str, Any]]:
+    """
+    Wrapper function to run IIS shortname scan on a list of target URLs.
 
-    result_list = []
-    for target in target_urls:
-
+    Args:
+        target_url_list (List[str]): List of target URLs to scan.
+    Returns:
+        List[Dict[str, Any]]: List of scan results for each target URL.
+    """
+    return_list = []
+    for target_url in target_url_list:
         try:
-            with Scanner(target, silent=True) as scanner:
+            with Scanner(target_url, silent=True) as scanner:
                 if not scanner.is_vulnerable():
-                    result_list.append({
-                        'target': target,
+                    return_list.append({
+                        'target': target_url,
                         'vulnerable': False,
                         'files': [],
                         'dirs': []
@@ -82,25 +89,24 @@ def iis_short_scan_wrap(target_urls: List[str]) -> Dict[str, Any]:
                 # Run the scanner
                 scanner.run()
 
-                result_list.append({
-                    'target': target,
+                return_list.append({
+                    'target': target_url,
                     'vulnerable': True,
                     'files': scanner.files.copy(),
                     'dirs': scanner.dirs.copy()
                 })
-
         except Exception as e:
             logging.getLogger(__name__).warning(
-                f"Error scanning target {target}: {e}")
-            result_list.append({
-                'target': target,
+                f"Error scanning target {target_url}: {e}")
+            return_list.append({
+                'target': target_url,
                 'vulnerable': False,
                 'error': str(e),
                 'files': [],
                 'dirs': []
             })
 
-    return result_list
+    return return_list
 
 
 class IISShortScan(luigi.Task):
@@ -152,33 +158,70 @@ class IISShortScan(luigi.Task):
         # Get output file path
         output_file_path: str = self.output().path
 
-        target_map: Dict[str, Dict[str, Any]] = scope_obj.host_port_obj_map
+        # Attempt to get all urls first
+        all_endpoint_port_obj_map = scope_obj.get_urls()
+        endpoint_port_obj_map = {}
+
+        # Filter URLs to only include base URLs (path is None or "/")
+        for url, port_data in all_endpoint_port_obj_map.items():
+            # Only include URLs with no specific path or root path
+            if port_data.get('path') is None or port_data.get('path').endswith('/'):
+                endpoint_port_obj_map[url] = port_data
+
+        url_set = set()
         port_id_results_map: Dict[int, List[Dict[str, Any]]] = {}
-        if len(target_map) > 0:
+        if len(endpoint_port_obj_map) > 0:
 
             futures: List[Any] = []
-            for target_key in target_map:
+            port_id_target_map = {}
+            for target_url in endpoint_port_obj_map:
 
-                target_obj_dict = target_map[target_key]
-                port_obj = target_obj_dict['port_obj']
-                port_id: int = port_obj.id
+                if target_url in url_set:
+                    continue  # Skip if already processed
 
-                # Check if we already added this port
-                if port_id in port_id_results_map:
+                port_data = endpoint_port_obj_map[target_url]
+                port_id = port_data.get('port_id', None)
+                if port_id is None:
+                    logging.getLogger(__name__).warning(
+                        f"Port ID not found for URL {target_url}. Skipping scan execution.")
                     continue
 
-                # Get urls
-                url_list = port_obj.get_urls(scope_obj)
-                port_id_results_map[port_id] = []
+                if port_id not in port_id_target_map:
+                    port_target_map = {}
+                    port_id_target_map[port_id] = port_target_map
+                else:
+                    port_target_map = port_id_target_map[port_id]
+
+                port_target_map[target_url] = port_data
+                # Add the URL to the set to avoid duplicates
+                url_set.add(target_url)
+
+            # Queue up scans
+            for port_id, port_target_map in port_id_target_map.items():
+                target_list = list(port_target_map.keys())
                 future_inst = scan_utils.executor.submit(
-                    iis_short_scan_wrap, target_urls=url_list)
+                    iis_short_scan_wrap, target_url_list=target_list)
                 futures.append((future_inst, port_id))
 
             # Wait for scan completion
             for future_inst, port_id in futures:
+                port_target_map = port_id_target_map.get(port_id, {})
                 scan_result = future_inst.result()
-                if scan_result:
-                    port_id_results_map[port_id].extend(scan_result)
+                for result in scan_result:
+                    target_url = result['target']
+                    port_data = port_target_map.get(target_url, {})
+                    if not port_data:
+                        continue
+
+                    if port_id not in port_id_results_map:
+                        port_results_inst = {
+                            'meta_data': port_data, 'results': []}
+                        port_id_results_map[port_id] = port_results_inst
+                    else:
+                        port_results_inst = port_id_results_map[port_id]
+
+                    if scan_result:
+                        port_results_inst['results'].append(result)
 
         else:
             raise RuntimeError(
@@ -224,7 +267,6 @@ class ImportIISShortScannerOutput(data_model.ImportToolXOutput):
 
         scheduled_scan_obj = self.scan_input
         tool_instance_id: int = scheduled_scan_obj.current_tool_instance_id
-        scope_obj = scheduled_scan_obj.scan_data
 
         # Import the ports to the manager
         tool_id: int = scheduled_scan_obj.current_tool.id
@@ -248,7 +290,27 @@ class ImportIISShortScannerOutput(data_model.ImportToolXOutput):
             result_map = json.loads(data)
             for port_id in result_map.keys():
 
-                result_entry_list = result_map[port_id]
+                result_entry = result_map[port_id]
+                result_meta_data = result_entry.get('meta_data', [])
+                host_id = result_meta_data.get('host_id', None)
+                ip_addr = result_meta_data.get('ip_addr', None)
+                port_str = result_meta_data.get('port_str', None)
+                result_entry_list = result_entry.get('results', [])
+
+                host_obj = data_model.Host(id=host_id)
+                host_obj.collection_tool_instance_id = tool_instance_id
+                host_obj.ipv4_addr = ip_addr
+
+                # Add host to results
+                ret_arr.append(host_obj)
+
+                port_obj = data_model.Port(parent_id=host_id, id=port_id)
+                port_obj.collection_tool_instance_id = tool_instance_id
+                port_obj.proto = 0
+                port_obj.port = port_str
+
+                # Add port to results
+                ret_arr.append(port_obj)
 
                 # Add module output for all scan results
                 if module_id:

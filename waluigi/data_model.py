@@ -1193,7 +1193,8 @@ class ScanData:
                     "http_endpoint_data_id": 202,
                     "path": "/admin",
                     "domain": "example.com",
-                    "secure": True
+                    "secure": True,
+                    "port_str": "443"
                 }
             }
         """
@@ -1253,10 +1254,12 @@ class ScanData:
 
             base_metadata = {
                 "host_id": host_id,
+                "ip_addr": ip_addr,
                 "port_id": port_id,
                 "http_endpoint_id": http_endpoint_obj.id,
                 "path": path,
-                "secure": secure
+                "secure": secure,
+                "port_str": port_str
             }
 
             if http_endpoint_obj.id in self.endpoint_data_endpoint_id_map:
@@ -1278,9 +1281,11 @@ class ScanData:
         if likely_http:
             base_metadata = {
                 "host_id": host_id,
+                "ip_addr": ip_addr,
                 "port_id": port_id,
                 "path": "/",
-                "secure": secure
+                "secure": secure,
+                "port_str": port_str
             }
             self._add_base_url(url_map, base_metadata, ip_addr, port_str,
                                secure, "/", domain_set)

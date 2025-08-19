@@ -79,12 +79,15 @@ class TestIISShortScan:
                 result_map = json.loads(file_contents)
 
                 assert isinstance(result_map, dict) and len(result_map) > 0
-                port_entry_list = next(iter(result_map.values()))
+                port_entry_inst = next(iter(result_map.values()))
 
                 logging.getLogger(__name__).warning(
-                    f"Result map: {port_entry_list}")
+                    f"Result map: {port_entry_inst}")
 
-                assert port_entry_list[0]['target'] == "https://www.securifera.com" or port_entry_list[0]['target'] == "https://52.4.7.15"
+                port_entry_list = port_entry_inst.get('results', [])
+                assert isinstance(port_entry_list, list) and len(
+                    port_entry_list) > 0
+                assert port_entry_list[0]['target'] == "https://www.securifera.com/" or port_entry_list[0]['target'] == "https://52.4.7.15/"
                 assert port_entry_list[0]['vulnerable'] == False
 
     def test_iis_short_scan_import_success(self, recon_manager):
