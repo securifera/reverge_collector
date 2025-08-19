@@ -47,7 +47,11 @@ waluigi_tools: List[Tuple[str, str]] = [
     ('waluigi.sectrails_ip_lookup', 'Sectrails'),
     ('waluigi.module_scan', 'Module'),       # Custom module execution
     ('waluigi.badsecrets_scan', 'Badsecrets'),  # Secret detection
-    ('waluigi.webcap_scan', 'Webcap')        # Web capture and analysis
+    ('waluigi.webcap_scan', 'Webcap'),        # Web capture and analysis
+    ('waluigi.gau_scan', 'Gau'),        # Web endpoint crawling results
+    ('waluigi.python_scan', 'Python'),        # Python script execution
+    # IIS Shortname Scanner
+    ('waluigi.iis_short_scan', 'IISShortnameScanner'),
     # ('waluigi.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
 ]
 
@@ -1100,14 +1104,24 @@ class ScanData:
             >>> scope_domains = scan_data.get_domains([RecordTag.SCOPE.value])
         """
         domain_name_list: List['Domain'] = []
+        seen_domain_names: Set[str] = set()
         domain_map = self.domain_map
+
         for domain_id in domain_map:
             domain_obj = domain_map[domain_id]
+
+            # Check if domain name has already been seen
+            if domain_obj.name in seen_domain_names:
+                continue
+
+            # Apply tag filtering if specified
             if tag_list:
-                if domain_obj.tags.intersection(set(tag_list)) and domain_obj.name not in [d.name for d in domain_name_list]:
+                if domain_obj.tags.intersection(set(tag_list)):
                     domain_name_list.append(domain_obj)
-            elif domain_obj.name not in [d.name for d in domain_name_list]:
+                    seen_domain_names.add(domain_obj.name)
+            else:
                 domain_name_list.append(domain_obj)
+                seen_domain_names.add(domain_obj.name)
 
         return domain_name_list
 
@@ -1179,7 +1193,8 @@ class ScanData:
                     "http_endpoint_data_id": 202,
                     "path": "/admin",
                     "domain": "example.com",
-                    "secure": True
+                    "secure": True,
+                    "port_str": "443"
                 }
             }
         """
@@ -1239,10 +1254,12 @@ class ScanData:
 
             base_metadata = {
                 "host_id": host_id,
+                "ip_addr": ip_addr,
                 "port_id": port_id,
                 "http_endpoint_id": http_endpoint_obj.id,
                 "path": path,
-                "secure": secure
+                "secure": secure,
+                "port_str": port_str
             }
 
             if http_endpoint_obj.id in self.endpoint_data_endpoint_id_map:
@@ -1264,9 +1281,11 @@ class ScanData:
         if likely_http:
             base_metadata = {
                 "host_id": host_id,
+                "ip_addr": ip_addr,
                 "port_id": port_id,
                 "path": "/",
-                "secure": secure
+                "secure": secure,
+                "port_str": port_str
             }
             self._add_base_url(url_map, base_metadata, ip_addr, port_str,
                                secure, "/", domain_set)
@@ -2253,6 +2272,42 @@ class Port(Record):
                     self.secure = False
         except Exception as e:
             raise Exception('Invalid port object: %s' % str(e))
+
+    def get_urls(self, scope_obj):
+
+        url_set = set()
+        if self.parent:
+            host_id = self.parent.id
+            port_id = self.id
+            if host_id in scope_obj.host_map:
+                host_obj = scope_obj.host_map[host_id]
+                ip_addr = host_obj.ipv4_addr
+
+                url_str = construct_url(
+                    ip_addr, self.port, False)
+                if url_str:
+                    url_set.add(url_str)
+
+                # Get domains
+                domain_set = set()
+                if host_id in scope_obj.domain_host_id_map:
+                    temp_domain_list = scope_obj.domain_host_id_map[host_id]
+                    for domain_obj in temp_domain_list:
+                        domain_name = domain_obj.name
+                        domain_set.add(domain_name)
+
+                if port_id and port_id in scope_obj.certificate_port_id_map:
+                    temp_cert_list = scope_obj.certificate_port_id_map[port_id]
+                    for cert_obj in temp_cert_list:
+                        domain_set.update(cert_obj.domain_name_id_map.keys())
+
+                # Add domain urls
+                for domain_name in domain_set:
+                    url_str = construct_url(domain_name, self.port, False)
+                    if url_str:
+                        url_set.add(url_str)
+
+        return list(url_set)
 
 
 class Domain(Record):

@@ -41,8 +41,6 @@ Note:
     to target systems. The tool provides historical and current DNS data
     for comprehensive domain intelligence gathering.
 
-.. moduleauthor:: Waluigi Framework Team
-.. version:: 1.0.0
 """
 
 import requests

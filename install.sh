@@ -101,7 +101,7 @@ echo "no_install_shutdown_handler=True" | sudo tee -a /opt/collector/luigi.cfg
 # Build and install waluigi
 poetry build
 python3 -m pip install dist/waluigi*.whl
-cp ./waluigi/scan_poller.py /opt/collector/
+sudo cp ./waluigi/scan_poller.py /opt/collector/
 
 ###############
 # scanner stuff
@@ -116,6 +116,10 @@ cd /tmp; curl -k -s https://api.github.com/repos/securifera/nmap/releases/latest
 # Install nuclei
 cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o nuclei*.zip; sudo mv nuclei /usr/local/bin/ ; sudo rm nuclei*.zip
 sudo chmod +x /usr/local/bin/nuclei
+
+# Install gau
+cd /tmp; curl -k -s https://api.github.com/repos/lc/gau/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf gau*.tar.gz ; sudo mv gau /usr/local/bin/ ; sudo rm gau*.tar.gz
+sudo chmod +x /usr/local/bin/gau
 
 # Screenshot dependencies
 install_packages fonts-liberation libgbm1 libappindicator3-1 openssl libasound2t64
@@ -155,6 +159,13 @@ python3 -m pip install badsecrets
 wget -O /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 install_packages /tmp/google-chrome-stable_current_amd64.deb
 rm -f /tmp/google-chrome-stable_current_amd64.deb
+
+# IIS Shortname Scanner
+cd /tmp
+git clone -c http.sslVerify=false https://github.com/securifera/IIS_shortname_Scanner.git
+cd IIS_shortname_Scanner
+python3 -m build
+python3 -m pip install dist/iis_shortname_scanner*.whl
 
 # Install Webcap
 cd /tmp
