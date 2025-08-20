@@ -485,7 +485,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
 
         path_hash_map = {}
         screenshot_hash_map = {}
-        cert_sha_set = set()
+        cert_map = {}
 
         for output_file in output_file_list:
 
@@ -654,21 +654,21 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                 if 'tls' in httpx_scan:
                     tls_data = httpx_scan['tls']
 
-                    # Create a certificate object
-                    cert_obj = data_model.Certificate(
-                        parent_id=port_obj.id)
-                    cert_obj.collection_tool_instance_id = tool_instance_id
-
                     new_cert = True
                     if 'fingerprint_hash' in tls_data:
                         cert_hash_map = tls_data['fingerprint_hash']
                         if 'sha1' in cert_hash_map:
                             sha_cert_hash = cert_hash_map['sha1']
-                            if sha_cert_hash in cert_sha_set:
+                            if sha_cert_hash in cert_map:
+                                cert_obj = cert_map[sha_cert_hash]
                                 new_cert = False
                             else:
-                                cert_sha_set.add(sha_cert_hash)
+                                # Create a certificate object
+                                cert_obj = data_model.Certificate(
+                                    parent_id=port_obj.id)
+                                cert_obj.collection_tool_instance_id = tool_instance_id
                                 cert_obj.fingerprint_hash = sha_cert_hash
+                                cert_map[sha_cert_hash] = cert_obj
 
                     # Only add it if it's new
                     if new_cert:
