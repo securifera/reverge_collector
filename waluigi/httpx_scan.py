@@ -485,6 +485,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
 
         path_hash_map = {}
         screenshot_hash_map = {}
+        cert_sha_set = set()
 
         for output_file in output_file_list:
 
@@ -644,9 +645,9 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                 if 'url' in httpx_scan:
                     url = httpx_scan['url'].lower()
                     u = urlparse(url)
-                    host = u.netloc
-                    if ":" in host:
-                        domain_used = host.split(":")[0]
+                    domain_used = u.netloc
+                    if ":" in domain_used:
+                        domain_used = domain_used.split(":")[0]
 
                 # Add domains
                 cert_obj = None
@@ -658,66 +659,75 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                         parent_id=port_obj.id)
                     cert_obj.collection_tool_instance_id = tool_instance_id
 
-                    if 'subject_an' in tls_data:
-                        dns_names = tls_data['subject_an']
-                        for dns_name in dns_names:
-                            domain_obj = cert_obj.add_domain(
-                                host_id, dns_name, tool_instance_id)
-                            if domain_obj:
-                                ret_arr.append(domain_obj)
-
-                    if 'host' in tls_data:
-                        common_name = tls_data['host']
-                        if type(common_name) == list:
-                            for common_name_inst in common_name:
-                                domain_obj = cert_obj.add_domain(host_id,
-                                                                 common_name_inst, tool_instance_id)
-                                if domain_obj:
-                                    ret_arr.append(domain_obj)
-                        else:
-                            domain_obj = cert_obj.add_domain(
-                                host_id, common_name, tool_instance_id)
-                            if domain_obj:
-                                ret_arr.append(domain_obj)
-
-                    if 'subject_cn' in tls_data:
-                        common_name = tls_data['subject_cn']
-                        if type(common_name) == list:
-                            for common_name_inst in common_name:
-                                domain_obj = cert_obj.add_domain(host_id,
-                                                                 common_name_inst, tool_instance_id)
-                                if domain_obj:
-                                    ret_arr.append(domain_obj)
-
-                        else:
-                            domain_obj = cert_obj.add_domain(
-                                host_id, common_name, tool_instance_id)
-                            if domain_obj:
-                                ret_arr.append(domain_obj)
-
-                    if 'issuer_dn' in tls_data:
-                        issuer = tls_data['issuer_dn']
-                        cert_obj.issuer = issuer
-
-                    if 'not_before' in tls_data:
-                        issued = tls_data['not_before']
-                        # Parse the time string into a datetime object in UTC
-                        dt = datetime.strptime(issued, '%Y-%m-%dT%H:%M:%SZ')
-                        cert_obj.issued = int(time.mktime(dt.timetuple()))
-
-                    if 'not_after' in tls_data:
-                        expires = tls_data['not_after']
-                        dt = datetime.strptime(expires, '%Y-%m-%dT%H:%M:%SZ')
-                        cert_obj.expires = int(time.mktime(dt.timetuple()))
-
+                    new_cert = True
                     if 'fingerprint_hash' in tls_data:
                         cert_hash_map = tls_data['fingerprint_hash']
                         if 'sha1' in cert_hash_map:
                             sha_cert_hash = cert_hash_map['sha1']
-                            cert_obj.fingerprint_hash = sha_cert_hash
+                            if sha_cert_hash in cert_sha_set:
+                                new_cert = False
+                            else:
+                                cert_sha_set.add(sha_cert_hash)
+                                cert_obj.fingerprint_hash = sha_cert_hash
 
-                    # Add the cert object
-                    ret_arr.append(cert_obj)
+                    # Only add it if it's new
+                    if new_cert:
+                        if 'subject_an' in tls_data:
+                            dns_names = tls_data['subject_an']
+                            for dns_name in dns_names:
+                                domain_obj = cert_obj.add_domain(
+                                    host_id, dns_name, tool_instance_id)
+                                if domain_obj:
+                                    ret_arr.append(domain_obj)
+
+                        if 'host' in tls_data:
+                            common_name = tls_data['host']
+                            if type(common_name) == list:
+                                for common_name_inst in common_name:
+                                    domain_obj = cert_obj.add_domain(host_id,
+                                                                     common_name_inst, tool_instance_id)
+                                    if domain_obj:
+                                        ret_arr.append(domain_obj)
+                            else:
+                                domain_obj = cert_obj.add_domain(
+                                    host_id, common_name, tool_instance_id)
+                                if domain_obj:
+                                    ret_arr.append(domain_obj)
+
+                        if 'subject_cn' in tls_data:
+                            common_name = tls_data['subject_cn']
+                            if type(common_name) == list:
+                                for common_name_inst in common_name:
+                                    domain_obj = cert_obj.add_domain(host_id,
+                                                                     common_name_inst, tool_instance_id)
+                                    if domain_obj:
+                                        ret_arr.append(domain_obj)
+
+                            else:
+                                domain_obj = cert_obj.add_domain(
+                                    host_id, common_name, tool_instance_id)
+                                if domain_obj:
+                                    ret_arr.append(domain_obj)
+
+                        if 'issuer_dn' in tls_data:
+                            issuer = tls_data['issuer_dn']
+                            cert_obj.issuer = issuer
+
+                        if 'not_before' in tls_data:
+                            issued = tls_data['not_before']
+                            # Parse the time string into a datetime object in UTC
+                            dt = datetime.strptime(
+                                issued, '%Y-%m-%dT%H:%M:%SZ')
+                            cert_obj.issued = int(time.mktime(dt.timetuple()))
+
+                        if 'not_after' in tls_data:
+                            expires = tls_data['not_after']
+                            dt = datetime.strptime(
+                                expires, '%Y-%m-%dT%H:%M:%SZ')
+                            cert_obj.expires = int(time.mktime(dt.timetuple()))
+
+                        # Add the cert object
+                        ret_arr.append(cert_obj)
 
                 endpoint_domain_id = None
                 if cert_obj and domain_used in cert_obj.domain_name_id_map:
