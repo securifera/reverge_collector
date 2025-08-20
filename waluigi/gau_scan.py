@@ -103,8 +103,11 @@ class Gau(data_model.WaluigiTool):
         self.scan_order = 1
         # self.args = "--blacklist .png,.jpg,.gif,.ttf,.woff,.svg --retries 3 --timeout 5 --subs"
         self.args = "--retries 3 --timeout 5 --subs"
-        self.input_records = [data_model.ServerRecordType.DOMAIN]
+        self.input_records = [
+            data_model.ServerRecordType.DOMAIN, data_model.ServerRecordType.HTTP_ENDPOINT]
         self.output_records = [
+            data_model.ServerRecordType.PORT,
+            data_model.ServerRecordType.HOST,
             data_model.ServerRecordType.DOMAIN,
             data_model.ServerRecordType.LIST_ITEM,
             data_model.ServerRecordType.HTTP_ENDPOINT,
@@ -205,14 +208,39 @@ class GauScan(luigi.Task):
 
         scheduled_scan_obj = self.scan_input
         scope_obj = scheduled_scan_obj.scan_data
-        domain_list = scope_obj.get_domains(
-            [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
 
-        # Create a list of domains to pass to gau
         domain_host_map = {}
-        for domain in domain_list:
-            domain_host_map[domain.name] = domain.parent.id
-        domain_list_str = '\n'.join(domain_host_map.keys())
+        domain_list_str = None
+        all_endpoint_port_obj_map = scope_obj.get_urls()
+        if len(all_endpoint_port_obj_map) > 0:
+
+            # Filter URLs to only include base URLs (path is None or "/")
+            for url, port_data in all_endpoint_port_obj_map.items():
+                # Only include URLs with no specific path or root path
+                if port_data.get('path') is None or port_data.get('path').endswith('/'):
+
+                    u = urlparse(url)
+                    domain_str = u.netloc
+                    if ":" in domain_str:
+                        domain_arr = domain_str.split(":")
+                        domain_str = domain_arr[0].lower()
+                    else:
+                        domain_str = domain_str.lower()
+
+                    domain_host_map[domain_str] = port_data
+
+            if len(domain_host_map) > 0:
+                domain_list_str = '\n'.join(domain_host_map.keys())
+
+        else:
+            domain_list = scope_obj.get_domains(
+                [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+
+            # Create a list of domains to pass to gau
+            for domain in domain_list:
+                # Host ID
+                domain_host_map[domain.name] = {"host_id": domain.parent.id}
+            domain_list_str = '\n'.join(domain_host_map.keys())
 
         tool_args = scheduled_scan_obj.current_tool.args
         if tool_args:
@@ -231,7 +259,7 @@ class GauScan(luigi.Task):
             my_env["HOME"] = home_dir
 
         # Add the lines
-        if len(domain_list) > 0:
+        if len(domain_list_str) > 0:
 
             command = []
             command_arr = [
@@ -339,6 +367,9 @@ class GauImport(data_model.ImportToolXOutput):
                         if not line.strip():
                             continue
 
+                        port_id = None
+                        host_id = None
+                        domain_id = None
                         url_entry = json.loads(line)
                         if 'url' in url_entry:
                             endpoint_url = url_entry['url']
@@ -360,17 +391,22 @@ class GauImport(data_model.ImportToolXOutput):
                                 domain_str = host.lower()
 
                             # Check if the domain is an IP adress
-                            endpoint_domain_id = None
                             try:
                                 netaddr.IPAddress(domain_str)
                             except Exception as e:
 
                                 if domain_str in domain_name_id_map:
-                                    endpoint_domain_id = domain_name_id_map[domain_str]
+                                    domain_id = domain_name_id_map[domain_str]
                                 else:
 
                                     if domain_str in domain_map:
-                                        host_id = domain_map[domain_str]
+                                        port_data = domain_map[domain_str]
+                                        if 'host_id' in port_data:
+                                            host_id = port_data['host_id']
+                                        if 'port_id' in port_data:
+                                            port_id = port_data['port_id']
+                                        if 'domain_id' in port_data:
+                                            domain_id = port_data['domain_id']
                                     else:
                                         ret_list = scan_utils.dns_wrapper(
                                             set([domain_str]))
@@ -379,7 +415,8 @@ class GauImport(data_model.ImportToolXOutput):
                                                 f"Domain {domain_str} not found in domain map from gau scan output. Resolved via DNS: {ret_list[0]['ip']}")
 
                                             ip_object = ret_list[0]
-                                            host_obj = data_model.Host()
+                                            host_obj = data_model.Host(
+                                                id=host_id)
                                             host_obj.collection_tool_instance_id = tool_instance_id
 
                                             # Set appropriate IP address field based on version
@@ -388,19 +425,20 @@ class GauImport(data_model.ImportToolXOutput):
                                             host_id = host_obj.id
                                             domain_map[domain_str] = host_id
 
-                                    domain_obj = data_model.Domain(
-                                        parent_id=host_id)
-                                    domain_obj.collection_tool_instance_id = tool_instance_id
-                                    domain_obj.name = domain_str
+                                    if domain_id is None:
+                                        domain_obj = data_model.Domain(
+                                            parent_id=host_id)
+                                        domain_obj.collection_tool_instance_id = tool_instance_id
+                                        domain_obj.name = domain_str
 
-                                    # Add domain
-                                    ret_arr.append(domain_obj)
-                                    # Set endpoint id
-                                    endpoint_domain_id = domain_obj.id
-                                    domain_name_id_map[domain_str] = endpoint_domain_id
+                                        # Add domain
+                                        ret_arr.append(domain_obj)
+                                        # Set domain id
+                                        domain_id = domain_obj.id
+                                        domain_name_id_map[domain_str] = domain_id
 
-                                    # Add domain
-                                    ret_arr.append(domain_obj)
+                                        # Add domain
+                                        ret_arr.append(domain_obj)
 
                             if web_path_hash in path_hash_map:
                                 path_obj = path_hash_map[web_path_hash]
@@ -416,24 +454,26 @@ class GauImport(data_model.ImportToolXOutput):
 
                             web_path_id = path_obj.id
 
-                            # Create Port object
-                            port_str = str(u.port) if u.port else (
-                                '443' if u.scheme == 'https' else '80')
-                            secure = u.scheme == 'https'
+                            if port_id is None:
+                                # Create Port object
+                                port_str = str(u.port) if u.port else (
+                                    '443' if u.scheme == 'https' else '80')
+                                secure = u.scheme == 'https'
 
-                            port_obj = data_model.Port(
-                                parent_id=host_id)
-                            port_obj.collection_tool_instance_id = tool_instance_id
-                            port_obj.proto = 0
-                            port_obj.port = port_str
-                            port_obj.secure = secure
+                                port_obj = data_model.Port(
+                                    parent_id=host_id)
+                                port_obj.collection_tool_instance_id = tool_instance_id
+                                port_obj.proto = 0
+                                port_obj.port = port_str
+                                port_obj.secure = secure
+                                port_id = port_obj.id
 
-                            # Add port
-                            ret_arr.append(port_obj)
+                                # Add port
+                                ret_arr.append(port_obj)
 
                             # Create http endpoint
                             http_endpoint_obj = data_model.HttpEndpoint(
-                                parent_id=port_obj.id)
+                                parent_id=port_id)
                             http_endpoint_obj.collection_tool_instance_id = tool_instance_id
                             http_endpoint_obj.web_path_id = web_path_id
 
@@ -443,7 +483,7 @@ class GauImport(data_model.ImportToolXOutput):
                             http_endpoint_data_obj = data_model.HttpEndpointData(
                                 parent_id=http_endpoint_obj.id)
                             http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
-                            http_endpoint_data_obj.domain_id = endpoint_domain_id
+                            http_endpoint_data_obj.domain_id = domain_id
 
                             # Add the endpoint
                             ret_arr.append(http_endpoint_data_obj)
