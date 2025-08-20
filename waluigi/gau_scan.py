@@ -267,8 +267,8 @@ class GauScan(luigi.Task):
                     if 'stderr' in ret_dict and ret_dict['stderr']:
                         err_msg = ret_dict['stderr']
                     logging.getLogger(__name__).error(
-                        "Nmap scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
-                    raise RuntimeError("Nmap scan for scan ID %s exited with code %d: %s" % (
+                        "Gau scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+                    raise RuntimeError("Gau scan for scan ID %s exited with code %d: %s" % (
                         scheduled_scan_obj.id, exit_code, err_msg))
 
             # Write the output file
@@ -355,9 +355,9 @@ class GauImport(data_model.ImportToolXOutput):
                             host = u.netloc
                             if ":" in host:
                                 host_arr = host.split(":")
-                                domain_str = host_arr[0].lower
+                                domain_str = host_arr[0].lower()
                             else:
-                                domain_str = host
+                                domain_str = host.lower()
 
                             # Check if the domain is an IP adress
                             endpoint_domain_id = None

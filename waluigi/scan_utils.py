@@ -161,7 +161,7 @@ class ThreadExecutorWrapper:
             return
 
         try:
-            result = future.result()
+            future.result()
             logging.getLogger(__name__).debug(
                 f"Task {task_id}/{len(self.futures_map)} completed")
         except Exception as e:
