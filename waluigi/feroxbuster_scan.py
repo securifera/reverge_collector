@@ -550,9 +550,9 @@ class ImportFeroxOutput(data_model.ImportToolXOutput):
                                     host = u.netloc
                                     if ":" in host:
                                         host_arr = host.split(":")
-                                        domain_str = host_arr[0].lower
+                                        domain_str = host_arr[0].lower()
                                     else:
-                                        domain_str = host
+                                        domain_str = host.lower()
 
                                     # Check if the domain is an IP adress
                                     endpoint_domain_id = None

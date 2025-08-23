@@ -496,9 +496,9 @@ class ScheduledScanThread(threading.Thread):
                 scheduled_scan_obj.current_tool_instance_id = None
 
         # Perform scan cleanup on successful completion
-        if ret_status == data_model.CollectionToolStatus.COMPLETED.value:
-            scan_cleanup.scan_cleanup_func(scheduled_scan_obj.id)
-            err_msg = None
+        # if ret_status == data_model.CollectionToolStatus.COMPLETED.value:
+        scan_cleanup.scan_cleanup_func(scheduled_scan_obj.id)
+        # err_msg = None
 
         return err_msg
 
