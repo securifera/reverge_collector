@@ -73,7 +73,8 @@ class Nuclei(data_model.WaluigiTool):
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 7
         self.args: str = "-ni -pt http -rl 50 -t http/technologies/fingerprinthub-web-fingerprints.yaml"
-        self.input_records = [data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+        self.input_records = [data_model.ServerRecordType.PORT,
+                              data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
         self.output_records = [
             data_model.ServerRecordType.COLLECTION_MODULE,
             data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
