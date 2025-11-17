@@ -123,7 +123,8 @@ class Feroxbuster(data_model.WaluigiTool):
         self.args = "--rate-limit 50 -s 200 -n --auto-bail"
         self.scan_func = Feroxbuster.feroxbuster_scan_func
         self.import_func = Feroxbuster.feroxbuster_import
-        self.input_records = [data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+        self.input_records = [data_model.ServerRecordType.PORT,
+                              data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
         self.output_records = [
             data_model.ServerRecordType.DOMAIN,
             data_model.ServerRecordType.LIST_ITEM,
