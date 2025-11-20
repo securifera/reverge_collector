@@ -104,7 +104,7 @@ class Gau(data_model.WaluigiTool):
         # self.args = "--blacklist .png,.jpg,.gif,.ttf,.woff,.svg --retries 3 --timeout 5 --subs"
         self.args = "--retries 3 --timeout 5"
         self.input_records = [
-            data_model.ServerRecordType.DOMAIN, data_model.ServerRecordType.HTTP_ENDPOINT]
+            data_model.ServerRecordType.DOMAIN, data_model.ServerRecordType.PORT, data_model.ServerRecordType.HTTP_ENDPOINT]
         self.output_records = [
             data_model.ServerRecordType.PORT,
             data_model.ServerRecordType.HOST,
@@ -238,7 +238,8 @@ class GauScan(luigi.Task):
                 [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
 
             # Create a list of domains to pass to gau
-            domain_list_str = '\n'.join(domain.name for domain in domain_obj_list)
+            domain_list_str = '\n'.join(
+                domain.name for domain in domain_obj_list)
 
         tool_args = scheduled_scan_obj.current_tool.args
         if tool_args:
@@ -302,6 +303,7 @@ class GauScan(luigi.Task):
                 output_fd.write(json.dumps(
                     {'domain_map': domain_host_map, 'output_file': gau_scan_output_path}))
 
+
 @inherits(GauScan)
 class GauImport(data_model.ImportToolXOutput):
     """
@@ -344,7 +346,7 @@ class GauImport(data_model.ImportToolXOutput):
         path_hash_map = {}
         port_host_map = {}
         host_ip_id_map = {}
-        domain_name_id_map  = {}
+        domain_name_id_map = {}
 
         gau_meta_file_path = self.input().path
         with open(gau_meta_file_path, 'r') as file_fd:
@@ -413,7 +415,7 @@ class GauImport(data_model.ImportToolXOutput):
                             if 'host_id' in port_data:
                                 host_id = port_data['host_id']
                             else:
-                                
+
                                 ret_list = scan_utils.dns_wrapper(
                                     set([domain_str]))
                                 if ret_list and len(ret_list) > 0:
@@ -424,7 +426,7 @@ class GauImport(data_model.ImportToolXOutput):
                                     if ip_addr in host_ip_id_map:
                                         host_id = host_ip_id_map[ip_addr]
                                     else:
-                                    
+
                                         host_obj = data_model.Host()
                                         host_obj.collection_tool_instance_id = tool_instance_id
 
@@ -442,7 +444,8 @@ class GauImport(data_model.ImportToolXOutput):
                             else:
 
                                 if (port_str, host_id) in port_host_map:
-                                    port_id = port_host_map[(port_str, host_id)]
+                                    port_id = port_host_map[(
+                                        port_str, host_id)]
                                 else:
                                     port_obj = data_model.Port(
                                         parent_id=host_id)
@@ -454,8 +457,8 @@ class GauImport(data_model.ImportToolXOutput):
 
                                     # Add port
                                     ret_arr.append(port_obj)
-                                    port_host_map[(port_str, host_id)] = port_id
-
+                                    port_host_map[(
+                                        port_str, host_id)] = port_id
 
                             # This will be set if we've already seen this domain
                             if 'domain_id' in port_data:
@@ -476,7 +479,6 @@ class GauImport(data_model.ImportToolXOutput):
                                     # Add domain
                                     ret_arr.append(domain_obj)
                                     domain_name_id_map[domain_str] = domain_id
-
 
                             if web_path_hash in path_hash_map:
                                 path_obj = path_hash_map[web_path_hash]
