@@ -2337,12 +2337,8 @@ class Port(Record):
                     temp_domain_list = scope_obj.domain_host_id_map[host_id]
                     for domain_obj in temp_domain_list:
                         domain_name = domain_obj.name
-                        try:
-                            validators.hostname(domain_name)
-                            if domain_name != 'localhost':
-                                domain_set.add(domain_name)
-                        except Exception as e:
-                            pass
+                        if validators.hostname(domain_name) and domain_name != 'localhost':
+                            domain_set.add(domain_name)
 
                 if port_id and port_id in scope_obj.certificate_port_id_map:
                     temp_cert_list = scope_obj.certificate_port_id_map[port_id]
