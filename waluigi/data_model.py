@@ -20,7 +20,6 @@ import enum
 import hashlib
 import threading
 import uuid
-from typing import List, Dict, Set, Optional, Union, Any, Tuple
 import netaddr
 import luigi
 import os
@@ -29,7 +28,10 @@ import importlib
 import logging
 import traceback
 import signal
+import validators
+import ipaddress
 
+from typing import List, Dict, Set, Optional, Union, Any, Tuple
 from waluigi.scan_utils import get_ports, construct_url
 
 # Configuration: Available security scanning tools
@@ -1292,7 +1294,8 @@ class ScanData:
 
             # Add domain variants
             if host_id in self.domain_host_id_map:
-                for domain_obj in self.domain_host_id_map[host_id]:
+                domain_list = self.domain_host_id_map[host_id]
+                for domain_obj in domain_list:
                     domain_metadata = base_metadata.copy()
                     domain_metadata["domain"] = domain_obj.name
                     domain_metadata["domain_id"] = domain_obj.id
@@ -1391,6 +1394,35 @@ class ScanData:
         """
         for port_id in self.port_map:
             update_host_port_obj_map(self, port_id, self.host_port_obj_map)
+
+    def _update_component_port_mappings(self, component_id_port_id_map: Dict[str, List[str]]) -> None:
+        """
+        Update the component to port ID mappings.
+
+        This internal method updates the mapping of components to their associated
+        port IDs based on the provided mapping dictionary.
+
+        Args:
+            component_id_port_id_map (Dict[str, List[str]]): Mapping of component IDs to port IDs
+
+        Returns:
+            None: Updates internal data structures in place
+        """
+        for port_id in component_id_port_id_map:
+            # Check if port exists once before processing its ports
+            if port_id not in self.port_map:
+                logging.getLogger(__name__).error(
+                    "_update_component_port_mappings: Port ID %s not found in port_map", port_id)
+                continue
+
+            component_id_list = component_id_port_id_map[port_id]
+
+            for component_id in component_id_list:
+                # Use setdefault to avoid redundant lookup and creation
+                if component_id in self.component_map:
+                    component_obj = self.component_map[component_id]
+                    self.component_port_id_map.setdefault(
+                        port_id, []).append(component_obj)
 
     def _process_data(self, obj_list: List[Any], record_tags: Set[str] = None) -> None:
         """
@@ -1875,6 +1907,11 @@ class ScanData:
         # Perform post-processing to build derived mappings
         self._post_process()
 
+        # Update component port mappings if it exists in scan data
+        if 'component_id_port_id_map' in scan_data and scan_data['component_id_port_id_map']:
+            component_id_port_id_map = scan_data['component_id_port_id_map']
+            self._update_component_port_mappings(component_id_port_id_map)
+
 
 class Record:
     """
@@ -2283,6 +2320,12 @@ class Port(Record):
                 host_obj = scope_obj.host_map[host_id]
                 ip_addr = host_obj.ipv4_addr
 
+                ip_addr = ipaddress.ip_address(ip_addr)
+
+                # Check if the address is a loopback address
+                if ip_addr.is_loopback:
+                    return []
+
                 url_str = construct_url(
                     ip_addr, self.port, False)
                 if url_str:
@@ -2294,7 +2337,12 @@ class Port(Record):
                     temp_domain_list = scope_obj.domain_host_id_map[host_id]
                     for domain_obj in temp_domain_list:
                         domain_name = domain_obj.name
-                        domain_set.add(domain_name)
+                        try:
+                            validators.hostname(domain_name)
+                            if domain_name != 'localhost':
+                                domain_set.add(domain_name)
+                        except Exception as e:
+                            pass
 
                 if port_id and port_id in scope_obj.certificate_port_id_map:
                     temp_cert_list = scope_obj.certificate_port_id_map[port_id]
@@ -2764,6 +2812,7 @@ class HttpEndpointData(Record):
         screenshot_id (Optional[str]): ID of associated screenshot
         last_modified (Optional[str]): Last-Modified header value
         fav_icon_hash (Optional[str]): Hash of the favicon for fingerprinting
+        content_length (Optional[str]): Content length
 
     Example:
         >>> data = HttpEndpointData(parent_id="endpoint_123")
@@ -2787,6 +2836,7 @@ class HttpEndpointData(Record):
         self.screenshot_id: Optional[str] = None
         self.last_modified: Optional[str] = None
         self.fav_icon_hash: Optional[str] = None
+        self.content_length: Optional[str] = None
 
     def _data_to_jsonable(self) -> Dict[str, Optional[str]]:
         """
@@ -2809,6 +2859,9 @@ class HttpEndpointData(Record):
 
         if self.fav_icon_hash is not None:
             ret['fav_icon_hash'] = self.fav_icon_hash
+
+        if self.content_length is not None:
+            ret['content_length'] = self.content_length
 
         return ret
 
@@ -2877,6 +2930,7 @@ class HttpEndpointData(Record):
                 - screenshot_id (optional): Associated screenshot ID
                 - domain_id (optional): Associated domain ID
                 - fav_icon_hash (optional): Favicon hash
+                - content_length (optional): Content length
 
         Raises:
             Exception: If deserialization fails with invalid data
@@ -2891,6 +2945,7 @@ class HttpEndpointData(Record):
             self.last_modified = None
             self.domain_id = None
             self.fav_icon_hash = None
+            self.content_length = None
 
             if 'title' in input_data_dict:
                 self.title = input_data_dict['title']
@@ -2909,6 +2964,9 @@ class HttpEndpointData(Record):
 
             if 'fav_icon_hash' in input_data_dict and input_data_dict['fav_icon_hash']:
                 self.fav_icon_hash = input_data_dict['fav_icon_hash']
+
+            if 'content_length' in input_data_dict and input_data_dict['content_length']:
+                self.content_length = input_data_dict['content_length']
 
         except Exception as e:
             raise Exception('Invalid http endpoint data object: %s' % str(e))

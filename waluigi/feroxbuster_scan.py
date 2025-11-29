@@ -601,11 +601,16 @@ class ImportFeroxOutput(data_model.ImportToolXOutput):
                                     # Add the endpoint
                                     ret_arr.append(http_endpoint_obj)
 
+                                    content_length = None
+                                    if 'content_length' in web_result:
+                                        content_length = web_result['content_length']
+
                                     http_endpoint_data_obj = data_model.HttpEndpointData(
                                         parent_id=http_endpoint_obj.id)
                                     http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
                                     http_endpoint_data_obj.domain_id = endpoint_domain_id
                                     http_endpoint_data_obj.status = status_code
+                                    http_endpoint_data_obj.content_length = content_length
 
                                     # Add the endpoint
                                     ret_arr.append(http_endpoint_data_obj)
