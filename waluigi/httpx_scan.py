@@ -565,6 +565,13 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                     except:
                         status_code = None
 
+                content_length = None
+                if 'content_length' in httpx_scan:
+                    try:
+                        content_length = int(httpx_scan['content_length'])
+                    except:
+                        content_length = None
+
                 # Add secure flag if a 400 was returned and it has a certain title
                 if (status_code and status_code == 400) and (title and 'The plain HTTP request was sent to HTTPS port' in title):
                     port_obj.secure = True
@@ -818,6 +825,7 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                 http_endpoint_data_obj.last_modified = last_modified
                 http_endpoint_data_obj.screenshot_id = screenshot_id
                 http_endpoint_data_obj.fav_icon_hash = favicon_hash
+                http_endpoint_data_obj.content_length = content_length
 
                 # Add the endpoint data
                 ret_arr.append(http_endpoint_data_obj)

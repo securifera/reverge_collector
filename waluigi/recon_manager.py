@@ -20,6 +20,7 @@ Key Components:
 - ScheduledScan: Represents individual scan configurations and state
 - ScheduledScanThread: Thread-based scan executor with polling capabilities
 - SessionException: Custom exception for authentication and session issues
+- ScanNotFoundException: Custom exception for when scans are not found on server
 - ScanStatus/CollectionToolStatus: Enumerations for tracking scan states
 
 The architecture supports:
@@ -34,6 +35,7 @@ The architecture supports:
 
 Classes:
     SessionException: Custom exception for session management failures
+    ScanNotFoundException: Custom exception for scan not found errors (404)
     ScanStatus: Enumeration of possible scan states
     CollectionToolStatus: Enumeration of tool execution states
     ScheduledScan: Individual scan configuration and execution context
@@ -118,6 +120,41 @@ class SessionException(Exception):
 
         Example:
             >>> raise SessionException("Session expired")
+        """
+        super().__init__(message)
+
+
+class ScanNotFoundException(Exception):
+    """
+    Custom exception for when a scan is not found on the server.
+
+    This exception is raised when attempting to update or retrieve a scan
+    that no longer exists on the management server (404 response).
+
+    Attributes:
+        message (str): Descriptive error message explaining the scan not found
+
+    Example:
+        >>> try:
+        ...     manager.update_scan_status(scan_id, status)
+        ... except ScanNotFoundException as e:
+        ...     print(f"Scan not found: {e}")
+
+    Note:
+        This exception indicates the scan has been deleted from the server
+        and should be removed from local tracking.
+    """
+
+    def __init__(self, message: str = "Scan not found on server") -> None:
+        """
+        Initialize ScanNotFoundException with error message.
+
+        Args:
+            message (str): Error message describing the scan not found error.
+                          Defaults to "Scan not found on server"
+
+        Example:
+            >>> raise ScanNotFoundException("Scan ID 123 not found")
         """
         super().__init__(message)
 
@@ -402,6 +439,7 @@ class ScheduledScanThread(threading.Thread):
                 # Configure current tool for scan context
                 scheduled_scan_obj.current_tool = tool_obj
                 scheduled_scan_obj.current_tool_instance_id = collection_tool_inst.id
+                scheduled_scan_obj.current_tool_api_key = collection_tool_inst.api_key
 
                 # Check for scan cancellation from server
                 scan_status = self.recon_manager.get_scan_status(
@@ -611,6 +649,13 @@ class ScheduledScanThread(threading.Thread):
                 if self.connection_manager:
                     self.connection_manager.free_connection_lock()
 
+            except ScanNotFoundException as e:
+                # Scan was deleted from server, remove from local tracking
+                logging.getLogger(__name__).warning(
+                    f"Scan {scheduled_scan_obj.id} not found on server, removing from local map: {e}")
+                with self.scan_thread_lock:
+                    if scheduled_scan_obj.id in self.scheduled_scan_map:
+                        del self.scheduled_scan_map[scheduled_scan_obj.id]
             except Exception as e:
                 logging.getLogger(__name__).debug(traceback.format_exc())
 
@@ -1603,6 +1648,9 @@ class ReconManager:
         b64_val = encrypt_data(self.session_key, json_data)
         r = requests.post('%s/api/scheduler/%s/' % (self.manager_url, schedule_scan_id),
                           headers=self.headers, json={"data": b64_val}, verify=False)
+        if r.status_code == 404:
+            raise ScanNotFoundException(
+                f"Scan {schedule_scan_id} not found on server")
         if r.status_code != 200:
             raise RuntimeError("[-] Error updating scan status.")
 

@@ -345,7 +345,7 @@ class SecTrailsIPLookupScan(luigi.Task):
         ip_to_host_dict_map: Dict[str, Dict[str, Any]] = {}
 
         # Get SecurityTrails API key from scan configuration
-        api_key = scheduled_scan_obj.current_tool.api_key
+        api_key = scheduled_scan_obj.current_tool_api_key
 
         if api_key and len(api_key) > 0:
 

@@ -304,8 +304,8 @@ def update_config_file(collection_tools: Optional[List[Any]], my_env: Dict[str, 
     if collection_tools:
         for collection_tool_inst in collection_tools:
             collection_tool = collection_tool_inst.collection_tool
-            if collection_tool.name in api_key_arr and collection_tool.api_key:
-                data[collection_tool.name] = [collection_tool.api_key]
+            if collection_tool.name in api_key_arr and collection_tool_inst.api_key:
+                data[collection_tool.name] = [collection_tool_inst.api_key]
 
     # Write to config file
     with open(config_file_path, 'w') as yaml_file:
