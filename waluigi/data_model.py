@@ -2320,10 +2320,10 @@ class Port(Record):
                 host_obj = scope_obj.host_map[host_id]
                 ip_addr = host_obj.ipv4_addr
 
-                ip_addr = ipaddress.ip_address(ip_addr)
+                ip_addr_obj = ipaddress.ip_address(ip_addr)
 
                 # Check if the address is a loopback address
-                if ip_addr.is_loopback:
+                if ip_addr_obj.is_loopback:
                     return []
 
                 url_str = construct_url(
