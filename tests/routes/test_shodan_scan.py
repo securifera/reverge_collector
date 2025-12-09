@@ -22,9 +22,9 @@ class TestShodanScan:
         tool_id_instance = get_tool_id(recon_manager, self.TOOL_NAME)
         scan_id = self.TEST_SCAN_ID
         scheduled_scan_id = self.TEST_SCHEDULED_SCAN_ID
-        tool_inst = {'id': 'a9866b94f7104754bd161c1ab7cbf0cd', 'collection_tool': {'wordlists': [], 'name': self.TOOL_NAME, 'args':
-                                                                                   '', 'tool_type': 1, 'scan_order': 1, 'api_key': 'test',
-                                                                                   'id': tool_id_instance}, 'args_override': None,
+        tool_inst = {'id': 'a9866b94f7104754bd161c1ab7cbf0cd', 'api_key': 'test', 'collection_tool': {'wordlists': [], 'name': self.TOOL_NAME, 'args':
+                                                                                                      '', 'tool_type': 1, 'scan_order': 1,
+                                                                                                      'id': tool_id_instance}, 'args_override': None,
                      'enabled': 1, 'status': 0, 'status_message': None, 'collection_tool_id': tool_id_instance,
                      'scheduled_scan_id': scheduled_scan_id, 'owner_id': '94cb514e85da4abea6ee227730328619'}
 
@@ -63,6 +63,7 @@ class TestShodanScan:
 
             # Set the current tool
             scheduled_scan_obj.current_tool = first_tool.collection_tool
+            scheduled_scan_obj.current_tool_api_key = 'test'
             if first_tool.args_override:
                 scheduled_scan_obj.current_tool.args = first_tool.args_override
 
@@ -95,9 +96,9 @@ class TestShodanScan:
         tool_id_instance = get_tool_id(recon_manager, self.TOOL_NAME)
         scan_id = self.TEST_SCAN_ID
         scheduled_scan_id = self.TEST_SCHEDULED_SCAN_ID
-        tool_inst = {'id': 'a9866b94f7104754bd161c1ab7cbf0cd', 'collection_tool': {'wordlists': [], 'name': self.TOOL_NAME, 'args':
-                                                                                   '', 'tool_type': 1, 'scan_order': 1, 'api_key': 'test',
-                                                                                   'id': tool_id_instance}, 'args_override': None,
+        tool_inst = {'id': 'a9866b94f7104754bd161c1ab7cbf0cd', 'api_key': 'test', 'collection_tool': {'wordlists': [], 'name': self.TOOL_NAME, 'args':
+                                                                                                      '', 'tool_type': 1, 'scan_order': 1,
+                                                                                                      'id': tool_id_instance}, 'args_override': None,
                      'enabled': 1, 'status': 0, 'status_message': None, 'collection_tool_id': tool_id_instance,
                      'scheduled_scan_id': scheduled_scan_id, 'owner_id': '94cb514e85da4abea6ee227730328619'}
 
@@ -134,6 +135,7 @@ class TestShodanScan:
 
                 # Set the current tool
                 scheduled_scan_obj.current_tool = first_tool.collection_tool
+                scheduled_scan_obj.current_tool_api_key = 'test'
                 if first_tool.args_override:
                     scheduled_scan_obj.current_tool.args = first_tool.args_override
 
