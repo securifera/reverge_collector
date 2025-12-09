@@ -98,7 +98,8 @@ class Shodan(data_model.WaluigiTool):
         self.scan_order = 3
         self.args = ""
         self.import_func = Shodan.import_shodan
-        self.input_records = [data_model.ServerRecordType.HOST]
+        self.input_records = [
+            data_model.ServerRecordType.HOST, data_model.ServerRecordType.SUBNET]
         self.output_records = [
             data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
             data_model.ServerRecordType.HTTP_ENDPOINT,
@@ -254,7 +255,7 @@ def shodan_dns_query(api: shodan.Shodan, domain: str) -> List[str]:
             if "limit reached" in err_msg:
                 time.sleep(1)
                 continue
-            if "invalid api key" in err_msg:
+            if "invalid api key" in err_msg or 'access denied' in err_msg:
                 raise e
             if "no information" not in err_msg:
                 logging.getLogger(__name__).error(
@@ -314,7 +315,7 @@ def shodan_host_query(api: shodan.Shodan, ip: Union[str, netaddr.IPAddress]) -> 
             if "limit reached" in err_msg:
                 time.sleep(1)
                 continue
-            if "invalid api key" in err_msg:
+            if "invalid api key" in err_msg or 'access denied' in err_msg:
                 raise e
             if "no information" not in err_msg:
                 logging.getLogger(__name__).error(
@@ -372,7 +373,7 @@ def shodan_subnet_query(api: shodan.Shodan, subnet: Union[str, netaddr.IPAddress
             if "limit reached" in err_msg:
                 time.sleep(1)
                 continue
-            if "invalid api key" in err_msg:
+            if "invalid api key" in err_msg or 'access denied' in err_msg:
                 raise e
             if "no information" not in err_msg:
                 logging.getLogger(__name__).error(
@@ -603,7 +604,7 @@ class ShodanScan(luigi.Task):
             input_data = json.loads(file_fd.read())
 
         # Write the output
-        shodan_key = scheduled_scan_obj.current_tool.api_key
+        shodan_key = scheduled_scan_obj.current_tool_api_key
         if shodan_key and len(shodan_key) > 0:
 
             output_arr = []
