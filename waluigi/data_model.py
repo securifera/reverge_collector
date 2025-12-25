@@ -45,16 +45,15 @@ waluigi_tools: List[Tuple[str, str]] = [
     ('waluigi.feroxbuster_scan', 'Feroxbuster'),  # Directory/file brute forcer
     ('waluigi.shodan_lookup', 'Shodan'),     # Shodan API integration
     ('waluigi.httpx_scan', 'Httpx'),         # HTTP toolkit
-    # SecurityTrails API integration
-    ('waluigi.sectrails_ip_lookup', 'Sectrails'),
+    ('waluigi.sectrails_ip_lookup', 'Sectrails'),     # SecurityTrails API integration
     ('waluigi.module_scan', 'Module'),       # Custom module execution
-    ('waluigi.badsecrets_scan', 'Badsecrets'),  # Secret detection
+    ('waluigi.crapsecrets_scan', 'Crapsecrets'),  # Secret detection
     ('waluigi.webcap_scan', 'Webcap'),        # Web capture and analysis
     ('waluigi.gau_scan', 'Gau'),        # Web endpoint crawling results
     ('waluigi.python_scan', 'Python'),        # Python script execution
-    # IIS Shortname Scanner
-    ('waluigi.iis_short_scan', 'IISShortnameScanner'),
+    ('waluigi.iis_short_scan', 'IISShortnameScanner'), # IIS Shortname Scanner
     # ('waluigi.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
+    ('waluigi.ip_thc_lookup', 'IPThc'),  # IP THC API integration
 ]
 
 # Global configuration: Wordlist storage path

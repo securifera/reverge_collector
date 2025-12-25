@@ -153,9 +153,15 @@ cd /tmp; curl -k -s https://api.github.com/repos/epi052/feroxbuster/releases/lat
 sudo chmod +x /usr/local/bin/feroxbuster
 
 # Badsecrets
-python3 -m pip install badsecrets
+#python3 -m pip install badsecrets
+cd /tmp
+sudo git clone -c http.sslVerify=false https://github.com/securifera/crapsecrets
+cd crapsecrets
+poetry build
+python3 -m pip install dist/crapsecrets*.whl
 
 # Install Google Chrome
+cd /tmp
 wget -O /tmp/google-chrome-stable_current_amd64.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 install_packages /tmp/google-chrome-stable_current_amd64.deb
 rm -f /tmp/google-chrome-stable_current_amd64.deb

@@ -222,8 +222,10 @@ Comprehensive object-oriented representation:
 | **Feroxbuster** | Directory enumeration | Native binary | ✅ Active |
 | **Shodan** | Search engine integration | Python API | ✅ Passive |
 | **Pyshot** | Website Screenshot | PhantomJS | ✅ Active |
-| **BadSecrets** | Secret detection | Custom implementation | ✅ Active |
+| **Crap(Bad)Secrets** | Secret detection | Custom implementation | ✅ Active |
 | **WebCapture** | Website Screenshot | Chrome | ✅ Active |
+| **IP THC DNS** | Subdomain enumeration & reverse IP lookup | Python API | ✅ Passive |
+| **IIS Shortname Scanner** | Website enumeration using IIS Shortname | Python | ✅ Active |
 
 ### Tool Execution Flow
 

@@ -81,8 +81,8 @@ class TestIISShortScan:
                 assert isinstance(result_map, dict) and len(result_map) > 0
                 port_entry_inst = next(iter(result_map.values()))
 
-                logging.getLogger(__name__).warning(
-                    f"Result map: {port_entry_inst}")
+                # logging.getLogger(__name__).warning(
+                #    f"Result map: {port_entry_inst}")
 
                 port_entry_list = port_entry_inst.get('results', [])
                 assert isinstance(port_entry_list, list) and len(

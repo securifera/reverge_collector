@@ -33,13 +33,13 @@ Constants:
 """
 
 from waluigi import recon_manager
+from waluigi.version import __version__
 import traceback
 import argparse
 import time
 import sys
 import logging
 import queue
-from typing import Optional, Any, Union
 
 # Configuration: Local backend communication port
 local_extender_port: int = 33333
@@ -335,18 +335,19 @@ if __name__ == "__main__":
         required=True,
         type=str
     )
+
     parser.add_argument(
-        '-t', dest='test',
-        help='Test flag to validate installation and configuration',
+        '-v', dest='version',
+        help='Display version information',
         action='store_true'
     )
 
     # Parse command-line arguments
     args = parser.parse_args()
 
-    # Handle test mode
-    if args.test:
-        print("[*] Test successful - Waluigi scan poller configuration validated")
+    # Handle version display
+    if args.version:
+        print(f"[*] Waluigi scan poller version {__version__}")
         sys.exit(0)
 
     # Start main application
