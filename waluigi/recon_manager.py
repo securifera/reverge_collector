@@ -1409,31 +1409,31 @@ class ReconManager:
 
         return wordlist
 
-    def get_target(self, scan_id):
+    # def get_target(self, scan_id):
 
-        target_obj = None
-        r = requests.get('%s/api/target/scan/%s' % (self.manager_url,
-                         scan_id), headers=self.headers, verify=False)
-        if r.status_code == 404:
-            return target_obj
-        if r.status_code != 200:
-            logging.getLogger(__name__).error(
-                "Unknown Error retrieving targets")
-            return target_obj
+    #     target_obj = None
+    #     r = requests.get('%s/api/target/scan/%s' % (self.manager_url,
+    #                      scan_id), headers=self.headers, verify=False)
+    #     if r.status_code == 404:
+    #         return target_obj
+    #     if r.status_code != 200:
+    #         logging.getLogger(__name__).error(
+    #             "Unknown Error retrieving targets")
+    #         return target_obj
 
-        if r.content:
-            try:
-                content = r.json()
-                if content:
-                    data = self._decrypt_json(content)
-                    target_obj = json.loads(
-                        data, object_hook=lambda d: SimpleNamespace(**d))
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    "Error retrieving target: %s" % str(e))
-                logging.getLogger(__name__).debug(traceback.format_exc())
+    #     if r.content:
+    #         try:
+    #             content = r.json()
+    #             if content:
+    #                 data = self._decrypt_json(content)
+    #                 target_obj = json.loads(
+    #                     data, object_hook=lambda d: SimpleNamespace(**d))
+    #         except Exception as e:
+    #             logging.getLogger(__name__).error(
+    #                 "Error retrieving target: %s" % str(e))
+    #             logging.getLogger(__name__).debug(traceback.format_exc())
 
-        return target_obj
+    #     return target_obj
 
     def get_urls(self, scan_id):
 

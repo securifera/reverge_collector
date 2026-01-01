@@ -28,10 +28,10 @@ Global Variables:
 
 Example:
     Basic usage through the Waluigi framework::
-    
+
         # Initialize the tool
         ip_thc = IPThc()
-        
+
         # Execute IP lookup
         success = ip_thc.import_func(scan_input_obj)
 
@@ -157,7 +157,113 @@ class IPThc(data_model.WaluigiTool):
         return True
 
 
-def request_wrapper(ip_addr: str) -> Dict[str, Union[str, List[str]]]:
+def process_response(data):
+
+    domain_set = set()
+    # Parse API response and extract domain information
+    content = json.loads(data.decode("utf-8"))
+
+    # IP THC returns response with 'domains' key containing array of domain objects
+    if isinstance(content, dict) and 'domains' in content:
+        domains_array = content['domains']
+        if isinstance(domains_array, list):
+            # Each domain object contains domain name and metadata
+            for domain_obj in domains_array:
+                if isinstance(domain_obj, dict):
+                    # Extract the domain name from the domain object
+                    if 'domain' in domain_obj:
+                        domain_name = domain_obj['domain'].strip()
+                        if domain_name:
+                            domain_set.add(domain_name)
+
+    return domain_set
+
+
+def subdomain_request_wrapper(domain: str) -> Dict[str, Union[str, List[str]]]:
+    """
+    Execute IP THC API request for IP-to-domain lookup.
+
+    This function performs the core API communication with IP THC to resolve
+    an IP address to associated domain names. It handles response parsing to
+    extract domain information from the API response.
+
+    The function queries IP THC's lookup endpoint with the provided IP address
+    and returns all associated domain names found in their passive DNS database.
+
+    Args:
+        domain (str): The domain to lookup in IP THC database.
+
+    Returns:
+        Dict[str, Union[str, List[str]]]: Dictionary containing lookup results with keys:
+            - 'ip_addr' (str): The original IP address that was queried
+            - 'domains' (List[str]): List of unique domain names associated with the IP
+
+    Raises:
+        RuntimeError: If the API request fails with non-recoverable error codes
+            or if the IP THC service returns invalid responses.
+
+    Example:
+        >>> result = request_wrapper('8.8.8.8')
+        >>> print(f"Found {len(result['domains'])} domains for {result['ip_addr']}")
+        Found 5 domains for 8.8.8.8
+
+        >>> for domain in result['domains']:
+        ...     print(f"  - {domain}")
+
+    Note:
+        The function uses http.client for direct HTTPS communication with IP THC.
+        IP THC returns domain information with metadata like apex_domain, country, etc.
+        This function extracts unique domain names from the response.
+    """
+    # Initialize domain set for collecting unique domains
+    ret_str: Dict[str, Union[str, List[str]]] = {
+        'target': domain, 'domains': []}
+
+    # Prepare payload for IP THC API request
+    payload = json.dumps({
+        "domain": domain
+    })
+
+    # Set up API headers
+    headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+    }
+
+    # Execute API request
+    data = None
+    try:
+        conn = http.client.HTTPSConnection("ip.thc.org")
+        conn.request("POST", "/api/v1/lookup/subdomains", payload, headers)
+        res = conn.getresponse()
+        data = res.read()
+
+        # Check response status
+        if res.status != 200:
+            logging.getLogger(__name__).debug(
+                "Status code: %d" % res.status)
+            logging.getLogger(__name__).debug(data.decode("utf-8"))
+            raise RuntimeError("[-] Error getting IP THC output.")
+
+        conn.close()
+
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            f"Error during IP THC lookup: {str(e)}")
+        raise RuntimeError(f"[-] Error getting IP THC output: {str(e)}")
+
+    if data:
+        logging.getLogger(__name__).warning(
+            "Response Data: %s" % data.decode("utf-8"))
+        domain_set = process_response(data)
+
+        # Return results with unique domains sorted for consistency
+        ret_str['domains'] = sorted(list(domain_set))
+
+    return ret_str
+
+
+def reverse_dns_request_wrapper(ip_addr: str) -> Dict[str, Union[str, List[str]]]:
     """
     Execute IP THC API request for IP-to-domain lookup.
 
@@ -196,7 +302,8 @@ def request_wrapper(ip_addr: str) -> Dict[str, Union[str, List[str]]]:
     """
     # Initialize domain set for collecting unique domains
     domain_set: Set[str] = set()
-    ret_str: Dict[str, Union[str, List[str]]] = {'ip_addr': ip_addr}
+    ret_str: Dict[str, Union[str, List[str]]] = {
+        'target': ip_addr, 'domains': []}
 
     # Prepare payload for IP THC API request
     payload = json.dumps({
@@ -210,6 +317,7 @@ def request_wrapper(ip_addr: str) -> Dict[str, Union[str, List[str]]]:
     }
 
     # Execute API request
+    data = None
     try:
         conn = http.client.HTTPSConnection("ip.thc.org")
         conn.request("POST", "/api/v1/lookup", payload, headers)
@@ -223,35 +331,18 @@ def request_wrapper(ip_addr: str) -> Dict[str, Union[str, List[str]]]:
             logging.getLogger(__name__).debug(data.decode("utf-8"))
             raise RuntimeError("[-] Error getting IP THC output.")
 
-        # Parse API response and extract domain information
-        content = json.loads(data.decode("utf-8"))
-
-        # IP THC returns response with 'domains' key containing array of domain objects
-        if isinstance(content, dict) and 'domains' in content:
-            domains_array = content['domains']
-            if isinstance(domains_array, list):
-                # Each domain object contains domain name and metadata
-                for domain_obj in domains_array:
-                    if isinstance(domain_obj, dict):
-                        # Extract the domain name from the domain object
-                        if 'domain' in domain_obj:
-                            domain_name = domain_obj['domain'].strip()
-                            if domain_name:
-                                domain_set.add(domain_name)
-                    elif isinstance(domain_obj, str):
-                        # Handle case where domain is just a string
-                        domain_obj = domain_obj.strip()
-                        if domain_obj:
-                            domain_set.add(domain_obj)
-
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).error(
             f"Error during IP THC lookup: {str(e)}")
         raise RuntimeError(f"[-] Error getting IP THC output: {str(e)}")
 
-    # Return results with unique domains sorted for consistency
-    ret_str['domains'] = sorted(list(domain_set))
+    if data:
+        domain_set = process_response(data)
+
+        # Return results with unique domains sorted for consistency
+        ret_str['domains'] = sorted(list(domain_set))
+
     return ret_str
 
 
@@ -375,8 +466,8 @@ class IPThcIPLookupScan(luigi.Task):
             # Add IP address to host mapping with existing host ID
             ip_to_host_dict_map[ip_addr] = {
                 'host_id': host_obj.id,
-                'is_subnet': False,
-                'subnet_obj': None
+                'obj_type': 'ip',
+                'obj': None
             }
 
         target_list = []
@@ -389,29 +480,46 @@ class IPThcIPLookupScan(luigi.Task):
                 target_list.append(subnet_str)
                 ip_to_host_dict_map[subnet_str] = {
                     'host_id': None,
-                    'is_subnet': True,
-                    'subnet_obj': subnet_obj
+                    'obj_type': 'subnet',
+                    'obj': subnet_obj
                 }
             else:
                 # Small subnets: expand into individual IP addresses
-                ip_list = scan_utils.expand_cidr(
-                    subnet_obj.subnet, subnet_obj.mask)
-                for ip_addr in ip_list:
+                ip_network = netaddr.IPNetwork(
+                    f"{subnet_obj.subnet}/{subnet_obj.mask}")
+                for ip_addr in [str(ip) for ip in ip_network]:
                     target_list.append(ip_addr)
 
                     # Add IP address to host mapping if not already present
                     if ip_addr not in ip_to_host_dict_map:
                         ip_to_host_dict_map[ip_addr] = {
                             'host_id': None,
-                            'is_subnet': False,
-                            'subnet_obj': None
+                            'obj_type': 'ip',
+                            'obj': None
                         }
 
-        # Execute concurrent API requests for all IP addresses and subnets
+        # Build IP address mapping for lookup operations
         futures = []
+        # Execute concurrent API requests for all IP addresses and subnets
         for ip_addr in ip_to_host_dict_map:
             futures.append(scan_utils.executor.submit(
-                request_wrapper, ip_addr=ip_addr))
+                reverse_dns_request_wrapper, ip_addr=ip_addr))
+
+        domain_obj_list = scheduled_scan_obj.scan_data.get_domains(
+            [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+        for domain_obj in domain_obj_list:
+
+            host_obj = domain_obj.parent
+
+            # Add IP address to host mapping with existing host ID
+            ip_to_host_dict_map[domain_obj.name] = {
+                'host_id': None,
+                'obj_type': 'domain',
+                'obj': domain_obj
+            }
+
+            futures.append(scan_utils.executor.submit(
+                subdomain_request_wrapper, domain=domain_obj.name))
 
         # Register futures with scan execution framework
         scan_proc_inst = data_model.ToolExecutor(futures)
@@ -423,7 +531,7 @@ class IPThcIPLookupScan(luigi.Task):
         for future in futures:
             ret_dict = future.result()
             # Extract IP address/subnet from results
-            ip_or_subnet = ret_dict['ip_addr']
+            ip_or_subnet = ret_dict['target']
             # Get corresponding mapping dictionary
             target_dict = ip_to_host_dict_map[ip_or_subnet]
 
@@ -431,8 +539,8 @@ class IPThcIPLookupScan(luigi.Task):
             ret_domains = ret_dict['domains']
             if ret_domains and len(ret_domains) > 0:
 
-                if target_dict['is_subnet']:
-                    subnet_obj = target_dict['subnet_obj']
+                if target_dict['obj_type'] == 'subnet':
+                    subnet_obj = target_dict['obj']
                     subnet_network = netaddr.IPNetwork(
                         "%s/%s" % (subnet_obj.subnet, subnet_obj.mask))
 
@@ -463,6 +571,38 @@ class IPThcIPLookupScan(luigi.Task):
                         except (netaddr.core.AddrFormatError, ValueError):
                             # Skip invalid IP addresses
                             pass
+
+                elif target_dict['obj_type'] == 'domain':
+
+                    dns_results = scan_utils.dns_wrapper(
+                        set(ret_domains))
+
+                    for dns_result in dns_results:
+                        domain = dns_result['domain']
+                        resolved_ip = dns_result['ip']
+
+                        try:
+                            ip_obj = netaddr.IPAddress(resolved_ip)
+                            # Check if resolved IP is within the subnet range
+                            ip_str = str(ip_obj)
+                            # Create new host entry for this IP if not already present
+                            if ip_str not in serializable_map:
+                                serializable_map[ip_str] = {
+                                    'host_id': None,
+                                    'domains': [domain],
+                                }
+                            elif 'domains' not in serializable_map[ip_str]:
+                                serializable_map[ip_str]['domains'] = [
+                                    domain]
+                            else:
+                                if domain not in serializable_map[ip_str]['domains']:
+                                    serializable_map[ip_str]['domains'].append(
+                                        domain)
+
+                        except (netaddr.core.AddrFormatError, ValueError):
+                            # Skip invalid IP addresses
+                            pass
+
                 else:
 
                     if ip_or_subnet not in serializable_map:
@@ -577,6 +717,8 @@ class ImportIPThcIPLookupOutput(data_model.ImportToolXOutput):
 
             # Process IP-to-host-to-domain mappings
             ip_to_host_dict_map = scan_data_dict['ip_to_host_dict_map']
+            # logging.getLogger(__name__).warning(
+            #    "Dict: %s" % str(ip_to_host_dict_map))
 
             # First pass: create Host objects for IPs discovered from subnet queries
             for ip_addr in ip_to_host_dict_map:
