@@ -1,10 +1,10 @@
 [build-system]
-requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning"]
-build-backend = "poetry_dynamic_versioning.backend"
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "waluigi"
-version = "1.0.0"
+version = "1.1.0"
 description = "A scan automation pipeline tool written in Python"
 authors = ["Ryan Wincey (b0yd)"]
 repository = "https://github.com/securifera/reverge_collector"
@@ -27,9 +27,3 @@ shodan = "1.31.0"
 pytest = "8.4.2"
 netaddr = "1.3.0"
 validators = "0.35.0"
-
-
-[tool.poetry-dynamic-versioning]
-enable = true
-metadata = true
-format = "v1.0.{distance}"
