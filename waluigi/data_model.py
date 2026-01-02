@@ -45,13 +45,14 @@ waluigi_tools: List[Tuple[str, str]] = [
     ('waluigi.feroxbuster_scan', 'Feroxbuster'),  # Directory/file brute forcer
     ('waluigi.shodan_lookup', 'Shodan'),     # Shodan API integration
     ('waluigi.httpx_scan', 'Httpx'),         # HTTP toolkit
-    ('waluigi.sectrails_ip_lookup', 'Sectrails'),     # SecurityTrails API integration
+    # SecurityTrails API integration
+    ('waluigi.sectrails_ip_lookup', 'Sectrails'),
     ('waluigi.module_scan', 'Module'),       # Custom module execution
     ('waluigi.crapsecrets_scan', 'Crapsecrets'),  # Secret detection
     ('waluigi.webcap_scan', 'Webcap'),        # Web capture and analysis
     ('waluigi.gau_scan', 'Gau'),        # Web endpoint crawling results
     ('waluigi.python_scan', 'Python'),        # Python script execution
-    ('waluigi.iis_short_scan', 'IISShortnameScanner'), # IIS Shortname Scanner
+    ('waluigi.iis_short_scan', 'IISShortnameScanner'),  # IIS Shortname Scanner
     # ('waluigi.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
     ('waluigi.ip_thc_lookup', 'IPThc'),  # IP THC API integration
 ]
@@ -2342,7 +2343,9 @@ class Port(Record):
                 if port_id and port_id in scope_obj.certificate_port_id_map:
                     temp_cert_list = scope_obj.certificate_port_id_map[port_id]
                     for cert_obj in temp_cert_list:
-                        domain_set.update(cert_obj.domain_name_id_map.keys())
+                        for domain_name in cert_obj.domain_name_id_map.keys():
+                            if validators.hostname(domain_name) and domain_name != 'localhost':
+                                domain_set.add(domain_name)
 
                 # Add domain urls
                 for domain_name in domain_set:
