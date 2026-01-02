@@ -11,15 +11,8 @@ jobs:
         python-version: ["3.10"]
     steps:
     - uses: actions/checkout@v4
-    - name: Install
-      run: |
-        sh ./install.sh
     - name: Test
       run: |
-        source ~/venv/bin/activate
-        pytest tests/
-    - name: Execute
-      run: |
-        cd /opt/collector
-        source ~/venv/bin/activate
-        python3 /opt/reverge_collector/waluigi/scan_poller.py -x 1337 -v
+        docker build -t pytest-chrome -f tests/Dockerfile .
+        docker run --shm-size=2g pytest-chrome
+    
