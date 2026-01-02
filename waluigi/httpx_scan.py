@@ -507,8 +507,8 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                     host_id = scheduled_scan_obj.scan_data.host_ip_id_map[target_str]
 
                 ip_str = None
-                if 'host' in httpx_scan:
-                    ip_str = httpx_scan['host']
+                if 'host_ip' in httpx_scan:
+                    ip_str = httpx_scan['host_ip']
                 elif 'a' in httpx_scan:
                     ip_str = httpx_scan['a'][0]
 
