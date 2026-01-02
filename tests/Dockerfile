@@ -9,7 +9,7 @@ LABEL desription="Collector Docker Pytest Image"
 
 # Setup initial environment
 ENV DEBIAN_FRONTEND noninteractive
-SHELL ["/bin/sh", "-c"]
+SHELL ["/bin/bash", "-c"]
 WORKDIR /tmp
 
 RUN apt update
@@ -18,4 +18,4 @@ COPY . /tmp/
 RUN chmod +x /tmp/install.sh
 RUN /tmp/install.sh
 
-CMD  source ~/venv/bin/activate; pytest tests/
+CMD ["/bin/bash", "-c", "source ~/venv/bin/activate && pytest tests/"]
