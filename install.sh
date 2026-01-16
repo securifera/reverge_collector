@@ -180,5 +180,16 @@ cd webcap
 python3 -m build
 python3 -m pip install dist/webcap*.whl
 
+# Install netexec
+sudo apt install pipx git
+pipx ensurepath
+pipx install git+https://github.com/Pennyw0rth/NetExec
+
+# Install metasploit
+cd /tmp
+curl https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > msfinstall &&  chmod 755 msfinstall && sudo ./msfinstall
+sudo msfrpcd -P msf -S -a 127.0.0.1
+python3 -m pip install pymetasploit3
+
 # Clean seclists in the background
 sudo git clone -c http.sslVerify=false https://github.com/danielmiessler/SecLists.git /usr/share/seclists &

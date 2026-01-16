@@ -45,15 +45,17 @@ waluigi_tools: List[Tuple[str, str]] = [
     ('waluigi.feroxbuster_scan', 'Feroxbuster'),  # Directory/file brute forcer
     ('waluigi.shodan_lookup', 'Shodan'),     # Shodan API integration
     ('waluigi.httpx_scan', 'Httpx'),         # HTTP toolkit
-    ('waluigi.sectrails_ip_lookup', 'Sectrails'),     # SecurityTrails API integration
+    # SecurityTrails API integration
+    ('waluigi.sectrails_ip_lookup', 'Sectrails'),
     ('waluigi.module_scan', 'Module'),       # Custom module execution
     ('waluigi.crapsecrets_scan', 'Crapsecrets'),  # Secret detection
     ('waluigi.webcap_scan', 'Webcap'),        # Web capture and analysis
     ('waluigi.gau_scan', 'Gau'),        # Web endpoint crawling results
     ('waluigi.python_scan', 'Python'),        # Python script execution
-    ('waluigi.iis_short_scan', 'IISShortnameScanner'), # IIS Shortname Scanner
+    ('waluigi.iis_short_scan', 'IISShortnameScanner'),  # IIS Shortname Scanner
     # ('waluigi.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
     ('waluigi.ip_thc_lookup', 'IPThc'),  # IP THC API integration
+    ('waluigi.netexec_scan', 'Netexec'),  # Netexec network scanner integration
 ]
 
 # Global configuration: Wordlist storage path
@@ -799,9 +801,10 @@ class WaluigiTool:
         self.project_url: Optional[str] = None
         self.input_records: List[ServerRecordType] = []
         self.output_records: List[ServerRecordType] = []
-        self.scope_func: Optional[callable] = None
-        self.scan_func: Optional[callable] = None
-        self.import_func: Optional[callable] = None
+        self.scope_func: Optional[callable] = lambda: False
+        self.scan_func: Optional[callable] = lambda: False
+        self.import_func: Optional[callable] = lambda: False
+        self.modules_func: Optional[callable] = lambda: []
 
     def to_jsonable(self) -> Dict[str, Any]:
         """
@@ -831,6 +834,14 @@ class WaluigiTool:
             input_type.value for input_type in self.input_records]
         ret_dict['output_records'] = [
             output_type.value for output_type in self.output_records]
+
+        module_obj_list = self.modules_func()
+
+        # Add module list
+        module_list = []
+        for module_obj in module_obj_list:
+            module_list.append(module_obj.to_jsonable())
+        ret_dict['modules'] = module_list
         return ret_dict
 
 
@@ -2466,6 +2477,66 @@ class WebComponent(Record):
             raise Exception('Invalid component object: %s' % str(e))
 
 
+class OperatingSystem(Record):
+    """
+    Represents an operating system detected on a network host.
+
+    This record type stores information about operating systems discovered during
+    network scanning. Operating systems are children of Host records and help identify
+    the host systems running services on those ports.
+
+    Attributes:
+        name (str): Name of the operating system (e.g., "Linux", "Windows", "macOS")
+        version (Optional[str]): Version of the operating system if detected
+
+    Example:
+        >>> os = OperatingSystem(parent_id="host_123")
+        >>> os.name = "Linux"
+        >>> os.version = "5.10.0"
+    """
+
+    def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
+        """
+        Initialize an OperatingSystem record.
+
+        Args:
+            parent_id (Optional[str]): ID of the parent Host record
+            id (Optional[str]): Unique identifier for the operating system record
+        """
+        super().__init__(id=id, parent=Host(id=parent_id))
+        self.name: Optional[str] = None
+        self.version: Optional[str] = None
+
+    def _data_to_jsonable(self) -> Dict[str, str]:
+        """
+        Convert operating system data to JSON-serializable format.
+
+        Returns:
+            Dict[str, str]: Dictionary containing OS name and version
+        """
+        ret: Dict[str, str] = {'name': self.name}
+        if self.version is not None:
+            ret['version'] = self.version
+        return ret
+
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Populate operating system data from JSON dictionary.
+
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing OS data
+
+        Raises:
+            Exception: If required OS data is missing or invalid
+        """
+        try:
+            self.name = input_data_dict['name']
+            if 'version' in input_data_dict:
+                self.version = input_data_dict['version']
+        except Exception as e:
+            raise Exception('Invalid operating system object: %s' % str(e))
+
+
 class Vuln(Record):
     """
     Represents a security vulnerability detected on a network port.
@@ -2999,6 +3070,7 @@ class CollectionModule(Record):
         super().__init__(id=id, parent=Tool(parent_id))
 
         self.name: Optional[str] = None
+        self.description: Optional[str] = None
         self.args: Optional[str] = None
         self.bindings: Optional[List[str]] = None
         self.outputs: Optional[List[str]] = None
@@ -3017,7 +3089,8 @@ class CollectionModule(Record):
             >>> data = module._data_to_jsonable()
             >>> print(data)  # {"name": "nmap_scan", "args": "-sS -O"}
         """
-        ret = {'name': self.name, 'args': self.args}
+        ret = {'name': self.name,
+               'description': self.description, 'args': self.args}
         return ret
 
     def get_output_components(self) -> List['WebComponent']:

@@ -3,8 +3,10 @@ import os
 import shutil
 import uuid
 import json
+import logging
 from waluigi.recon_manager import ReconManager, ScheduledScanThread
 from waluigi.data_model import ScheduledScan, ScanData
+from waluigi.nuclei_scan import Nuclei
 from types import SimpleNamespace
 from unittest.mock import patch
 from waluigi.scan_utils import get_port_byte_array
@@ -176,3 +178,22 @@ class TestNucleiScan:
             if os.path.exists(output_dir):
                 shutil.rmtree(output_dir)
             pass
+
+    def test_get_modules_success(self, recon_manager):
+        """Test that get_modules correctly parses nuclei template list output"""
+
+        modules = Nuclei.nuclei_modules()
+
+        # Verify we got modules back
+        assert len(modules) > 0
+
+        # Verify all modules have required fields
+        for module in modules:
+            logging.getLogger(__name__).warning(
+                f"Module: {module.name} {module.args} {module.description}")
+            assert module.name is not None
+            assert len(module.name) > 0
+            assert module.args is not None
+            assert module.args.startswith('-t')
+            # Description may be empty for some scripts
+            assert hasattr(module, 'description')

@@ -65,6 +65,7 @@ class Python(data_model.WaluigiTool):
 
     def __init__(self) -> None:
 
+        super().__init__()
         self.name: str = 'python'
         self.description: str = 'Python is a versatile programming language that enables rapid development and automation.'
         self.project_url: str = 'https://www.python.org/'

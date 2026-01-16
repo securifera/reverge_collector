@@ -96,6 +96,7 @@ class Gau(data_model.WaluigiTool):
         Sets up tool name, description, project URL, collector type, scan order, default arguments,
         input/output record types, and binds scan/import functions for Luigi workflow integration.
         """
+        super().__init__()
         self.name = 'gau'
         self.description = "getallurls (gau) fetches known URLs from AlienVault's Open Threat Exchange, the Wayback Machine, Common Crawl, and URLScan for any given domain. Inspired by Tomnomnom's waybackurls."
         self.project_url = 'https://github.com/lc/gau'

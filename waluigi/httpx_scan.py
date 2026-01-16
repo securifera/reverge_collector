@@ -76,6 +76,7 @@ class Httpx(data_model.WaluigiTool):
         favicon analysis, technology detection, parallel processing, and
         TLS certificate analysis.
         """
+        super().__init__()
         self.name: str = 'httpx'
         self.description: str = 'HTTPX is a fast and multi-purpose HTTP toolkit that allows you to run multiple requests in parallel.'
         self.project_url: str = "https://github.com/projectdiscovery/httpx"

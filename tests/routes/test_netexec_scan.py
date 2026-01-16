@@ -2,31 +2,32 @@ import base64
 import logging
 import os
 import shutil
+import time
 import uuid
 import json
+from waluigi.netexec_scan import Netexec
 from waluigi.recon_manager import ReconManager, ScheduledScanThread
 from waluigi.data_model import ScheduledScan, ScanData
-from waluigi.nmap_scan import Nmap
 from types import SimpleNamespace
 from unittest.mock import patch
 from waluigi.scan_utils import get_port_byte_array
 from tests.conftest import get_tool_id
 
 
-class TestNmapScan:
+class TestNetexecScan:
 
-    TOOL_NAME = 'nmap'
+    TOOL_NAME = 'netexec'
     TEST_SCAN_ID = format(uuid.uuid4().int, 'x')
     TEST_SCHEDULED_SCAN_ID = format(uuid.uuid4().int, 'x')
 
-    def test_nmap_scan_success(self, recon_manager):
+    def test_netexec_scan_success(self, recon_manager):
 
         tool_id_instance = get_tool_id(recon_manager, self.TOOL_NAME)
         scan_id = self.TEST_SCAN_ID
         scheduled_scan_id = self.TEST_SCHEDULED_SCAN_ID
 
         tool_inst = {'id': 'a9866b94f7104754bd161c1ab7cbf0cd', 'collection_tool': {'wordlists': [], 'name': self.TOOL_NAME, 'args':
-                                                                                   '-sV --script +ssl-cert --script-args ssl=True', 'tool_type': 2, 'scan_order': 2, 'api_key': None, 'id': tool_id_instance}, 'args_override': None,
+                                                                                   '', 'tool_type': 2, 'scan_order': 2, 'api_key': None, 'id': tool_id_instance}, 'args_override': None,
                      'enabled': 1, 'status': 0, 'status_message': None, 'collection_tool_id': tool_id_instance,
                      'scheduled_scan_id': scheduled_scan_id, 'owner_id': '94cb514e85da4abea6ee227730328619'}
 
@@ -40,8 +41,8 @@ class TestNmapScan:
         sched_scan_arr = json.loads(
             data, object_hook=lambda d: SimpleNamespace(**d))
 
-        port_list = "443"
-        target_ip = 'www.securifera.com'
+        port_list = "135, 445"
+        target_ip = '192.168.110.131'
         port_bytes = get_port_byte_array(port_list)
         b64_ports = base64.b64encode(port_bytes).decode()
         scope = {'b64_port_bitmap': b64_ports,
@@ -66,6 +67,7 @@ class TestNmapScan:
                 scheduled_scan_obj.current_tool.args = first_tool.args_override
 
             result = recon_manager.scan_func(scheduled_scan_obj)
+
             assert result == True
             output_dir = "/tmp/%s" % scheduled_scan_id
             assert os.path.exists(output_dir) == True
@@ -84,7 +86,7 @@ class TestNmapScan:
                 file_contents = f.read()
                 assert target_ip in file_contents
 
-    def test_nmap_import_success(self, recon_manager):
+    def test_netexec_import_success(self, recon_manager):
 
         tool_id_instance = get_tool_id(recon_manager, self.TOOL_NAME)
         scan_id = self.TEST_SCAN_ID
@@ -105,8 +107,8 @@ class TestNmapScan:
         sched_scan_arr = json.loads(
             data, object_hook=lambda d: SimpleNamespace(**d))
 
-        port_list = "443"
-        target_ip = 'www.securifera.com'
+        port_list = "135, 445"
+        target_ip = '192.168.110.131'
         port_bytes = get_port_byte_array(port_list)
         b64_ports = base64.b64encode(port_bytes).decode()
         scope = {'b64_port_bitmap': b64_ports,
@@ -154,9 +156,9 @@ class TestNmapScan:
                         # Get host port map
                         port_map = scan_data.port_host_map
                         assert len(port_map) > 0
-                        assert '443' in port_map
+                        assert '445' in port_map
 
-                        host_id_list = port_map['443']
+                        host_id_list = port_map['445']
                         assert len(host_id_list) > 0
                         host_id = list(host_id_list)[0]
                         assert len(scan_data.host_map) > 0
@@ -171,36 +173,9 @@ class TestNmapScan:
                         assert len(port_obj_list) > 0
                         port_obj = port_obj_list[0]
 
-                        assert port_obj.port == '443'
-                        assert port_obj.secure == True
-
-                        assert host_obj.ipv4_addr == '52.4.7.15'
-
+                        assert port_obj.port == '445'
+                        assert host_obj.ipv4_addr == target_ip
                         assert host_id == port_obj.parent.id
-
-                        # Get domain map
-                        domain_map = scan_data.domain_map
-                        first_domain = next(iter(domain_map.values()))
-                        assert first_domain.name == target_ip
-
-                        # Verify certificate
-                        cert_map = scan_data.certificate_port_id_map
-                        assert port_obj.id in cert_map
-
-                        # Verify collection modules
-                        assert len(scan_data.module_name_id_map) > 0
-                        assert 'http-server-header' in scan_data.module_name_id_map
-                        collection_module_obj_list = scan_data.module_name_id_map['http-server-header']
-                        assert len(collection_module_obj_list) > 0
-
-                        collection_module_obj_id = collection_module_obj_list[0].id
-                        assert len(scan_data.module_output_module_id_map) > 0
-                        assert collection_module_obj_id in scan_data.module_output_module_id_map
-                        collection_module_output_obj_list = scan_data.module_output_module_id_map[
-                            collection_module_obj_id]
-                        assert len(collection_module_output_obj_list) > 0
-                        collection_module_output_obj = collection_module_output_obj_list[0]
-                        assert collection_module_output_obj.output == 'Apache'
 
         finally:
             # Cleanup
@@ -209,9 +184,9 @@ class TestNmapScan:
             pass
 
     def test_get_modules_success(self, recon_manager):
-        """Test that get_modules correctly parses nmap script-help output"""
+        """Test that get_modules correctly parses netexec script-help output"""
 
-        modules = Nmap.nmap_modules()
+        modules = Netexec.netexec_modules()
 
         # Verify we got modules back
         assert len(modules) > 0
@@ -223,7 +198,6 @@ class TestNmapScan:
             assert module.name is not None
             assert len(module.name) > 0
             assert module.args is not None
-            assert module.args.startswith('--script +')
-            assert module.name in module.args
+            assert '-M' in module.args
             # Description may be empty for some scripts
             assert hasattr(module, 'description')

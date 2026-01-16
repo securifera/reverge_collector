@@ -18,13 +18,15 @@ Classes:
 
 """
 
-from functools import partial
 import json
 import os
 from typing import Dict, Any, List, Set, Optional
 import luigi
 import logging
+import yaml
+import traceback
 
+from functools import partial
 from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
@@ -67,6 +69,7 @@ class Nuclei(data_model.WaluigiTool):
         Sets up the tool with default parameters for vulnerability scanning,
         including fingerprinting templates and rate limiting.
         """
+        super().__init__()
         self.name: str = 'nuclei'
         self.description: str = 'Nuclei is a fast and flexible vulnerability scanner based on simple YAML based DSL. It allows users to create custom templates for scanning various protocols and services.'
         self.project_url: str = 'https://github.com/projectdiscovery/nuclei'
@@ -83,6 +86,155 @@ class Nuclei(data_model.WaluigiTool):
         ]
         self.scan_func = Nuclei.nuclei_scan_func
         self.import_func = Nuclei.nuclei_import
+        self.modules_func = Nuclei.nuclei_modules
+
+    @staticmethod
+    def nuclei_modules() -> List:
+        """
+        Retrieve available Nuclei templates as collection modules.
+
+        Executes 'nuclei -tl' to get a list of all available Nuclei templates,
+        then executes 'nuclei -td' once to retrieve all YAML template content
+        in concatenated format. Parses the concatenated output by matching
+        "Template: " entries with template IDs from the list, and extracts
+        metadata to convert them to CollectionModule objects.
+
+        Returns:
+            List[data_model.CollectionModule]: List of collection modules, one for each Nuclei template
+
+        Example:
+            >>> nuclei_tool = Nuclei()
+            >>> modules = nuclei_tool.modules_func()
+            >>> for module in modules:
+            ...     print(f"{module.name}: {module.args}")
+        """
+        modules = []
+
+        try:
+            # Execute nuclei -tl to get list of all templates
+            cmd_args = ['nuclei', '-tv']
+            result = process_wrapper(cmd_args=cmd_args, store_output=True)
+
+            if result and 'exit_code' in result and result['exit_code'] != 0:
+                logging.getLogger(__name__).warning(
+                    f"nuclei -tl failed with exit code {result['exit_code']}"
+                )
+                return modules
+
+            # Parse template root path from output
+            # Format: "[INF] Public nuclei-templates version: v10.3.6 (/root/nuclei-templates)"
+            template_root_path = None
+            output_text = result.get('stderr', '') if result else ''
+            for line in output_text.split('\n'):
+                if 'nuclei-templates version' in line and '(' in line and ')' in line:
+                    # Extract the path from parentheses
+                    start = line.rfind('(')
+                    end = line.rfind(')')
+                    if start != -1 and end != -1 and start < end:
+                        template_root_path = line[start+1:end].strip()
+                    break
+
+            # Parse template list - each line is a template path
+            if not template_root_path:
+                logging.getLogger(__name__).warning(
+                    "No templates found from nuclei -tl")
+                return modules
+
+            template_index = template_root_path + "/.templates-index"
+
+            # Read the index file to get list of template IDs and paths
+            # Format: template_id,/full/path/to/template.yaml
+            try:
+                with open(template_index, 'r') as index_file:
+                    index_entries = [line.strip()
+                                     for line in index_file if line.strip()]
+            except Exception as e:
+                logging.getLogger(__name__).warning(
+                    f"Failed to read template index file {template_index}: {str(e)}"
+                )
+                return modules
+
+            # Process each template file
+            for index_entry in index_entries:
+                if not index_entry:
+                    continue
+                try:
+                    # Parse comma-separated format: template_id,/full/path/to/template.yaml
+                    parts = index_entry.split(',', 1)
+                    if len(parts) != 2:
+                        logging.getLogger(__name__).debug(
+                            f"Invalid index entry format: {index_entry}"
+                        )
+                        continue
+
+                    template_id_from_index = parts[0].strip()
+                    full_template_path = parts[1].strip()
+
+                    template_path = full_template_path.replace(
+                        template_root_path + os.sep, '')
+
+                    # Read only up to the 'variables:' field to minimize overhead
+                    yaml_content = ''
+                    try:
+                        with open(full_template_path, 'r') as template_file:
+                            for line in template_file:
+                                yaml_content += line
+                                # Stop reading once we hit the 'variables:' section
+                                if line.strip().startswith('variables:'):
+                                    break
+                    except Exception as e:
+                        logging.getLogger(__name__).debug(
+                            f"Failed to read template file {full_template_path}: {str(e)}"
+                        )
+                        continue
+
+                    if not yaml_content:
+                        continue
+
+                    # Parse YAML content (metadata section only)
+                    try:
+                        template_data = yaml.safe_load(yaml_content)
+                    except Exception as e:
+                        logging.getLogger(__name__).debug(
+                            f"Failed to parse YAML for template {full_template_path}: {str(e)}"
+                        )
+                        continue
+
+                    if not template_data or not isinstance(template_data, dict):
+                        continue
+
+                    # Extract template metadata
+                    template_id = template_data.get('id', '')
+                    info = template_data.get('info', {})
+                    template_name = info.get('name', template_id)
+                    template_description = info.get('description', '')
+
+                    if not template_id:
+                        continue
+
+                    # Create CollectionModule for this template
+                    module = data_model.CollectionModule()
+                    module.name = template_id
+                    module.description = template_name
+                    if template_description:
+                        # Clean up description - remove leading/trailing whitespace
+                        module.description += ": " + template_description.strip()
+                    module.args = f"-t {template_path}"
+                    modules.append(module)
+
+                except Exception as e:
+                    logging.getLogger(__name__).debug(
+                        f"Error processing template {template_path}: {str(e)}"
+                    )
+                    continue
+
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                f"Error getting nuclei modules: {str(e)}"
+            )
+            logging.getLogger(__name__).debug(traceback.format_exc())
+
+        return modules
 
     @staticmethod
     def nuclei_scan_func(scan_input: data_model.ScheduledScan) -> bool:

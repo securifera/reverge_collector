@@ -14,6 +14,7 @@ class IISShortnameScanner(data_model.WaluigiTool):
 
     def __init__(self) -> None:
 
+        super().__init__()
         self.name: str = 'iis_short_scan'
         self.description: str = 'IIS Shortname Scanner is a tool for discovering short filenames on IIS servers.'
         self.project_url: str = 'https://github.com/lijiejie/IIS_shortname_Scanner'
