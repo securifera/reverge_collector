@@ -1716,8 +1716,13 @@ class ScanData:
 
             elif isinstance(record_obj, Subnet):
 
-                # Add screenshot obj to list for being imported
+                # Add subnet obj to list for being imported
                 self.subnet_map[record_obj.id] = record_obj
+
+            elif isinstance(record_obj, Credential):
+
+                # Add credential obj to list for being imported
+                self.credential_map[record_obj.id] = record_obj
 
             # Add to overall mapping
             self.scan_obj_map[record_obj.id] = record_obj
@@ -1798,6 +1803,9 @@ class ScanData:
         self.host_map: Dict[str, 'Host'] = {}
         # IP address -> Host ID
         self.host_ip_id_map: Dict[str, str] = {}
+
+        # Credential ID -> Credential object
+        self.credential_map: Dict[str, 'Credential'] = {}
 
         # Host-Port relationship mappings
         # "IP:port"/"domain:port" -> {host_obj, port_obj}
@@ -1899,7 +1907,8 @@ class ScanData:
         }               # Component name -> List of modules
 
         # Process initial scan data
-        # logging.getLogger(__name__).debug("Processing scan data\n %s" % scan_data)
+        # logging.getLogger(__name__).debug(
+        #    "Processing scan data\n %s" % scan_data)
 
         # Decode the port bitmap if present (defines scanning scope)
         if 'b64_port_bitmap' in scan_data and scan_data['b64_port_bitmap']:
@@ -2100,6 +2109,8 @@ class Record:
                 obj = Certificate(id=obj_id, parent_id=parent_id)
             elif record_type == 'subnet':
                 obj = Subnet(id=obj_id)
+            elif record_type == 'credential':
+                obj = Credential(id=obj_id)
             else:
                 logging.getLogger(__name__).debug(
                     "Unknown record type: %s" % record_type)
@@ -2215,6 +2226,7 @@ class Host(Record):
         super().__init__(id=id, parent=None)
         self.ipv4_addr: Optional[str] = None
         self.ipv6_addr: Optional[str] = None
+        self.credential_id: Optional[str] = None
 
     def _data_to_jsonable(self) -> Dict[str, str]:
         """
@@ -2248,6 +2260,10 @@ class Host(Record):
             # elif 'ipv6_addr' in input_data_dict:
             #     ipv6_addr_str = input_data_dict['ipv6_addr']
             #     self.ipv6_addr = int(netaddr.IPAddress(input_data_dict['ipv6_addr_str']))
+
+            if 'credential_id' in input_data_dict:
+                self.credential_id = str(input_data_dict['credential_id'])
+
         except Exception as e:
             raise Exception('Invalid host object: %s' % str(e))
 
@@ -2284,6 +2300,7 @@ class Port(Record):
         self.proto: Optional[int] = None
         self.port: Optional[str] = None
         self.secure: bool = False
+        self.credential_id: Optional[str] = None
 
     def _data_to_jsonable(self) -> Dict[str, Union[str, int, bool]]:
         """
@@ -2317,6 +2334,10 @@ class Port(Record):
                     self.secure = True
                 else:
                     self.secure = False
+
+            if 'credential_id' in input_data_dict:
+                self.credential_id = str(input_data_dict['credential_id'])
+
         except Exception as e:
             raise Exception('Invalid port object: %s' % str(e))
 
@@ -2391,6 +2412,7 @@ class Domain(Record):
         """
         super().__init__(id=id, parent=Host(id=parent_id))
         self.name: Optional[str] = None
+        self.credential_id: Optional[str] = None
 
     def _data_to_jsonable(self) -> Dict[str, str]:
         """
@@ -2413,6 +2435,10 @@ class Domain(Record):
         """
         try:
             self.name = input_data_dict['name']
+
+            if 'credential_id' in input_data_dict:
+                self.credential_id = str(input_data_dict['credential_id'])
+
         except Exception as e:
             raise Exception('Invalid domain object: %s' % str(e))
 
@@ -3416,3 +3442,24 @@ class Certificate(Record):
 
             self.domain_name_id_map[domain_str] = domain_obj.id
             return domain_obj
+
+
+class Credential(Record):
+
+    def __init__(self, id: Optional[str] = None) -> None:
+
+        super().__init__(id=id, parent=None)
+        self.username: Optional[str] = None
+        self.password: Optional[str] = None
+
+    def _data_to_jsonable(self) -> Dict[str, str]:
+
+        return {'username': self.username, 'password': self.password}
+
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+
+        try:
+            self.username = input_data_dict['username']
+            self.password = str(input_data_dict['password'])
+        except Exception as e:
+            raise Exception('Invalid domain object: %s' % str(e))

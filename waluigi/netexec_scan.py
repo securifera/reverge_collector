@@ -406,6 +406,12 @@ class NetexecScan(luigi.Task):
 
                 ip_set: Set[str] = port_scan_map[port_str]['ip_set']
 
+                # If credential id exists, add to scan metadata
+                if host_obj.credential_id:
+                    port_scan_map[port_str]['credential_id'] = host_obj.credential_id
+                elif port_obj.credential_id:
+                    port_scan_map[port_str]['credential_id'] = port_obj.credential_id
+
                 # Add IP
                 ip_set.add(ip_addr)
 
@@ -462,6 +468,7 @@ class NetexecScan(luigi.Task):
             protocol: str = port_obj.get('protocol')
             port_id: str = port_obj.get('port_id')
             host_id: str = port_obj.get('host_id')
+            credential_id: str = port_obj.get('credential_id')
 
             ip_list_path: str = dir_path + os.path.sep + \
                 "netexec_in_" + str(counter)
@@ -495,6 +502,16 @@ class NetexecScan(luigi.Task):
 
             # Add the target list
             command.append(ip_list_path)
+
+            # Add credentials
+            if credential_id and credential_id in scope_obj.credential_map:
+                credential = scope_obj.credential_map[credential_id]
+                # Add username
+                command.append("-u")
+                command.append(credential.username)
+                # Add password
+                command.append("-p")
+                command.append(credential.password)
 
             # Store scan metadata
             netexec_scan_inst['netexec_command'] = command
