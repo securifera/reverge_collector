@@ -415,12 +415,6 @@ class NetexecScan(luigi.Task):
                 # Add IP
                 ip_set.add(ip_addr)
 
-                # Add domain if different from IP
-                target_arr = target_key.split(":")
-                if target_arr[0] != ip_addr:
-                    domain_str = target_arr[0]
-                    ip_set.add(domain_str)
-
         else:
             # Full scope scanning when no specific targets - organize by supported ports
             if len(valid_port_list) > 0:
@@ -461,6 +455,8 @@ class NetexecScan(luigi.Task):
             logging.getLogger(__name__).warning(
                 "No valid ports found for Netexec scan for scan ID %s" % scheduled_scan_obj.id)
 
+        # logging.getLogger(__name__).debug(
+        #    "Netexec scan port map: %s" % port_scan_map)
         for port_str in sorted(port_scan_map.keys()):
             port_obj = port_scan_map[port_str]
             netexec_scan_inst: Dict[str, Any] = {}
@@ -495,10 +491,16 @@ class NetexecScan(luigi.Task):
             command.append("-j")
 
             # Add script arguments
+            command_custom_args = []
             if script_args and len(script_args) > 0:
-                command.extend(script_args)
-            else:
-                command.append(protocol)
+                protocol_arg = script_args[0]
+                command_custom_args = script_args[1:]
+                if protocol_arg != protocol:
+                    logging.getLogger(__name__).warning(
+                        "Netexec scan protocol mismatch: expected %s, got %s" % (protocol, protocol_arg))
+                    continue
+
+            command.append(protocol)
 
             # Add the target list
             command.append(ip_list_path)
@@ -512,6 +514,9 @@ class NetexecScan(luigi.Task):
                 # Add password
                 command.append("-p")
                 command.append(credential.password)
+
+            # Add custom args
+            command.extend(command_custom_args)
 
             # Store scan metadata
             netexec_scan_inst['netexec_command'] = command

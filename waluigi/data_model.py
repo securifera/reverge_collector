@@ -1470,6 +1470,13 @@ class ScanData:
 
                 # Get IP as unique index for map
                 host_ip = record_obj.ipv4_addr
+
+                # If host with this IP already exists, preserve credential_id
+                if host_ip in self.host_ip_id_map:
+                    old_host_id = self.host_ip_id_map[host_ip]
+                    if old_host_id in self.host_map:
+                        record_obj.credential_id = self.host_map[old_host_id].credential_id
+
                 self.host_ip_id_map[host_ip] = record_obj.id
 
                 # Add to the host insert list
@@ -1509,7 +1516,6 @@ class ScanData:
                 temp_port_list.append(record_obj)
 
                 # Create port number to host id map
-                host_id = record_obj.parent.id
                 port_str = record_obj.port
                 if port_str in self.port_host_map:
                     temp_host_id_set = self.port_host_map[port_str]
