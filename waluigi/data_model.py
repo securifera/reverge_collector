@@ -1475,7 +1475,7 @@ class ScanData:
                 if host_ip in self.host_ip_id_map:
                     old_host_id = self.host_ip_id_map[host_ip]
                     if old_host_id in self.host_map:
-                        record_obj.credential_id = self.host_map[old_host_id].credential_id
+                        record_obj.credential = self.host_map[old_host_id].credential
 
                 self.host_ip_id_map[host_ip] = record_obj.id
 
@@ -2232,7 +2232,7 @@ class Host(Record):
         super().__init__(id=id, parent=None)
         self.ipv4_addr: Optional[str] = None
         self.ipv6_addr: Optional[str] = None
-        self.credential_id: Optional[str] = None
+        self.credential: Dict[str, str] = None
 
     def _data_to_jsonable(self) -> Dict[str, str]:
         """
@@ -2246,6 +2246,8 @@ class Host(Record):
             ret['ipv4_addr'] = self.ipv4_addr
         elif self.ipv6_addr:
             ret['ipv6_addr'] = self.ipv6_addr
+        if self.credential:
+            ret['credential'] = self.credential
         return ret
 
     def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
@@ -2268,7 +2270,8 @@ class Host(Record):
             #     self.ipv6_addr = int(netaddr.IPAddress(input_data_dict['ipv6_addr_str']))
 
             if 'credential_id' in input_data_dict:
-                self.credential_id = str(input_data_dict['credential_id'])
+                self.credential = {'credential_id': str(
+                    input_data_dict['credential_id'])}
 
         except Exception as e:
             raise Exception('Invalid host object: %s' % str(e))
@@ -2306,7 +2309,7 @@ class Port(Record):
         self.proto: Optional[int] = None
         self.port: Optional[str] = None
         self.secure: bool = False
-        self.credential_id: Optional[str] = None
+        self.credential: Optional[Dict[str, str]] = None
 
     def _data_to_jsonable(self) -> Dict[str, Union[str, int, bool]]:
         """
@@ -2342,7 +2345,8 @@ class Port(Record):
                     self.secure = False
 
             if 'credential_id' in input_data_dict:
-                self.credential_id = str(input_data_dict['credential_id'])
+                self.credential = {'credential_id': str(
+                    input_data_dict['credential_id'])}
 
         except Exception as e:
             raise Exception('Invalid port object: %s' % str(e))
@@ -2427,7 +2431,10 @@ class Domain(Record):
         Returns:
             Dict[str, str]: Dictionary containing domain name
         """
-        return {'name': self.name}
+        ret: Dict[str, str] = {'name': self.name}
+        if self.credential_id:
+            ret['credential_id'] = self.credential_id
+        return ret
 
     def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
         """
@@ -3457,15 +3464,21 @@ class Credential(Record):
         super().__init__(id=id, parent=None)
         self.username: Optional[str] = None
         self.password: Optional[str] = None
+        self.privileged: bool = False
 
-    def _data_to_jsonable(self) -> Dict[str, str]:
+    def _data_to_jsonable(self) -> Dict[str, Any]:
 
-        return {'username': self.username, 'password': self.password}
+        return {
+            'username': self.username,
+            'password': self.password,
+            'privileged': self.privileged,
+        }
 
     def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
 
         try:
             self.username = input_data_dict['username']
             self.password = str(input_data_dict['password'])
+            self.privileged = input_data_dict.get('privileged', False)
         except Exception as e:
-            raise Exception('Invalid domain object: %s' % str(e))
+            raise Exception('Invalid credential object: %s' % str(e))

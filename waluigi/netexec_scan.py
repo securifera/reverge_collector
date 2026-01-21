@@ -23,6 +23,7 @@ Functions:
 from functools import partial
 import json
 import os
+import re
 from typing import Dict, Any, List, Set, Optional, Union
 import netaddr
 import luigi
@@ -407,10 +408,12 @@ class NetexecScan(luigi.Task):
                 ip_set: Set[str] = port_scan_map[port_str]['ip_set']
 
                 # If credential id exists, add to scan metadata
-                if host_obj.credential_id:
-                    port_scan_map[port_str]['credential_id'] = host_obj.credential_id
-                elif port_obj.credential_id:
-                    port_scan_map[port_str]['credential_id'] = port_obj.credential_id
+                if host_obj.credential and host_obj.credential.get('credential_id'):
+                    port_scan_map[port_str]['credential_id'] = host_obj.credential.get(
+                        'credential_id')
+                elif port_obj.credential and port_obj.credential.get('credential_id'):
+                    port_scan_map[port_str]['credential_id'] = port_obj.credential.get(
+                        'credential_id')
 
                 # Add IP
                 ip_set.add(ip_addr)
@@ -753,29 +756,77 @@ class ImportNetexecOutput(data_model.ImportToolXOutput):
                                     output_level = json_data.get('level', '')
                                     message = json_data.get('message', '')
 
-                                    # Skip pure info/display messages that are just status updates
-                                    if output_type in ['display'] and output_level in ['INFO'] and message:
-                                        # Keep only if message contains specific keywords (credentials, files, PIDs, etc.)
-                                        skip_keywords = [
-                                            'Creating file', 'Executing command', 'Copying', 'Deleting', 'Getting', 'via command']
-                                        if not any(keyword in message for keyword in skip_keywords):
-                                            if '(' not in message or ')' not in message:
-                                                # Skip generic status messages without structured data
-                                                logging.getLogger(__name__).debug(
-                                                    "Skipping generic netexec output message: %s" % message)
-                                                continue
-
                                     protocol_out = json_data.get(
                                         'protocol', protocol)
                                     ip_address = json_data.get('host')
                                     port_str = str(json_data.get('port'))
                                     hostname = json_data.get('hostname')
-                                    script_output = json_data.get(
-                                        'message', '')
                                     module_name = json_data.get(
                                         'module_name', None)
                                     server_os = json_data.get(
                                         'server_os', None)
+
+                                    # Parse INFO messages to extract domain information
+                                    # Example: "(name:WIN-JRO991PA8A2) (domain:CONTOSO)"
+                                    domain_info = None
+                                    if output_level in ['INFO'] and message:
+                                        # Use regex to extract name and domain from message
+                                        name_match = re.search(
+                                            r'\(name:([^)]+)\)', message)
+                                        domain_match = re.search(
+                                            r'\(domain:([^)]+)\)', message)
+
+                                        if name_match and domain_match:
+                                            name_value = name_match.group(
+                                                1).strip()
+                                            domain_value = domain_match.group(
+                                                1).strip()
+
+                                            # Only create domain object if name and domain differ
+                                            if name_value.upper() != domain_value.upper():
+                                                # Create FQDN: name.domain
+                                                domain_info = f"{name_value}.{domain_value}"
+
+                                    # Parse credentials from success messages
+                                    credential_obj = None
+                                    if output_type in ['success'] and message:
+                                        # Message format: "DOMAIN\username:password" or "DOMAIN\username:password (Pwn3d!)"
+                                        if '\\' in message and ':' in message:
+                                            try:
+                                                # Extract credential parts from message
+                                                # Example: "WIN-JRO991PA8A2\\Administrator:password (Pwn3d!)"
+                                                credential_part = message.split(
+                                                    '(')[0].strip()
+                                                domain_username, password = credential_part.rsplit(
+                                                    ':', 1)
+                                                domain_or_host, username = domain_username.split(
+                                                    '\\', 1)
+
+                                                # Determine if this is a host or domain credential
+                                                # If domain_or_host matches hostname, it's a host credential
+                                                parent_id = None
+                                                if domain_or_host.upper() == hostname.upper():
+                                                    # Host credential - will be set later when we have host_id
+                                                    parent_id = 'HOST'
+                                                else:
+                                                    # Domain credential - will be set later when we have domain_id
+                                                    parent_id = 'DOMAIN'
+
+                                                # Check if credential is privileged (Pwn3d! in message)
+                                                is_privileged = 'Pwn3d' in message
+
+                                                # Store credential info for later creation
+                                                credential_obj = {
+                                                    'username': username,
+                                                    'password': password,
+                                                    'privileged': is_privileged,
+                                                    'parent_type': parent_id,
+                                                    'domain_name': domain_or_host if parent_id == 'DOMAIN' else None
+                                                }
+
+                                            except Exception as cred_err:
+                                                logging.getLogger(__name__).warning(
+                                                    "Failed to parse credential from message '%s': %s" % (message, str(cred_err)))
 
                                     # Create consolidation key: (host, port, hostname, protocol, module_name)
                                     consolidation_key = (
@@ -791,19 +842,36 @@ class ImportNetexecOutput(data_model.ImportToolXOutput):
                                         }
 
                                     # Append message to the list for this consolidation key
-                                    consolidated_data[consolidation_key]['messages'].append(
-                                        script_output)
                                     consolidated_data[consolidation_key]['timestamps'].append(
                                         json_data.get('timestamp', ''))
 
+                                    # Store credential info if parsed
+                                    if credential_obj:
+                                        if 'credentials' not in consolidated_data[consolidation_key]:
+                                            consolidated_data[consolidation_key]['credentials'] = [
+                                            ]
+                                        consolidated_data[consolidation_key]['credentials'].append(
+                                            credential_obj)
+                                    else:
+                                        consolidated_data[consolidation_key]['messages'].append(
+                                            message)
+
+                                    # Store domain info if parsed
+                                    if domain_info:
+                                        if 'domain_info' not in consolidated_data[consolidation_key]:
+                                            consolidated_data[consolidation_key]['domain_info'] = [
+                                            ]
+                                        consolidated_data[consolidation_key]['domain_info'].append(
+                                            domain_info)
+
                             # Second pass: Create data model objects from consolidated data
                             # Track created objects to avoid duplicates
-                            # Key: IP address, Value: host_id
-                            host_id_map: Dict[str, str] = {}
+                            # Key: IP address, Value: host_obj
+                            host_obj_map: Dict[str, Any] = {}
                             # Key: (host_id, port), Value: port_id
                             port_id_map: Dict[tuple, str] = {}
-                            # Key: domain name, Value: domain_id
-                            domain_id_map: Dict[str, str] = {}
+                            # Key: domain name, Value: domain_obj
+                            domain_obj_map: Dict[str, Any] = {}
                             # Key: host_id, Value: (os_name, os_obj) - track OS objects to prevent duplicates
                             host_os_map: Dict[str, tuple] = {}
 
@@ -811,7 +879,7 @@ class ImportNetexecOutput(data_model.ImportToolXOutput):
                                 ip_address, port_str, hostname, protocol_out, module_name, server_os = consolidation_key
 
                                 # Create or retrieve Host object using IP address as key
-                                if ip_address not in host_id_map:
+                                if ip_address not in host_obj_map:
                                     # Create new Host object with proper IPv4/IPv6 handling
                                     ip_object = netaddr.IPAddress(ip_address)
 
@@ -824,15 +892,17 @@ class ImportNetexecOutput(data_model.ImportToolXOutput):
                                     elif ip_object.version == 6:
                                         host_obj.ipv6_addr = str(ip_object)
 
-                                    host_id = host_obj.id
-                                    host_id_map[ip_address] = host_id
+                                    host_obj_map[ip_address] = host_obj
 
                                     # Add host object to results
                                     ret_arr.append(host_obj)
 
                                 else:
-                                    # Reuse existing host_id
-                                    host_id = host_id_map[ip_address]
+                                    # Reuse existing host object
+                                    host_obj = host_obj_map[ip_address]
+
+                                # Get host_id from object
+                                host_id = host_obj.id
 
                                 # Handle OperatingSystem object - check if we should create or update
                                 if server_os:
@@ -898,20 +968,33 @@ class ImportNetexecOutput(data_model.ImportToolXOutput):
 
                                 # Create or retrieve Domain object using domain name as key
                                 if ip_address != hostname:
-                                    if hostname not in domain_id_map:
+                                    if hostname not in domain_obj_map:
                                         # Create new domain object linked to host
                                         domain_obj = data_model.Domain(
                                             parent_id=host_id)
                                         domain_obj.collection_tool_instance_id = tool_instance_id
                                         domain_obj.name = hostname
-                                        domain_id = domain_obj.id
-                                        domain_id_map[hostname] = domain_id
+                                        domain_obj_map[hostname] = domain_obj
 
                                         # Add domain object to results
                                         ret_arr.append(domain_obj)
                                     else:
-                                        # Reuse existing domain_id
-                                        domain_id = domain_id_map[hostname]
+                                        # Reuse existing domain object
+                                        domain_obj = domain_obj_map[hostname]
+
+                                # Create FQDN domain objects from parsed domain_info
+                                if 'domain_info' in consolidated_entry:
+                                    for domain_info in consolidated_entry['domain_info']:
+                                        if domain_info not in domain_obj_map:
+                                            # Create new FQDN domain object linked to host
+                                            fqdn_domain_obj = data_model.Domain(
+                                                parent_id=host_id)
+                                            fqdn_domain_obj.collection_tool_instance_id = tool_instance_id
+                                            fqdn_domain_obj.name = domain_info
+                                            domain_obj_map[domain_info] = fqdn_domain_obj
+
+                                            # Add FQDN domain object to results
+                                            ret_arr.append(fqdn_domain_obj)
 
                                 # Use module_name if present, otherwise use protocol for module identification
                                 module_key = module_name if module_name else protocol_out
@@ -938,8 +1021,45 @@ class ImportNetexecOutput(data_model.ImportToolXOutput):
                                 module_output_obj.collection_tool_instance_id = tool_instance_id
                                 module_output_obj.output = consolidated_messages
                                 module_output_obj.port_id = port_id
-
                                 ret_arr.append(module_output_obj)
+
+                                # Create credential objects if any were parsed
+                                if 'credentials' in consolidated_entry:
+
+                                    for cred_info in consolidated_entry['credentials']:
+                                        # Create credential object
+                                        cred_obj = data_model.Credential()
+                                        cred_obj.collection_tool_instance_id = tool_instance_id
+                                        cred_obj.username = cred_info['username']
+                                        cred_obj.password = cred_info['password']
+                                        ret_arr.append(cred_obj)
+
+                                        # Set credential_id on host or domain object
+                                        if cred_info['parent_type'] == 'HOST':
+                                            # Set credential_id on host object
+                                            host_obj.credential = {
+                                                'credential_id': cred_obj.id, 'privileged': cred_info['privileged']}
+
+                                        # elif cred_info['parent_type'] == 'DOMAIN':
+                                        #     # Need to find or create domain object for this credential
+                                        #     domain_name = cred_info.get(
+                                        #         'domain_name')
+                                        #     if domain_name:
+                                        #         if domain_name in domain_obj_map:
+                                        #             # Set credential_id on existing domain object
+                                        #             target_domain_obj = domain_obj_map[domain_name]
+                                        #             target_domain_obj.credential = {
+                                        #                 'credential_id': cred_obj.id, 'privileged': cred_info['privileged']}
+                                        #         else:
+                                        #             # Create domain if it doesn't exist
+                                        #             new_domain_obj = data_model.Domain(
+                                        #                 parent_id=host_id)
+                                        #             new_domain_obj.collection_tool_instance_id = tool_instance_id
+                                        #             new_domain_obj.name = domain_name
+                                        #             new_domain_obj.credential_id = cred_obj.id
+                                        #             domain_obj_map[domain_name] = new_domain_obj
+                                        #             ret_arr.append(
+                                        #                 new_domain_obj)
 
                         except Exception as e:
                             logging.getLogger(__name__).error(
