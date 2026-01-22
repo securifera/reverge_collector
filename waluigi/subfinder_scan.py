@@ -82,6 +82,7 @@ class Subfinder(data_model.WaluigiTool):
         Sets up the tool with default parameters, scan functions, and metadata
         required for integration with the Waluigi scanning framework.
         """
+        super().__init__()
         self.name = 'subfinder'
         self.description = 'subfinder is a subdomain discovery tool that returns valid subdomains for websites, using passive online sources. It has a simple, modular architecture and is optimized for speed.'
         self.project_url = 'https://github.com/projectdiscovery/subfinder'

@@ -76,6 +76,7 @@ class Nmap(data_model.WaluigiTool):
         scanning including service version detection and SSL certificate
         analysis with script execution.
         """
+        super().__init__()
         self.name: str = 'nmap'
         self.description: str = 'Nmap is a network scanning tool used to discover hosts and services on a computer network. It can be used to perform port scanning, service detection, and OS detection.'
         self.project_url: str = "https://github.com/nmap/nmap"
@@ -84,6 +85,7 @@ class Nmap(data_model.WaluigiTool):
         self.args: str = "-sV --script +ssl-cert --script-args ssl=True"
         self.scan_func = Nmap.nmap_scan_func
         self.import_func = Nmap.nmap_import
+        self.modules_func = Nmap.nmap_modules
         self.input_records = [
             data_model.ServerRecordType.SUBNET, data_model.ServerRecordType.HOST, data_model.ServerRecordType.PORT]
         self.output_records = [
@@ -96,6 +98,106 @@ class Nmap(data_model.WaluigiTool):
             data_model.ServerRecordType.PORT,
             data_model.ServerRecordType.HOST
         ]
+
+    @staticmethod
+    def nmap_modules() -> List:
+        """
+        Retrieve available Nmap NSE scripts as collection modules.
+
+        Executes 'nmap --script-help' to discover all available Nmap Scripting
+        Engine (NSE) scripts and converts them to CollectionModule objects.
+        Each script becomes a module that can be selectively enabled for scanning.
+
+        Returns:
+            List[data_model.CollectionModule]: List of collection modules, one for each NSE script
+
+        Example:
+            >>> nmap_tool = Nmap()
+            >>> modules = nmap_tool.modules_func()
+            >>> for module in modules:
+            ...     print(f"{module.name}: {module.args}")
+        """
+        modules = []
+
+        try:
+            # Execute nmap --script-help to get list of all scripts
+            cmd_args = ['nmap', '--script-help', 'all']
+            result = process_wrapper(cmd_args=cmd_args, store_output=True)
+
+            if result and 'exit_code' in result and result['exit_code'] != 0:
+                logging.getLogger(__name__).warning(
+                    f"nmap --script-help failed with exit code {result['exit_code']}"
+                )
+                return modules
+
+            output = result.get('stdout', '') if result else ''
+
+            # Parse the output - format is:
+            # script-name
+            # Categories: cat1 cat2 cat3
+            # https://nmap.org/nsedoc/scripts/script-name.html
+            #   Description (potentially multi-line, indented with tabs)
+            # (blank line)
+
+            lines = output.split('\n')
+            i = 0
+
+            while i < len(lines):
+                line = lines[i]
+
+                # Skip empty lines
+                if not line.strip():
+                    i += 1
+                    continue
+
+                # Line 1: Script name (not indented)
+                if not line.startswith('\t') and not line.startswith(' '):
+                    script_name = line.strip()
+
+                    # Line 2: Categories
+                    i += 1
+                    if i < len(lines) and lines[i].startswith('Categories:'):
+                        categories = lines[i].replace(
+                            'Categories:', '').strip()
+                    else:
+                        categories = ''
+
+                    # Line 3: URL
+                    i += 1
+                    if i < len(lines) and lines[i].startswith('http'):
+                        url = lines[i].strip()
+                    else:
+                        url = ''
+
+                    # Lines 4+: Description (indented lines until empty line)
+                    description_parts = []
+                    i += 1
+                    while i < len(lines):
+                        if not lines[i].strip():
+                            # Empty line marks end of this script entry
+                            break
+                        if lines[i].startswith('\t') or lines[i].startswith('  '):
+                            description_parts.append(lines[i].strip())
+                        i += 1
+
+                    # Create CollectionModule for this script
+                    module = data_model.CollectionModule()
+                    module.name = script_name
+                    module.description = ' '.join(description_parts).strip()
+                    module.args = f"--script +{script_name}"
+                    modules.append(module)
+
+                i += 1
+
+        except FileNotFoundError:
+            logging.getLogger(__name__).error("nmap command not found")
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                f"Error getting nmap modules: {str(e)}"
+            )
+            logging.getLogger(__name__).debug(traceback.format_exc())
+
+        return modules
 
     @staticmethod
     def nmap_scan_func(scan_input: data_model.ScheduledScan) -> bool:
@@ -500,23 +602,24 @@ class NmapScan(luigi.Task):
             counter += 1
 
         # Register futures for process tracking
-        scan_proc_inst = data_model.ToolExecutor(futures)
-        scheduled_scan_obj.register_tool_executor(
-            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+        if len(futures) > 0:
+            scan_proc_inst = data_model.ToolExecutor(futures)
+            scheduled_scan_obj.register_tool_executor(
+                scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
-        # Wait for all scans to complete
-        for future in futures:
-            ret_dict = future.result()
-            if ret_dict and 'exit_code' in ret_dict:
-                exit_code = ret_dict['exit_code']
-                if exit_code != 0:
-                    err_msg = ''
-                    if 'stderr' in ret_dict and ret_dict['stderr']:
-                        err_msg = ret_dict['stderr']
-                    logging.getLogger(__name__).error(
-                        "Nmap scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
-                    raise RuntimeError("Nmap scan for scan ID %s exited with code %d: %s" % (
-                        scheduled_scan_obj.id, exit_code, err_msg))
+            # Wait for all scans to complete
+            for future in futures:
+                ret_dict = future.result()
+                if ret_dict and 'exit_code' in ret_dict:
+                    exit_code = ret_dict['exit_code']
+                    if exit_code != 0:
+                        err_msg = ''
+                        if 'stderr' in ret_dict and ret_dict['stderr']:
+                            err_msg = ret_dict['stderr']
+                        logging.getLogger(__name__).error(
+                            "Nmap scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+                        raise RuntimeError("Nmap scan for scan ID %s exited with code %d: %s" % (
+                            scheduled_scan_obj.id, exit_code, err_msg))
 
         # Store scan metadata
         nmap_scan_data['nmap_scan_list'] = nmap_scan_cmd_list

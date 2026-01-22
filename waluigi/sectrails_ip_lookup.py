@@ -112,6 +112,7 @@ class Sectrails(data_model.WaluigiTool):
         including API integration points and workflow positioning for optimal
         intelligence gathering sequence.
         """
+        super().__init__()
         self.name = 'sectrails'
         self.description = 'SecurityTrails is a threat-intelligence platform specializing in DNS and domain data. It continuously collects both current and historical DNS records, WHOIS information, and passive-DNS data to give users a comprehensive view of any domain’s evolution over time'
         self.project_url = 'https://securitytrails.com/'

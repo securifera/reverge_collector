@@ -91,6 +91,7 @@ class Shodan(data_model.WaluigiTool):
         Sets up the tool with default parameters and metadata required for
         integration with the Waluigi scanning framework.
         """
+        super().__init__()
         self.name = 'shodan'
         self.description = "Shodan is a search engine for Internet-connected devices"
         self.project_url = 'https://www.shodan.io/'

@@ -115,6 +115,7 @@ class Feroxbuster(data_model.WaluigiTool):
         scanning, including rate limiting and response filtering to ensure
         effective and responsible scanning behavior.
         """
+        super().__init__()
         self.name = 'feroxbuster'
         self.description = 'Feroxbuster is a fast, simple, and flexible web directory scanner written in Rust'
         self.project_url = "https://github.com/epi052/feroxbuster"

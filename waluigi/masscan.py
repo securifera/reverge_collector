@@ -92,6 +92,7 @@ class Masscan(data_model.WaluigiTool):
         Sets up the tool with default parameters, scan functions, and metadata
         required for integration with the Waluigi scanning framework.
         """
+        super().__init__()
         self.name = 'masscan'
         self.description = 'Masscan is a fast port scanner that can scan the entire Internet in under 6 minutes, transmitting 10 million packets per second. It is designed to be used for large-scale network scanning and is capable of scanning large ranges of IP addresses quickly.'
         self.project_url = "https://github.com/robertdavidgraham/masscan"

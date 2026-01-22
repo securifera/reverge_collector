@@ -55,6 +55,7 @@ waluigi_tools: List[Tuple[str, str]] = [
     ('waluigi.iis_short_scan', 'IISShortnameScanner'),  # IIS Shortname Scanner
     # ('waluigi.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
     ('waluigi.ip_thc_lookup', 'IPThc'),  # IP THC API integration
+    ('waluigi.netexec_scan', 'Netexec'),  # Netexec network scanner integration
 ]
 
 # Global configuration: Wordlist storage path
@@ -800,9 +801,10 @@ class WaluigiTool:
         self.project_url: Optional[str] = None
         self.input_records: List[ServerRecordType] = []
         self.output_records: List[ServerRecordType] = []
-        self.scope_func: Optional[callable] = None
-        self.scan_func: Optional[callable] = None
-        self.import_func: Optional[callable] = None
+        self.scope_func: Optional[callable] = lambda: False
+        self.scan_func: Optional[callable] = lambda: False
+        self.import_func: Optional[callable] = lambda: False
+        self.modules_func: Optional[callable] = lambda: []
 
     def to_jsonable(self) -> Dict[str, Any]:
         """
@@ -832,6 +834,14 @@ class WaluigiTool:
             input_type.value for input_type in self.input_records]
         ret_dict['output_records'] = [
             output_type.value for output_type in self.output_records]
+
+        module_obj_list = self.modules_func()
+
+        # Add module list
+        module_list = []
+        for module_obj in module_obj_list:
+            module_list.append(module_obj.to_jsonable())
+        ret_dict['modules'] = module_list
         return ret_dict
 
 
@@ -1460,6 +1470,13 @@ class ScanData:
 
                 # Get IP as unique index for map
                 host_ip = record_obj.ipv4_addr
+
+                # If host with this IP already exists, preserve credential_id
+                if host_ip in self.host_ip_id_map:
+                    old_host_id = self.host_ip_id_map[host_ip]
+                    if old_host_id in self.host_map:
+                        record_obj.credential = self.host_map[old_host_id].credential
+
                 self.host_ip_id_map[host_ip] = record_obj.id
 
                 # Add to the host insert list
@@ -1499,7 +1516,6 @@ class ScanData:
                 temp_port_list.append(record_obj)
 
                 # Create port number to host id map
-                host_id = record_obj.parent.id
                 port_str = record_obj.port
                 if port_str in self.port_host_map:
                     temp_host_id_set = self.port_host_map[port_str]
@@ -1706,8 +1722,13 @@ class ScanData:
 
             elif isinstance(record_obj, Subnet):
 
-                # Add screenshot obj to list for being imported
+                # Add subnet obj to list for being imported
                 self.subnet_map[record_obj.id] = record_obj
+
+            elif isinstance(record_obj, Credential):
+
+                # Add credential obj to list for being imported
+                self.credential_map[record_obj.id] = record_obj
 
             # Add to overall mapping
             self.scan_obj_map[record_obj.id] = record_obj
@@ -1788,6 +1809,9 @@ class ScanData:
         self.host_map: Dict[str, 'Host'] = {}
         # IP address -> Host ID
         self.host_ip_id_map: Dict[str, str] = {}
+
+        # Credential ID -> Credential object
+        self.credential_map: Dict[str, 'Credential'] = {}
 
         # Host-Port relationship mappings
         # "IP:port"/"domain:port" -> {host_obj, port_obj}
@@ -1889,7 +1913,8 @@ class ScanData:
         }               # Component name -> List of modules
 
         # Process initial scan data
-        # logging.getLogger(__name__).debug("Processing scan data\n %s" % scan_data)
+        # logging.getLogger(__name__).debug(
+        #    "Processing scan data\n %s" % scan_data)
 
         # Decode the port bitmap if present (defines scanning scope)
         if 'b64_port_bitmap' in scan_data and scan_data['b64_port_bitmap']:
@@ -2090,6 +2115,8 @@ class Record:
                 obj = Certificate(id=obj_id, parent_id=parent_id)
             elif record_type == 'subnet':
                 obj = Subnet(id=obj_id)
+            elif record_type == 'credential':
+                obj = Credential(id=obj_id)
             else:
                 logging.getLogger(__name__).debug(
                     "Unknown record type: %s" % record_type)
@@ -2205,6 +2232,7 @@ class Host(Record):
         super().__init__(id=id, parent=None)
         self.ipv4_addr: Optional[str] = None
         self.ipv6_addr: Optional[str] = None
+        self.credential: Dict[str, str] = None
 
     def _data_to_jsonable(self) -> Dict[str, str]:
         """
@@ -2218,6 +2246,8 @@ class Host(Record):
             ret['ipv4_addr'] = self.ipv4_addr
         elif self.ipv6_addr:
             ret['ipv6_addr'] = self.ipv6_addr
+        if self.credential:
+            ret['credential'] = self.credential
         return ret
 
     def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
@@ -2238,6 +2268,11 @@ class Host(Record):
             # elif 'ipv6_addr' in input_data_dict:
             #     ipv6_addr_str = input_data_dict['ipv6_addr']
             #     self.ipv6_addr = int(netaddr.IPAddress(input_data_dict['ipv6_addr_str']))
+
+            if 'credential_id' in input_data_dict:
+                self.credential = {'credential_id': str(
+                    input_data_dict['credential_id'])}
+
         except Exception as e:
             raise Exception('Invalid host object: %s' % str(e))
 
@@ -2274,6 +2309,7 @@ class Port(Record):
         self.proto: Optional[int] = None
         self.port: Optional[str] = None
         self.secure: bool = False
+        self.credential: Optional[Dict[str, str]] = None
 
     def _data_to_jsonable(self) -> Dict[str, Union[str, int, bool]]:
         """
@@ -2307,6 +2343,11 @@ class Port(Record):
                     self.secure = True
                 else:
                     self.secure = False
+
+            if 'credential_id' in input_data_dict:
+                self.credential = {'credential_id': str(
+                    input_data_dict['credential_id'])}
+
         except Exception as e:
             raise Exception('Invalid port object: %s' % str(e))
 
@@ -2383,6 +2424,7 @@ class Domain(Record):
         """
         super().__init__(id=id, parent=Host(id=parent_id))
         self.name: Optional[str] = None
+        self.credential_id: Optional[str] = None
 
     def _data_to_jsonable(self) -> Dict[str, str]:
         """
@@ -2391,7 +2433,10 @@ class Domain(Record):
         Returns:
             Dict[str, str]: Dictionary containing domain name
         """
-        return {'name': self.name}
+        ret: Dict[str, str] = {'name': self.name}
+        if self.credential_id:
+            ret['credential_id'] = self.credential_id
+        return ret
 
     def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
         """
@@ -2405,6 +2450,10 @@ class Domain(Record):
         """
         try:
             self.name = input_data_dict['name']
+
+            if 'credential_id' in input_data_dict:
+                self.credential_id = str(input_data_dict['credential_id'])
+
         except Exception as e:
             raise Exception('Invalid domain object: %s' % str(e))
 
@@ -2467,6 +2516,66 @@ class WebComponent(Record):
                 self.version = input_data_dict['version']
         except Exception as e:
             raise Exception('Invalid component object: %s' % str(e))
+
+
+class OperatingSystem(Record):
+    """
+    Represents an operating system detected on a network host.
+
+    This record type stores information about operating systems discovered during
+    network scanning. Operating systems are children of Host records and help identify
+    the host systems running services on those ports.
+
+    Attributes:
+        name (str): Name of the operating system (e.g., "Linux", "Windows", "macOS")
+        version (Optional[str]): Version of the operating system if detected
+
+    Example:
+        >>> os = OperatingSystem(parent_id="host_123")
+        >>> os.name = "Linux"
+        >>> os.version = "5.10.0"
+    """
+
+    def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
+        """
+        Initialize an OperatingSystem record.
+
+        Args:
+            parent_id (Optional[str]): ID of the parent Host record
+            id (Optional[str]): Unique identifier for the operating system record
+        """
+        super().__init__(id=id, parent=Host(id=parent_id))
+        self.name: Optional[str] = None
+        self.version: Optional[str] = None
+
+    def _data_to_jsonable(self) -> Dict[str, str]:
+        """
+        Convert operating system data to JSON-serializable format.
+
+        Returns:
+            Dict[str, str]: Dictionary containing OS name and version
+        """
+        ret: Dict[str, str] = {'name': self.name}
+        if self.version is not None:
+            ret['version'] = self.version
+        return ret
+
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        """
+        Populate operating system data from JSON dictionary.
+
+        Args:
+            input_data_dict (Dict[str, Any]): Dictionary containing OS data
+
+        Raises:
+            Exception: If required OS data is missing or invalid
+        """
+        try:
+            self.name = input_data_dict['name']
+            if 'version' in input_data_dict:
+                self.version = input_data_dict['version']
+        except Exception as e:
+            raise Exception('Invalid operating system object: %s' % str(e))
 
 
 class Vuln(Record):
@@ -3002,6 +3111,7 @@ class CollectionModule(Record):
         super().__init__(id=id, parent=Tool(parent_id))
 
         self.name: Optional[str] = None
+        self.description: Optional[str] = None
         self.args: Optional[str] = None
         self.bindings: Optional[List[str]] = None
         self.outputs: Optional[List[str]] = None
@@ -3020,7 +3130,8 @@ class CollectionModule(Record):
             >>> data = module._data_to_jsonable()
             >>> print(data)  # {"name": "nmap_scan", "args": "-sS -O"}
         """
-        ret = {'name': self.name, 'args': self.args}
+        ret = {'name': self.name,
+               'description': self.description, 'args': self.args}
         return ret
 
     def get_output_components(self) -> List['WebComponent']:
@@ -3346,3 +3457,30 @@ class Certificate(Record):
 
             self.domain_name_id_map[domain_str] = domain_obj.id
             return domain_obj
+
+
+class Credential(Record):
+
+    def __init__(self, id: Optional[str] = None) -> None:
+
+        super().__init__(id=id, parent=None)
+        self.username: Optional[str] = None
+        self.password: Optional[str] = None
+        self.privileged: bool = False
+
+    def _data_to_jsonable(self) -> Dict[str, Any]:
+
+        return {
+            'username': self.username,
+            'password': self.password,
+            'privileged': self.privileged,
+        }
+
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+
+        try:
+            self.username = input_data_dict['username']
+            self.password = str(input_data_dict['password'])
+            self.privileged = input_data_dict.get('privileged', False)
+        except Exception as e:
+            raise Exception('Invalid credential object: %s' % str(e))

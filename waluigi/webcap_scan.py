@@ -127,6 +127,7 @@ class Webcap(data_model.WaluigiTool):
         capture, including performance tuning and logging configuration to
         reduce verbose websocket output.
         """
+        super().__init__()
         self.name = 'webcap'
         self.description = 'A python library that can be used for taking screenshots of web pages using Chrome and Webcap. Currently only the timeout and threads options can be set.'
         self.project_url = 'https://github.com/blacklanternsecurity/webcap'

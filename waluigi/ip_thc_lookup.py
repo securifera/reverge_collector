@@ -111,6 +111,7 @@ class IPThc(data_model.WaluigiTool):
         including API integration points and workflow positioning for optimal
         intelligence gathering sequence.
         """
+        super().__init__()
         self.name = 'ipthc'
         self.description = 'IP THC is a threat-intelligence platform specializing in DNS and domain data. It continuously collects both current and historical DNS records, WHOIS information, and passive-DNS data to give users a comprehensive view of any domain\'s evolution over time'
         self.project_url = 'https://ip.thc.org/'

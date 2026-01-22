@@ -117,6 +117,7 @@ class Pyshot(data_model.WaluigiTool):
         capture, including integration points for the scanning and import
         workflow phases.
         """
+        super().__init__()
         self.name = 'pyshot'
         self.description = 'A python library that can be used for taking screenshots of web pages using PhantomJS.'
         self.project_url = 'https://github.com/securifera/pyshot'

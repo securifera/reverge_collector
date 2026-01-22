@@ -104,6 +104,7 @@ class Module(data_model.WaluigiTool):
         Sets up the meta-tool with appropriate parameters for dynamic module
         execution, including workflow positioning and execution method bindings.
         """
+        super().__init__()
         self.name = 'module'
         self.description = "The module tool is used to run nmap and nuclei modules based on associated mappings in reverge"
         self.project_url = "https://github.com/securifera/reverge_collector"

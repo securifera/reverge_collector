@@ -128,6 +128,7 @@ class Crapsecrets(data_model.WaluigiTool):
         scanning, including integration points for the scanning and import
         workflow phases.
         """
+        super().__init__()
         self.name = 'crapsecrets'
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 10
@@ -303,7 +304,7 @@ def request_wrapper(url_obj: Dict[str, Any]) -> Dict[str, Any]:
                 url,
                 "-a",
                 user_agent,
-                "-j" # JSON output
+                "-j"  # JSON output
             ]
 
             # Add custom args if provided
@@ -468,7 +469,6 @@ class CrapSecretsScan(luigi.Task):
         global path_hash_map
         path_hash_map.clear()
 
-
         # Extract custom args from tool configuration
         custom_args = None
         if scheduled_scan_obj.current_tool.args:
@@ -540,127 +540,6 @@ class CrapSecretsScan(luigi.Task):
         # Write output file
         with open(output_file_path, 'w') as file_fd:
             file_fd.write(json.dumps(results_dict))
-
-
-# def create_port_objs(ret_arr: List[Any], url: str) -> List[Any]:
-#     """
-#     Create database objects from URL analysis for new targets.
-
-#     This function parses a URL to extract host, port, and path information,
-#     then creates appropriate database objects for hosts, ports, and HTTP
-#     endpoints. It handles both IPv4 and IPv6 addresses and manages path
-#     deduplication through hashing.
-
-#     Args:
-#         ret_arr (List[Any]): List to append created database objects to
-#         url (str): Target URL to parse and create objects from
-
-#     Returns:
-#         List[Any]: Updated list containing the original objects plus newly
-#                   created host, port, path, and endpoint objects
-
-#     Side Effects:
-#         - Modifies the global path_hash_map for path deduplication
-#         - Creates Host, Port, ListItem, and HttpEndpoint database objects
-#         - Parses URL components including scheme, host, port, and path
-
-#     Raises:
-#         ValueError: If URL cannot be parsed or contains invalid components
-#         netaddr.AddrFormatError: If host is not a valid IP address
-
-#     Example:
-#         >>> objects = []
-#         >>> result = create_port_objs(objects, "https://192.168.1.1:8443/api/v1")
-#         >>> print(f"Created {len(result)} database objects")
-#         Created 4 database objects
-
-#     Note:
-#         The function assumes the host portion of the URL is an IP address
-#         and creates appropriate IPv4 or IPv6 host objects. It handles
-#         default ports (80 for HTTP, 443 for HTTPS) when not explicitly specified.
-#     """
-#     global path_hash_map
-
-#     if url:
-
-#         port_id = None
-#         u = urlparse(url)
-#         host = u.netloc
-#         scheme = u.scheme
-#         port = None
-#         domain_str = None
-#         if ":" in host:
-#             host_arr = host.split(":")
-#             domain_str = host_arr[0].lower()
-#             port = int(host_arr[1])
-#         else:
-#             domain_str = host
-#             port = None
-
-#         web_path = u.path or "/"
-
-#         # Fix up port
-#         if scheme == 'http':
-#             secure = 0
-#             if port is None:
-#                 port = 80
-#         elif scheme == 'https':
-#             secure = 1
-#             if port is None:
-#                 port = 443
-
-#         ip_object = netaddr.IPAddress(domain_str)
-
-#         # Create Host object
-#         host_obj = data_model.Host()
-#         if ip_object.version == 4:
-#             host_obj.ipv4_addr = str(ip_object)
-#         elif ip_object.version == 6:
-#             host_obj.ipv6_addr = str(ip_object)
-
-#         host_id = host_obj.id
-
-#         # Add host
-#         ret_arr.append(host_obj)
-
-#         # Create Port object
-#         port_obj = data_model.Port(
-#             parent_id=host_id, id=port_id)
-#         port_obj.proto = 0
-#         port_obj.port = str(port)
-#         port_id = port_obj.id
-#         port_obj.secure = secure
-
-#         # Add port
-#         ret_arr.append(port_obj)
-
-#         hashobj = hashlib.sha1
-#         hashobj.update(web_path.encode())
-#         path_hash = hashobj.digest()
-#         hex_str = binascii.hexlify(path_hash).decode()
-#         web_path_hash = hex_str
-
-#         if web_path_hash in path_hash_map:
-#             path_obj = path_hash_map[web_path_hash]
-#         else:
-#             path_obj = data_model.ListItem()
-#             path_obj.web_path = web_path
-#             path_obj.web_path_hash = web_path_hash
-
-#             # Add to map and the object list
-#             path_hash_map[web_path_hash] = path_obj
-#             ret_arr.append(path_obj)
-
-#         web_path_id = path_obj.id
-
-#         # Add http endpoint
-#         http_endpoint_obj = data_model.HttpEndpoint(
-#             parent_id=port_obj.id)
-#         http_endpoint_obj.web_path_id = web_path_id
-
-#         ret_arr.append(port_obj)
-
-#     return ret_arr
 
 
 @inherits(CrapSecretsScan)
@@ -786,61 +665,49 @@ class ImportCrapSecretsOutput(data_model.ImportToolXOutput):
                     output = entry['output']
                     http_endpoint_id = entry['http_endpoint_id']
                     port_id = entry['port_id']
-                    #url = entry.get('url', '')
+                    # url = entry.get('url', '')
 
                     # Handle new JSON format with 'target' and 'results' keys
                     if output:
                         # Extract results list from new format
-                        findings = output.get('results', []) if isinstance(output, dict) else output
-                        
+                        findings = output.get('results', []) if isinstance(
+                            output, dict) else output
+
                         if findings and len(findings) > 0:
                             for finding in findings:
                                 try:
                                     # Handle findings from crapsecrets CLI output
                                     if isinstance(finding, dict):
                                         # Extract key vulnerability information
-                                        vuln_name = finding.get(
+                                        secret_type = finding.get(
                                             'secret_type', 'Unknown')
 
                                         if 'secret' in finding:
-                                            secret_val = finding['secret']
-
-                                            # Extract description if available
-                                            vuln_desc = ''
-                                            if 'details' in finding:
-                                                desc_obj = finding['details']
-                                                if isinstance(desc_obj, dict) and 'secret' in desc_obj:
-                                                    vuln_name = desc_obj['secret']
-                                                vuln_desc = str(desc_obj)
-
-                                            # if port_id is None:
-                                            #     ret_arr = create_port_objs(
-                                            #         ret_arr, url)
-
                                             # Add vuln
                                             vuln_obj = data_model.Vuln(
                                                 parent_id=port_id)
                                             vuln_obj.collection_tool_instance_id = tool_instance_id
-                                            vuln_obj.name = vuln_name
-                                            #vuln_obj.vuln_details = secret_val
+                                            vuln_obj.name = secret_type
+                                            # vuln_obj.vuln_details = secret_val
                                             vuln_obj.endpoint_id = http_endpoint_id
                                             ret_arr.append(vuln_obj)
 
-                                            # Add vuln details as a collection module output
-                                            module_obj = data_model.CollectionModule(
-                                                parent_id=tool_id)
-                                            module_obj.collection_tool_instance_id = tool_instance_id
-                                            module_obj.name = vuln_name
-                                            ret_arr.append(module_obj)
-                                            module_id = module_obj.id
+                                        # Add vuln details as a collection module output
+                                        module_obj = data_model.CollectionModule(
+                                            parent_id=tool_id)
+                                        module_obj.collection_tool_instance_id = tool_instance_id
+                                        module_obj.name = secret_type
+                                        ret_arr.append(module_obj)
+                                        module_id = module_obj.id
 
-                                            # Add module output for all scan results
-                                            module_output_obj = data_model.CollectionModuleOutput(
-                                                parent_id=module_id)
-                                            module_output_obj.collection_tool_instance_id = tool_instance_id
-                                            module_output_obj.output = json.dumps(finding)
-                                            module_output_obj.port_id = port_id
-                                            ret_arr.append(module_output_obj)
+                                        # Add module output for all scan results
+                                        module_output_obj = data_model.CollectionModuleOutput(
+                                            parent_id=module_id)
+                                        module_output_obj.collection_tool_instance_id = tool_instance_id
+                                        module_output_obj.output = json.dumps(
+                                            finding)
+                                        module_output_obj.port_id = port_id
+                                        ret_arr.append(module_output_obj)
 
                                 except Exception as e:
                                     logging.getLogger(__name__).error(

@@ -100,7 +100,9 @@ def process_wrapper(cmd_args: List[str], use_shell: bool = False,
                     my_env: Optional[Dict[str, str]] = None,
                     stdin_data: Optional[str] = None,
                     print_output: bool = False, store_output: bool = False,
-                    pid_callback: Optional[Callable] = None) -> Dict[str, Any]:
+                    pid_callback: Optional[Callable] = None,
+                    stdout_file: Optional[str] = None,
+                    stderr_file: Optional[str] = None) -> Dict[str, Any]:
     """
     Execute a process with comprehensive monitoring and output capture.
 
@@ -112,9 +114,12 @@ def process_wrapper(cmd_args: List[str], use_shell: bool = False,
         cmd_args (List[str]): Command and arguments to execute.
         use_shell (bool): Whether to execute through shell. Defaults to False.
         my_env (Optional[Dict[str, str]]): Environment variables for the process.
+        stdin_data (Optional[str]): Data to send to stdin if provided. Defaults to None.
         print_output (bool): Whether to print output in real-time. Defaults to False.
         store_output (bool): Whether to capture and return output. Defaults to False.
         pid_callback (Optional[Callable]): Callback function to receive process ID.
+        stdout_file (Optional[str]): File path to write stdout to. Defaults to None.
+        stderr_file (Optional[str]): File path to write stderr to. Defaults to None.
 
     Returns:
         Dict[str, Any]: Dictionary containing execution results with keys:
@@ -126,7 +131,7 @@ def process_wrapper(cmd_args: List[str], use_shell: bool = False,
 
     # Configure output capture based on parameters
     pipe_type = subprocess.DEVNULL
-    if store_output:
+    if store_output or stdout_file:
         pipe_type = subprocess.PIPE
 
     # Start the process
@@ -144,9 +149,10 @@ def process_wrapper(cmd_args: List[str], use_shell: bool = False,
     p.stdin.close()
 
     # Set up stream readers for output capture
-    if store_output:
+    stdout_reader = None
+    if store_output or stdout_file:
         stdout_reader = ProcessStreamReader(
-            ProcessStreamReader.StreamType.STDOUT, p.stdout, print_output, store_output)
+            ProcessStreamReader.StreamType.STDOUT, p.stdout, print_output, True)
         stdout_reader.start()
 
     stderr_reader = ProcessStreamReader(
@@ -159,9 +165,20 @@ def process_wrapper(cmd_args: List[str], use_shell: bool = False,
     # Prepare return data
     ret_data = {"exit_code": exit_code}
 
-    # Collect output if requested
-    if store_output:
-        ret_data["stdout"] = stdout_reader.get_output()
+    # Collect and write stdout if requested
+    if stdout_reader:
+        stdout_output = stdout_reader.get_output()
+        if store_output:
+            ret_data["stdout"] = stdout_output
+        if stdout_file:
+            with open(stdout_file, 'w') as f:
+                f.write(stdout_output)
 
-    ret_data["stderr"] = stderr_reader.get_output()
+    # Collect and write stderr
+    stderr_output = stderr_reader.get_output()
+    ret_data["stderr"] = stderr_output
+    if stderr_file:
+        with open(stderr_file, 'w') as f:
+            f.write(stderr_output)
+
     return ret_data

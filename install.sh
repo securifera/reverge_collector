@@ -86,7 +86,7 @@ sudo cp ca.crt /usr/local/share/ca-certificates/
 sudo update-ca-certificates
 
 # install python pip'
-install_packages python3-pip
+install_packages python3-pip pipx
 pip3 config set global.trusted-host "pypi.org files.pythonhosted.org pypi.python.org" --trusted-host=pypi.python.org --trusted-host=pypi.org --trusted-host=files.pythonhosted.org
 
 # install luigi/waluigi
@@ -179,6 +179,16 @@ git clone -c http.sslVerify=false https://github.com/securifera/webcap.git
 cd webcap 
 python3 -m build
 python3 -m pip install dist/webcap*.whl
+
+# Install netexec
+pipx ensurepath
+pipx install git+https://github.com/securifera/NetExec
+
+# Install metasploit
+cd /tmp
+curl https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > msfinstall &&  chmod 755 msfinstall && sudo ./msfinstall
+sudo msfrpcd -P msf -S -a 127.0.0.1
+python3 -m pip install pymetasploit3
 
 # Clean seclists in the background
 sudo git clone -c http.sslVerify=false https://github.com/danielmiessler/SecLists.git /usr/share/seclists &
