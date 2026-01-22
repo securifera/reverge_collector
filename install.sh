@@ -86,7 +86,7 @@ sudo cp ca.crt /usr/local/share/ca-certificates/
 sudo update-ca-certificates
 
 # install python pip'
-install_packages python3-pip
+install_packages python3-pip pipx
 pip3 config set global.trusted-host "pypi.org files.pythonhosted.org pypi.python.org" --trusted-host=pypi.python.org --trusted-host=pypi.org --trusted-host=files.pythonhosted.org
 
 # install luigi/waluigi
@@ -181,7 +181,6 @@ python3 -m build
 python3 -m pip install dist/webcap*.whl
 
 # Install netexec
-sudo apt install pipx git
 pipx ensurepath
 pipx install git+https://github.com/securifera/NetExec
 
