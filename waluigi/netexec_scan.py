@@ -123,7 +123,7 @@ class Netexec(data_model.WaluigiTool):
 
         try:
             # Execute netexec -h to get list of all protocols
-            cmd_args = ['/root/venv/bin/netexec', '-h']
+            cmd_args = ['/root/.local/bin/netexec', '-h']
             result = process_wrapper(cmd_args=cmd_args, store_output=True)
 
             if result and 'exit_code' in result and result['exit_code'] != 0:
@@ -157,7 +157,7 @@ class Netexec(data_model.WaluigiTool):
             for protocol in protocols:
                 try:
                     # Execute netexec <protocol> -L to get modules
-                    cmd_args = ['/root/venv/bin/netexec', protocol, '-L']
+                    cmd_args = ['/root/.local/bin/netexec', protocol, '-L']
                     result = process_wrapper(
                         cmd_args=cmd_args, store_output=True)
 
