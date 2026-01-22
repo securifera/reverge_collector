@@ -490,7 +490,7 @@ class NetexecScan(luigi.Task):
             if os.name != 'nt':
                 command.append("sudo")
 
-            command.append("/root/venv/bin/netexec")
+            command.append("/root/.local/bin/netexec")
             command.append("-j")
 
             # Add script arguments
