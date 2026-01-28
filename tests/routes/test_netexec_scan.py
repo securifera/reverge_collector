@@ -41,8 +41,8 @@ class TestNetexecScan:
         sched_scan_arr = json.loads(
             data, object_hook=lambda d: SimpleNamespace(**d))
 
-        port_list = "135, 445"
-        target_ip = '192.168.110.131'
+        port_list = "445"
+        target_ip = '113.190.20.78'
         port_bytes = get_port_byte_array(port_list)
         b64_ports = base64.b64encode(port_bytes).decode()
         scope = {'b64_port_bitmap': b64_ports,
@@ -107,8 +107,8 @@ class TestNetexecScan:
         sched_scan_arr = json.loads(
             data, object_hook=lambda d: SimpleNamespace(**d))
 
-        port_list = "135, 445"
-        target_ip = '192.168.110.131'
+        port_list = "445"
+        target_ip = '113.190.20.78'
         port_bytes = get_port_byte_array(port_list)
         b64_ports = base64.b64encode(port_bytes).decode()
         scope = {'b64_port_bitmap': b64_ports,

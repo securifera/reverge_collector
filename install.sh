@@ -183,6 +183,7 @@ python3 -m pip install dist/webcap*.whl
 # Install netexec
 pipx ensurepath
 pipx install git+https://github.com/securifera/NetExec
+~/.local/bin/netexec --version
 
 # Install metasploit
 cd /tmp

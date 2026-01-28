@@ -123,7 +123,8 @@ class Netexec(data_model.WaluigiTool):
 
         try:
             # Execute netexec -h to get list of all protocols
-            cmd_args = ['/root/.local/bin/netexec', '-h']
+            netexec_path = os.path.expanduser('~/.local/bin/netexec')
+            cmd_args = [netexec_path, '-h']
             result = process_wrapper(cmd_args=cmd_args, store_output=True)
 
             if result and 'exit_code' in result and result['exit_code'] != 0:
@@ -157,7 +158,8 @@ class Netexec(data_model.WaluigiTool):
             for protocol in protocols:
                 try:
                     # Execute netexec <protocol> -L to get modules
-                    cmd_args = ['/root/.local/bin/netexec', protocol, '-L']
+                    netexec_path = os.path.expanduser('~/.local/bin/netexec')
+                    cmd_args = [netexec_path, protocol, '-L']
                     result = process_wrapper(
                         cmd_args=cmd_args, store_output=True)
 
@@ -490,7 +492,8 @@ class NetexecScan(luigi.Task):
             if os.name != 'nt':
                 command.append("sudo")
 
-            command.append("/root/.local/bin/netexec")
+            netexec_path = os.path.expanduser('~/.local/bin/netexec')
+            command.append(netexec_path)
             command.append("-j")
 
             # Add script arguments
