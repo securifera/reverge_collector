@@ -1592,29 +1592,29 @@ class ReconManager:
 
         return port_arr
 
-    def get_tools(self):
+    # def get_tools(self):
 
-        tool_obj_arr = []
-        r = requests.get('%s/api/tools' % (self.manager_url),
-                         headers=self.headers, verify=False)
-        if r.status_code == 404:
-            return tool_obj_arr
-        elif r.status_code != 200:
-            logging.getLogger(__name__).error("Unknown Error retrieving tools")
-            return tool_obj_arr
+    #     tool_obj_arr = []
+    #     r = requests.get('%s/api/tools' % (self.manager_url),
+    #                      headers=self.headers, verify=False)
+    #     if r.status_code == 404:
+    #         return tool_obj_arr
+    #     elif r.status_code != 200:
+    #         logging.getLogger(__name__).error("Unknown Error retrieving tools")
+    #         return tool_obj_arr
 
-        if r.content:
-            try:
-                content = r.json()
-                data = self._decrypt_json(content)
-                tool_obj_arr = json.loads(
-                    data, object_hook=lambda d: SimpleNamespace(**d))
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    "Error retrieving tools: %s" % str(e))
-                logging.getLogger(__name__).debug(traceback.format_exc())
+    #     if r.content:
+    #         try:
+    #             content = r.json()
+    #             data = self._decrypt_json(content)
+    #             tool_obj_arr = json.loads(
+    #                 data, object_hook=lambda d: SimpleNamespace(**d))
+    #         except Exception as e:
+    #             logging.getLogger(__name__).error(
+    #                 "Error retrieving tools: %s" % str(e))
+    #             logging.getLogger(__name__).debug(traceback.format_exc())
 
-        return tool_obj_arr
+    #     return tool_obj_arr
 
     def update_collector(self, collector_data):
 
