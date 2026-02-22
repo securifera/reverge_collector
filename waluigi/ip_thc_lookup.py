@@ -1,3 +1,4 @@
+
 """
 IP THC IP Lookup Module.
 
@@ -231,23 +232,41 @@ def subdomain_request_wrapper(domain: str) -> Dict[str, Union[str, List[str]]]:
         'Accept': 'application/json'
     }
 
-    # Execute API request
+    import time
     data = None
     try:
-        conn = http.client.HTTPSConnection("ip.thc.org")
-        conn.request("POST", "/api/v1/lookup/subdomains", payload, headers)
-        res = conn.getresponse()
-        data = res.read()
-
-        # Check response status
-        if res.status != 200:
-            logging.getLogger(__name__).debug(
-                "Status code: %d" % res.status)
-            logging.getLogger(__name__).debug(data.decode("utf-8"))
-            raise RuntimeError("[-] Error getting IP THC output.")
-
+        while True:
+            conn = http.client.HTTPSConnection("ip.thc.org")
+            conn.request("POST", "/api/v1/lookup/subdomains", payload, headers)
+            res = conn.getresponse()
+            data = res.read()
+            if res.status == 429:
+                logging.getLogger(__name__).warning(
+                    "Received 429 Too Many Requests. Sleeping 1 second and retrying. Payload: %s", payload)
+                time.sleep(1)
+                continue
+            if res.status == 406:
+                try:
+                    decoded_data = data.decode("utf-8")
+                except Exception:
+                    decoded_data = str(data)
+                logging.getLogger(__name__).warning(
+                    f"IP THC lookup skipped. Status: 406 Not Acceptable. Payload: {payload}, Response: {decoded_data}")
+                return ret_str
+            if res.status != 200:
+                logging.getLogger(__name__).error(
+                    f"IP THC lookup failed. Status code: {res.status}")
+                logging.getLogger(__name__).error(f"Payload sent: {payload}")
+                try:
+                    decoded_data = data.decode("utf-8")
+                except Exception:
+                    decoded_data = str(data)
+                logging.getLogger(__name__).error(
+                    f"Response data: {decoded_data}")
+                raise RuntimeError(
+                    f"[-] Error getting IP THC output. Status: {res.status}, Payload: {payload}, Response: {decoded_data}")
+            break
         conn.close()
-
     except Exception as e:
         logging.getLogger(__name__).error(
             f"Error during IP THC lookup: {str(e)}")
@@ -317,21 +336,32 @@ def reverse_dns_request_wrapper(ip_addr: str) -> Dict[str, Union[str, List[str]]
         'Accept': 'application/json'
     }
 
-    # Execute API request
+    import time
     data = None
     try:
-        conn = http.client.HTTPSConnection("ip.thc.org")
-        conn.request("POST", "/api/v1/lookup", payload, headers)
-        res = conn.getresponse()
-        data = res.read()
-
-        # Check response status
-        if res.status != 200:
-            logging.getLogger(__name__).debug(
-                "Status code: %d" % res.status)
-            logging.getLogger(__name__).debug(data.decode("utf-8"))
-            raise RuntimeError("[-] Error getting IP THC output.")
-
+        while True:
+            conn = http.client.HTTPSConnection("ip.thc.org")
+            conn.request("POST", "/api/v1/lookup", payload, headers)
+            res = conn.getresponse()
+            data = res.read()
+            if res.status == 429:
+                logging.getLogger(__name__).warning(
+                    "Received 429 Too Many Requests. Sleeping 1 second and retrying. Payload: %s", payload)
+                time.sleep(1)
+                continue
+            if res.status != 200:
+                logging.getLogger(__name__).error(
+                    f"IP THC lookup failed. Status code: {res.status}")
+                logging.getLogger(__name__).error(f"Payload sent: {payload}")
+                try:
+                    decoded_data = data.decode("utf-8")
+                except Exception:
+                    decoded_data = str(data)
+                logging.getLogger(__name__).error(
+                    f"Response data: {decoded_data}")
+                raise RuntimeError(
+                    f"[-] Error getting IP THC output. Status: {res.status}, Payload: {payload}, Response: {decoded_data}")
+            break
         conn.close()
     except Exception as e:
         logging.getLogger(__name__).error(
@@ -509,6 +539,18 @@ class IPThcIPLookupScan(luigi.Task):
         domain_obj_list = scheduled_scan_obj.scan_data.get_domains(
             [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
         for domain_obj in domain_obj_list:
+
+            # Check against a list of cloud hosting domains to skip (.amazonaws.com, .cloudfront.net, etc.)
+            if scan_utils.is_cloud_domain(domain_obj.name):
+                logging.getLogger(__name__).debug(
+                    "Skipping cloud hosting domain: %s" % domain_obj.name)
+                continue
+
+            # Check if the domain is a wildcard domain
+            if domain_obj.name.startswith("*."):
+                logging.getLogger(__name__).debug(
+                    "Skipping wildcard domain: %s" % domain_obj.name)
+                continue
 
             host_obj = domain_obj.parent
 

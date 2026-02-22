@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "waluigi"
-version = "1.1.0"
+version = "1.1.1"
 description = "A scan automation pipeline tool written in Python"
 authors = ["Ryan Wincey (b0yd)"]
 repository = "https://github.com/securifera/reverge_collector"

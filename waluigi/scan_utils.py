@@ -1,3 +1,36 @@
+from typing import Dict, List, Any, Optional, Union, Callable, Set
+from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor, Future
+from enum import Enum
+from queue import Queue
+from threading import Thread
+from json import JSONDecoder, JSONDecodeError
+import socket
+import logging
+import netaddr
+import traceback
+import time
+import threading
+import re
+import validators
+import os
+import math
+from functools import wraps
+
+
+def is_cloud_domain(domain: str) -> bool:
+    """
+    Check if the domain belongs to a known cloud provider.
+    Extend this list as needed for additional cloud providers.
+    """
+    cloud_domains = [
+        "amazonaws.com",
+        "cloudfront.net",
+    ]
+    domain = domain.lower()
+    return any(domain.endswith(cloud) for cloud in cloud_domains)
+
+
 """
 Scan Utilities Module.
 
@@ -57,26 +90,6 @@ Note:
     resource management.
 
 """
-
-from functools import wraps
-import math
-import os
-import validators
-import re
-import threading
-import time
-import traceback
-import netaddr
-import logging
-import socket
-
-from json import JSONDecoder, JSONDecodeError
-from threading import Thread
-from queue import Queue
-from enum import Enum
-from concurrent.futures import ThreadPoolExecutor, Future
-from urllib.parse import urlparse
-from typing import Dict, List, Any, Optional, Union, Callable, Set
 
 
 # Regex pattern for finding non-whitespace characters in JSON parsing
