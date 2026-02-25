@@ -56,6 +56,8 @@ waluigi_tools: List[Tuple[str, str]] = [
     # ('waluigi.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
     ('waluigi.ip_thc_lookup', 'IPThc'),  # IP THC API integration
     ('waluigi.netexec_scan', 'Netexec'),  # Netexec network scanner integration
+    # Metasploit network scanner integration
+    # ('waluigi.metasploit_scan', 'Metasploit'),
 ]
 
 # Global configuration: Wordlist storage path
@@ -334,6 +336,10 @@ class ScheduledScan():
         # Initialize collection tool map with wordlist preparation
         self.collection_tool_map: Dict[str, Any] = {}
         for collection_tool in scheduled_scan.collection_tools:
+
+            # Skip tool if it's completed
+            if collection_tool.status == CollectionToolStatus.COMPLETED.value:
+                continue
 
             temp_wordlist_path = None
             # Only get wordlists for enabled tools
