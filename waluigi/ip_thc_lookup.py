@@ -234,6 +234,7 @@ def subdomain_request_wrapper(domain: str) -> Dict[str, Union[str, List[str]]]:
 
     import time
     data = None
+    retry_count = 0
     try:
         while True:
             conn = http.client.HTTPSConnection("ip.thc.org")
@@ -241,9 +242,11 @@ def subdomain_request_wrapper(domain: str) -> Dict[str, Union[str, List[str]]]:
             res = conn.getresponse()
             data = res.read()
             if res.status == 429:
+                backoff = min(2 ** retry_count, 60)
                 logging.getLogger(__name__).warning(
-                    "Received 429 Too Many Requests. Sleeping 1 second and retrying. Payload: %s", payload)
-                time.sleep(1)
+                    "Received 429 Too Many Requests. Sleeping %d seconds and retrying. Payload: %s", backoff, payload)
+                time.sleep(backoff)
+                retry_count += 1
                 continue
             if res.status == 406:
                 try:
@@ -338,6 +341,7 @@ def reverse_dns_request_wrapper(ip_addr: str) -> Dict[str, Union[str, List[str]]
 
     import time
     data = None
+    retry_count = 0
     try:
         while True:
             conn = http.client.HTTPSConnection("ip.thc.org")
@@ -345,10 +349,20 @@ def reverse_dns_request_wrapper(ip_addr: str) -> Dict[str, Union[str, List[str]]
             res = conn.getresponse()
             data = res.read()
             if res.status == 429:
+                backoff = min(2 ** retry_count, 60)
                 logging.getLogger(__name__).warning(
-                    "Received 429 Too Many Requests. Sleeping 1 second and retrying. Payload: %s", payload)
-                time.sleep(1)
+                    "Received 429 Too Many Requests. Sleeping %d seconds and retrying. Payload: %s", backoff, payload)
+                time.sleep(backoff)
+                retry_count += 1
                 continue
+            if res.status == 406:
+                try:
+                    decoded_data = data.decode("utf-8")
+                except Exception:
+                    decoded_data = str(data)
+                logging.getLogger(__name__).warning(
+                    f"IP THC lookup skipped. Status: 406 Not Acceptable. Payload: {payload}, Response: {decoded_data}")
+                return ret_str
             if res.status != 200:
                 logging.getLogger(__name__).error(
                     f"IP THC lookup failed. Status code: {res.status}")
