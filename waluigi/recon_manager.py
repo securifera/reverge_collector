@@ -646,9 +646,6 @@ class ScheduledScanThread(threading.Thread):
                 # Update final scan status on server
                 scheduled_scan_obj.update_scan_status(scan_status)
 
-                if self.connection_manager:
-                    self.connection_manager.free_connection_lock()
-
             except ScanNotFoundException as e:
                 # Scan was deleted from server, remove from local tracking
                 logging.getLogger(__name__).warning(
@@ -658,6 +655,9 @@ class ScheduledScanThread(threading.Thread):
                         del self.scheduled_scan_map[scheduled_scan_obj.id]
             except Exception as e:
                 logging.getLogger(__name__).debug(traceback.format_exc())
+            finally:
+                if self.connection_manager:
+                    self.connection_manager.free_connection_lock()
 
         # Remove the scan from the map
         if data_model.ScanStatus.COMPLETED.value == scan_status:
