@@ -102,6 +102,10 @@ echo "no_install_shutdown_handler=True" | sudo tee -a /opt/collector/luigi.cfg
 poetry build
 python3 -m pip install dist/waluigi*.whl
 sudo cp ./waluigi/scan_poller.py /opt/collector/
+sudo cp ./waluigi/mcp_server.py /opt/collector/
+
+# Install MCP server dependencies
+python3 -m pip install "mcp[cli]" uvicorn
 
 ###############
 # scanner stuff
