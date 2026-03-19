@@ -23,19 +23,20 @@ from functools import partial
 import json
 import os
 import shutil
-from typing import Dict, Any, List, Set, Optional, Union
-import netaddr
-import luigi
-import traceback
 import time
+from datetime import datetime
+from typing import Dict, Any, List, Set, Optional, Union
+import luigi
+import netaddr
+import traceback
 import logging
 
-from luigi.util import inherits
 from libnmap.parser import NmapParser
+from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
+from waluigi import tool_utils
 from waluigi.proc_utils import process_wrapper
-from datetime import datetime
 
 
 class Nmap(data_model.WaluigiTool):
@@ -630,41 +631,212 @@ class NmapScan(luigi.Task):
                 meta_file_fd.write(json.dumps(nmap_scan_data))
 
 
-def remove_dups_from_dict(dict_array: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Remove duplicate script results from Nmap output.
+# remove_dups_from_dict lives in waluigi.tool_utils
 
-    This utility function removes duplicate script results that may occur
-    in Nmap output by converting each dictionary to a JSON string for
-    comparison, then reconstructing unique entries.
+
+def parse_nmap_xml(
+    xml_path: str,
+    scope_obj: Optional[Any] = None,
+    tool_instance_id: Optional[str] = None,
+    tool_id: Optional[str] = None,
+) -> List[Any]:
+    """Parse a single nmap XML output file and return data_model Record objects.
 
     Args:
-        dict_array (List[Dict[str, Any]]): Array of script result dictionaries
-            that may contain duplicates
+        xml_path:         Absolute path to the nmap XML output file.
+        scope_obj:        Optional ScanData for ID correlation.  When ``None``
+                          every record receives a fresh UUID.
+        tool_instance_id: Value assigned to each record's
+                          ``collection_tool_instance_id`` field.
+        tool_id:          Parent ID for CollectionModule objects.
 
     Returns:
-        List[Dict[str, Any]]: Array of unique script result dictionaries
-
-    Example:
-        >>> scripts = [{'id': 'ssl-cert', 'output': 'cert1'}, 
-        ...           {'id': 'ssl-cert', 'output': 'cert1'},
-        ...           {'id': 'http-title', 'output': 'title1'}]
-        >>> unique_scripts = remove_dups_from_dict(scripts)
-        >>> len(unique_scripts)
-        2
+        Ordered list of data_model Record objects.
     """
-    ret_arr: List[Dict[str, Any]] = []
-    script_set: Set[str] = set()
+    nmap_report = NmapParser.parse_fromfile(xml_path)
+    ret_arr: List[Any] = []
 
-    # Convert each dict to JSON string for comparison
-    for script_json in dict_array:
-        script_entry: str = json.dumps(script_json)
-        script_set.add(script_entry)
+    for host in nmap_report.hosts:
+        host_ip: str = host.id
+        host_id: Optional[str] = None
 
-    # Reconstruct unique dictionaries
-    for script_entry in script_set:
-        script_json: Dict[str, Any] = json.loads(script_entry)
-        ret_arr.append(script_json)
+        for port_tuple in host.get_open_ports():
+            port_str: str = str(port_tuple[0])
+            port_service_id: str = port_tuple[1] + "." + port_str
+
+            port_id: Optional[str] = None
+            host_key: str = "%s:%s" % (host_ip, port_str)
+
+            if scope_obj is not None:
+                if host_key in scope_obj.host_port_obj_map:
+                    host_port_dict = scope_obj.host_port_obj_map[host_key]
+                    port_id = host_port_dict["port_obj"].id
+                    host_id = host_port_dict["host_obj"].id
+                elif host_ip in scope_obj.host_ip_id_map:
+                    host_id = scope_obj.host_ip_id_map[host_ip]
+
+            ip_object = netaddr.IPAddress(host_ip)
+            host_obj = data_model.Host(id=host_id)
+            host_obj.collection_tool_instance_id = tool_instance_id
+            if ip_object.version == 4:
+                host_obj.ipv4_addr = str(ip_object)
+            elif ip_object.version == 6:
+                host_obj.ipv6_addr = str(ip_object)
+            host_id = host_obj.id
+            ret_arr.append(host_obj)
+
+            port_obj = data_model.Port(parent_id=host_id, id=port_id)
+            port_obj.collection_tool_instance_id = tool_instance_id
+            port_obj.proto = 0  # TCP
+            port_obj.port = port_str
+            port_id = port_obj.id
+            ret_arr.append(port_obj)
+
+            for hostname in host.hostnames:
+                if type(hostname) is dict:
+                    hostname = hostname["name"]
+                domain_obj = data_model.Domain(parent_id=host_id)
+                domain_obj.collection_tool_instance_id = tool_instance_id
+                domain_obj.name = hostname
+                ret_arr.append(domain_obj)
+
+            svc = host.get_service_byid(port_service_id)
+            if not svc:
+                continue
+
+            svc_dict: Dict[str, str] = svc.service_dict
+
+            service_name: str = svc_dict.get("name", "")
+            if service_name:
+                component_name = service_name.lower().strip()
+                if component_name and component_name != "unknown":
+                    comp = data_model.WebComponent(parent_id=port_id)
+                    comp.collection_tool_instance_id = tool_instance_id
+                    comp.name = component_name
+                    ret_arr.append(comp)
+
+            product: str = svc_dict.get("product", "")
+            if product:
+                component_name = product.replace(" httpd", "").lower().strip()
+                if component_name and component_name != "unknown":
+                    comp = data_model.WebComponent(parent_id=port_id)
+                    comp.collection_tool_instance_id = tool_instance_id
+                    comp.name = component_name
+                    version_str: str = svc_dict.get("version", "")
+                    if version_str:
+                        comp.version = version_str
+                    ret_arr.append(comp)
+
+            script_res_arr = svc.scripts_results
+            if not script_res_arr:
+                continue
+
+            script_res = tool_utils.remove_dups_from_dict(script_res_arr)
+
+            for script in script_res:
+                script_id: str = script.get("id", "")
+
+                if script_id == "ssl-cert":
+                    port_obj.secure = True
+                    cert_obj = data_model.Certificate(parent_id=port_obj.id)
+                    cert_obj.collection_tool_instance_id = tool_instance_id
+
+                    elements = script.get("elements", {})
+                    validity = elements.get("validity", {})
+
+                    if "notBefore" in validity:
+                        try:
+                            dt = datetime.strptime(
+                                validity["notBefore"], "%Y-%m-%dT%H:%M:%S"
+                            )
+                            cert_obj.issued = int(time.mktime(dt.timetuple()))
+                        except ValueError:
+                            pass
+
+                    if "notAfter" in validity:
+                        try:
+                            dt = datetime.strptime(
+                                validity["notAfter"], "%Y-%m-%dT%H:%M:%S"
+                            )
+                            cert_obj.expires = int(time.mktime(dt.timetuple()))
+                        except ValueError:
+                            pass
+
+                    if "sha1" in elements:
+                        cert_obj.fingerprint_hash = elements["sha1"]
+
+                    subject = elements.get("subject", {})
+                    if "commonName" in subject:
+                        domain_obj = cert_obj.add_domain(
+                            host_id, subject["commonName"], tool_instance_id
+                        )
+                        if domain_obj:
+                            ret_arr.append(domain_obj)
+
+                    if "issuer" in elements:
+                        cert_obj.issuer = json.dumps(elements["issuer"])
+
+                    extensions = elements.get("extensions", {})
+                    null_ext = extensions.get("null", [])
+                    if not isinstance(null_ext, list):
+                        null_ext = [null_ext]
+                    for ext_inst in null_ext:
+                        if not isinstance(ext_inst, dict):
+                            continue
+                        if ext_inst.get("name") == "X509v3 Subject Alternative Name":
+                            san_value: str = ext_inst.get("value", "")
+                            if ":" in san_value:
+                                dns_name = san_value.split(":")[1]
+                                if "," in dns_name:
+                                    dns_name = dns_name.split(",")[0]
+                                dns_name = dns_name.strip()
+                                domain_obj = cert_obj.add_domain(
+                                    host_id, dns_name, tool_instance_id
+                                )
+                                if domain_obj:
+                                    ret_arr.append(domain_obj)
+
+                    ret_arr.append(cert_obj)
+
+                elif "http" in script_id:
+                    comp = data_model.WebComponent(parent_id=port_id)
+                    comp.collection_tool_instance_id = tool_instance_id
+                    comp.name = "http"
+                    ret_arr.append(comp)
+
+            for script_out in script_res:
+                if "id" not in script_out or "output" not in script_out:
+                    continue
+                script_id = script_out["id"]
+                output: str = script_out["output"]
+                if not output:
+                    continue
+
+                temp_module_id: Optional[str] = None
+
+                if scope_obj is not None and scope_obj.module_id:
+                    temp_module_id = scope_obj.module_id
+                    for output_component in scope_obj.module_outputs:
+                        if output_component.name in output.lower():
+                            comp = data_model.WebComponent(parent_id=port_id)
+                            comp.collection_tool_instance_id = tool_instance_id
+                            comp.name = output_component.name
+                            ret_arr.append(comp)
+                else:
+                    module_obj = data_model.CollectionModule(parent_id=tool_id)
+                    module_obj.collection_tool_instance_id = tool_instance_id
+                    module_obj.name = script_id
+                    module_obj.args = "--script +%s" % script_id
+                    ret_arr.append(module_obj)
+                    temp_module_id = module_obj.id
+
+                module_output_obj = data_model.CollectionModuleOutput(
+                    parent_id=temp_module_id
+                )
+                module_output_obj.collection_tool_instance_id = tool_instance_id
+                module_output_obj.output = output
+                module_output_obj.port_id = port_id
+                ret_arr.append(module_output_obj)
 
     return ret_arr
 
@@ -779,311 +951,40 @@ class ImportNmapOutput(data_model.ImportToolXOutput):
         tool_obj = scheduled_scan_obj.current_tool
         tool_id = tool_obj.id
 
-        # Initialize result array for data model objects
         ret_arr: List[Any] = []
 
-        # Read scan metadata file containing output file paths
         meta_file = self.input().path
         if os.path.exists(meta_file):
-
             with open(meta_file) as file_fd:
                 json_input = file_fd.read()
 
-            # Process scan metadata and XML output files
-            if len(json_input) > 0:
+            if json_input:
                 nmap_scan_obj = json.loads(json_input)
-                nmap_json_arr = nmap_scan_obj['nmap_scan_list']
-
-                # Process each parallel scan output file
-                for nmap_scan_entry in nmap_json_arr:
-
-                    # Parse Nmap XML output with error handling
+                for nmap_scan_entry in nmap_scan_obj['nmap_scan_list']:
                     nmap_out = nmap_scan_entry['output_file']
-                    nmap_report = None
                     try:
                         if os.path.exists(nmap_out) and os.path.getsize(nmap_out) > 0:
-                            # Use libnmap parser for robust XML processing
-                            nmap_report = NmapParser.parse_fromfile(nmap_out)
+                            ret_arr.extend(
+                                parse_nmap_xml(
+                                    nmap_out, scope_obj, tool_instance_id, tool_id
+                                )
+                            )
                         else:
                             logging.getLogger(__name__).warning(
-                                f"Skipping nmap output file {nmap_out}: file does not exist or is empty."
+                                f"Skipping nmap output file {nmap_out}: "
+                                "file does not exist or is empty."
                             )
-                            continue
-                    except Exception as e:
+                    except Exception:
                         logging.getLogger(__name__).error(
-                            "Failed parsing nmap output: %s" % nmap_out)
+                            "Failed parsing nmap output: %s" % nmap_out
+                        )
                         logging.getLogger(__name__).error(
                             traceback.format_exc())
-
                         try:
-                            dir_path = os.path.dirname(meta_file)
-                            shutil.rmtree(dir_path)
-                        except Exception as e:
+                            shutil.rmtree(os.path.dirname(meta_file))
+                        except Exception:
                             pass
-
                         raise
-
-                    # Process each discovered host in the scan results
-                    for host in nmap_report.hosts:
-
-                        host_ip = host.id  # Primary IP address for the host
-                        host_id = None  # Will be populated from existing scope or created new
-
-                        # Process each open port discovered on this host
-                        for port in host.get_open_ports():
-
-                            port_str = str(port[0])  # Port number as string
-                            # Service identifier (protocol.port)
-                            port_service_id = port[1] + "." + port_str
-
-                            # Attempt to correlate with existing scope data
-                            port_id = None
-                            host_key = '%s:%s' % (host_ip, port_str)
-
-                            # Check for existing host:port mapping in scope
-                            if host_key in scope_obj.host_port_obj_map:
-                                host_port_dict = scope_obj.host_port_obj_map[
-                                    host_key]
-                                port_id = host_port_dict['port_obj'].id
-                                host_id = host_port_dict['host_obj'].id
-
-                            # Alternative: Check for existing host by IP only
-                            elif host_ip in scope_obj.host_ip_id_map:
-                                host_id = scope_obj.host_ip_id_map[host_ip]
-
-                            # Create or update Host object with proper IPv4/IPv6 handling
-                            ip_object = netaddr.IPAddress(host_ip)
-
-                            host_obj = data_model.Host(id=host_id)
-                            host_obj.collection_tool_instance_id = tool_instance_id
-
-                            # Set appropriate IP address field based on version
-                            if ip_object.version == 4:
-                                host_obj.ipv4_addr = str(ip_object)
-                            elif ip_object.version == 6:
-                                host_obj.ipv6_addr = str(ip_object)
-
-                            host_id = host_obj.id
-
-                            # Add host object to results
-                            ret_arr.append(host_obj)
-
-                            # Create Port object with parent relationship to host
-                            port_obj = data_model.Port(
-                                parent_id=host_id, id=port_id)
-                            port_obj.collection_tool_instance_id = tool_instance_id
-                            # TCP protocol (0 = TCP, 1 = UDP)
-                            port_obj.proto = 0
-                            port_obj.port = port_str
-                            port_id = port_obj.id
-
-                            # Add port object to results
-                            ret_arr.append(port_obj)
-
-                            # Process discovered hostnames and create domain objects
-                            hostnames = host.hostnames
-                            for hostname in hostnames:
-
-                                # Handle both string and dictionary hostname formats
-                                if type(hostname) is dict:
-                                    hostname = hostname['name']
-
-                                # Create domain object linked to host
-                                domain_obj = data_model.Domain(
-                                    parent_id=host_id)
-                                domain_obj.collection_tool_instance_id = tool_instance_id
-                                domain_obj.name = hostname
-
-                                # Add domain object to results
-                                ret_arr.append(domain_obj)
-
-                            # Process service version detection results
-                            svc = host.get_service_byid(port_service_id)
-                            if svc:
-
-                                # Extract service information from Nmap results
-                                # Note: Banner information available but not currently processed
-                                # if svc.banner and len(svc.banner) > 0:
-                                #     port_obj.banner = svc.banner
-
-                                # Process service detection dictionary
-                                svc_dict = svc.service_dict
-
-                                # Extract service name and create web component
-                                if 'name' in svc.service_dict:
-                                    service_name = svc.service_dict['name']
-                                    if service_name:
-                                        component_name = service_name.lower().strip()
-                                        if len(component_name) > 0 and component_name != "unknown":
-                                            component_obj = data_model.WebComponent(
-                                                parent_id=port_id)
-                                            component_obj.collection_tool_instance_id = tool_instance_id
-                                            component_obj.name = component_name
-                                            ret_arr.append(component_obj)
-
-                                # Extract product information with version details
-                                if 'product' in svc_dict:
-                                    component_name = svc_dict['product']
-                                    # Clean product name (remove common suffixes like " httpd")
-                                    component_name = component_name.replace(
-                                        " httpd", "").lower().strip()
-                                    if len(component_name) > 0 and component_name != "unknown":
-
-                                        component_obj = data_model.WebComponent(
-                                            parent_id=port_id)
-                                        component_obj.collection_tool_instance_id = tool_instance_id
-                                        component_obj.name = component_name
-
-                                        # Add version information if available
-                                        if 'version' in svc_dict:
-                                            component_version = svc_dict['version']
-                                            if len(component_version) > 0:
-                                                component_obj.version = component_version
-
-                                        ret_arr.append(component_obj)
-
-                                # Process Nmap script execution results
-                                script_res_arr = svc.scripts_results
-                                if len(script_res_arr) > 0:
-
-                                    # Remove duplicate script results
-                                    script_res = remove_dups_from_dict(
-                                        script_res_arr)
-
-                                    # Add domains in certificate to port if SSL
-                                    for script in script_res:
-
-                                        script_id = script['id']
-                                        if script_id == 'ssl-cert':
-
-                                            if port_obj:
-                                                port_obj.secure = True
-
-                                            # Create a certificate object
-                                            cert_obj = data_model.Certificate(
-                                                parent_id=port_obj.id)
-                                            cert_obj.collection_tool_instance_id = tool_instance_id
-                                            if 'elements' in script:
-                                                elements = script['elements']
-                                                if 'validity' in elements:
-                                                    validity = elements['validity']
-                                                    if 'notBefore' in validity:
-                                                        issued = validity['notBefore']
-
-                                                        dt = datetime.strptime(
-                                                            issued, '%Y-%m-%dT%H:%M:%S')
-                                                        cert_obj.issued = int(
-                                                            time.mktime(dt.timetuple()))
-
-                                                    if 'notAfter' in validity:
-                                                        expires = validity['notAfter']
-
-                                                        dt = datetime.strptime(
-                                                            expires, '%Y-%m-%dT%H:%M:%S')
-                                                        cert_obj.expires = int(
-                                                            time.mktime(dt.timetuple()))
-
-                                                if 'sha1' in elements:
-                                                    fingerprint_hash = elements['sha1']
-                                                    cert_obj.fingerprint_hash = fingerprint_hash
-
-                                                if 'subject' in elements:
-                                                    subject = elements['subject']
-                                                    if 'commonName' in subject:
-                                                        common_name = subject['commonName']
-                                                        domain_obj = cert_obj.add_domain(
-                                                            host_id, common_name, tool_instance_id)
-                                                        if domain_obj:
-                                                            ret_arr.append(
-                                                                domain_obj)
-
-                                                if 'issuer' in elements:
-                                                    issuer = elements['issuer']
-                                                    cert_obj.issuer = json.dumps(
-                                                        issuer)
-
-                                                if 'extensions' in elements:
-                                                    extensions = elements['extensions']
-                                                    if 'null' in extensions:
-                                                        null_ext = extensions['null']
-                                                        if not isinstance(null_ext, list):
-                                                            null_ext = [
-                                                                null_ext]
-
-                                                        for ext_inst in null_ext:
-                                                            if 'name' in ext_inst:
-                                                                ext_name = ext_inst['name']
-                                                                if 'X509v3 Subject Alternative Name' == ext_name:
-                                                                    san_value = ext_inst['value']
-                                                                    if ":" in san_value:
-                                                                        dns_name = san_value.split(":")[
-                                                                            1]
-                                                                        if "," in dns_name:
-                                                                            dns_name = dns_name.split(",")[
-                                                                                0]
-                                                                        # logging.getLogger(__name__).debug(
-                                                                        #    "Adding SAN: %s" % dns_name)
-                                                                        domain_obj = cert_obj.add_domain(
-                                                                            host_id, dns_name, tool_instance_id)
-                                                                        if domain_obj:
-                                                                            ret_arr.append(
-                                                                                domain_obj)
-
-                                            # Add the cert object
-                                            ret_arr.append(cert_obj)
-
-                                        elif 'http' in script_id:
-                                            # Set to http if nmap detected http in a script
-                                            component_obj = data_model.WebComponent(
-                                                parent_id=port_id)
-                                            component_obj.collection_tool_instance_id = tool_instance_id
-                                            component_obj.name = 'http'
-                                            ret_arr.append(component_obj)
-
-                                    # Iterate over script entries
-                                    for script_out in script_res:
-                                        if 'id' in script_out and 'output' in script_out:
-
-                                            script_id = script_out['id']
-                                            output = script_out['output']
-                                            if len(output) > 0:
-
-                                                # Add collection module
-                                                temp_module_id = None
-                                                if scope_obj.module_id:
-                                                    temp_module_id = scope_obj.module_id
-
-                                                    # Parse output and add components if present
-                                                    output_components = scope_obj.module_outputs
-                                                    for output_component in output_components:
-                                                        if output_component.name in output.lower():
-                                                            component_obj = data_model.WebComponent(
-                                                                parent_id=port_id)
-                                                            component_obj.collection_tool_instance_id = tool_instance_id
-                                                            component_obj.name = output_component.name
-                                                            ret_arr.append(
-                                                                component_obj)
-
-                                                else:
-                                                    args_str = "--script +%s" % script_id
-                                                    module_obj = data_model.CollectionModule(
-                                                        parent_id=tool_id)
-                                                    module_obj.collection_tool_instance_id = tool_instance_id
-                                                    module_obj.name = script_id
-                                                    module_obj.args = args_str
-
-                                                    ret_arr.append(module_obj)
-                                                    temp_module_id = module_obj.id
-
-                                                # Add module output
-                                                module_output_obj = data_model.CollectionModuleOutput(
-                                                    parent_id=temp_module_id)
-                                                module_output_obj.collection_tool_instance_id = tool_instance_id
-                                                module_output_obj.output = output
-                                                module_output_obj.port_id = port_id
-
-                                                ret_arr.append(
-                                                    module_output_obj)
 
         # Import, Update, & Save
         self.import_results(scheduled_scan_obj, ret_arr)

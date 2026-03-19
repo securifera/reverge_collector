@@ -542,6 +542,77 @@ class CrapSecretsScan(luigi.Task):
             file_fd.write(json.dumps(results_dict))
 
 
+def parse_crapsecrets_output(output_file, tool_instance_id, tool_id):
+    """Parse a CrapSecrets JSON output file and return data-model objects."""
+    ret_arr = []
+    with open(output_file, 'r') as file_fd:
+        data = file_fd.read()
+
+    if len(data) > 0:
+        scan_data_dict = json.loads(data)
+
+        # Get data and map
+        output_list = scan_data_dict['output_list']
+        if len(output_list) > 0:
+
+            # Parse the output
+            logging.getLogger(__name__).debug(
+                "Importing CrapSecrets output with %s" % output_list)
+            for entry in output_list:
+
+                output = entry['output']
+                http_endpoint_id = entry['http_endpoint_id']
+                port_id = entry['port_id']
+
+                # Handle new JSON format with 'target' and 'results' keys
+                if output:
+                    # Extract results list from new format
+                    findings = output.get('results', []) if isinstance(
+                        output, dict) else output
+
+                    if findings and len(findings) > 0:
+                        for finding in findings:
+                            try:
+                                # Handle findings from crapsecrets CLI output
+                                if isinstance(finding, dict):
+                                    # Extract key vulnerability information
+                                    secret_type = finding.get(
+                                        'secret_type', 'Unknown')
+
+                                    if 'secret' in finding:
+                                        # Add vuln
+                                        vuln_obj = data_model.Vuln(
+                                            parent_id=port_id)
+                                        vuln_obj.collection_tool_instance_id = tool_instance_id
+                                        vuln_obj.name = secret_type
+                                        vuln_obj.endpoint_id = http_endpoint_id
+                                        ret_arr.append(vuln_obj)
+
+                                    # Add vuln details as a collection module output
+                                    module_obj = data_model.CollectionModule(
+                                        parent_id=tool_id)
+                                    module_obj.collection_tool_instance_id = tool_instance_id
+                                    module_obj.name = secret_type
+                                    ret_arr.append(module_obj)
+                                    module_id = module_obj.id
+
+                                    # Add module output for all scan results
+                                    module_output_obj = data_model.CollectionModuleOutput(
+                                        parent_id=module_id)
+                                    module_output_obj.collection_tool_instance_id = tool_instance_id
+                                    module_output_obj.output = json.dumps(
+                                        finding)
+                                    module_output_obj.port_id = port_id
+                                    ret_arr.append(module_output_obj)
+
+                            except Exception as e:
+                                logging.getLogger(__name__).error(
+                                    "Error processing finding: %s" % str(e))
+                                continue
+
+    return ret_arr
+
+
 @inherits(CrapSecretsScan)
 class ImportCrapSecretsOutput(data_model.ImportToolXOutput):
     """
@@ -640,80 +711,9 @@ class ImportCrapSecretsOutput(data_model.ImportToolXOutput):
             objects using the create_port_objs helper function.
         """
 
-        http_output_file = self.input().path
         scheduled_scan_obj = self.scan_input
         tool_instance_id = scheduled_scan_obj.current_tool_instance_id
         tool_id = scheduled_scan_obj.current_tool.id
-
-        with open(http_output_file, 'r') as file_fd:
-            data = file_fd.read()
-
-        if len(data) > 0:
-
-            ret_arr = []
-            scan_data_dict = json.loads(data)
-
-            # Get data and map
-            output_list = scan_data_dict['output_list']
-            if len(output_list) > 0:
-
-                # Parse the output
-                logging.getLogger(__name__).debug(
-                    "Importing CrapSecrets output with %s" % output_list)
-                for entry in output_list:
-
-                    output = entry['output']
-                    http_endpoint_id = entry['http_endpoint_id']
-                    port_id = entry['port_id']
-                    # url = entry.get('url', '')
-
-                    # Handle new JSON format with 'target' and 'results' keys
-                    if output:
-                        # Extract results list from new format
-                        findings = output.get('results', []) if isinstance(
-                            output, dict) else output
-
-                        if findings and len(findings) > 0:
-                            for finding in findings:
-                                try:
-                                    # Handle findings from crapsecrets CLI output
-                                    if isinstance(finding, dict):
-                                        # Extract key vulnerability information
-                                        secret_type = finding.get(
-                                            'secret_type', 'Unknown')
-
-                                        if 'secret' in finding:
-                                            # Add vuln
-                                            vuln_obj = data_model.Vuln(
-                                                parent_id=port_id)
-                                            vuln_obj.collection_tool_instance_id = tool_instance_id
-                                            vuln_obj.name = secret_type
-                                            # vuln_obj.vuln_details = secret_val
-                                            vuln_obj.endpoint_id = http_endpoint_id
-                                            ret_arr.append(vuln_obj)
-
-                                        # Add vuln details as a collection module output
-                                        module_obj = data_model.CollectionModule(
-                                            parent_id=tool_id)
-                                        module_obj.collection_tool_instance_id = tool_instance_id
-                                        module_obj.name = secret_type
-                                        ret_arr.append(module_obj)
-                                        module_id = module_obj.id
-
-                                        # Add module output for all scan results
-                                        module_output_obj = data_model.CollectionModuleOutput(
-                                            parent_id=module_id)
-                                        module_output_obj.collection_tool_instance_id = tool_instance_id
-                                        module_output_obj.output = json.dumps(
-                                            finding)
-                                        module_output_obj.port_id = port_id
-                                        ret_arr.append(module_output_obj)
-
-                                except Exception as e:
-                                    logging.getLogger(__name__).error(
-                                        "Error processing finding: %s" % str(e))
-                                    continue
-
-            # Import, Update, & Save
-            scheduled_scan_obj = self.scan_input
-            self.import_results(scheduled_scan_obj, ret_arr)
+        ret_arr = parse_crapsecrets_output(
+            self.input().path, tool_instance_id, tool_id)
+        self.import_results(scheduled_scan_obj, ret_arr)

@@ -666,6 +666,237 @@ class ShodanScan(luigi.Task):
             raise Exception("No shodan API key provided")
 
 
+def parse_shodan_output(
+    output_file: str,
+    tool_instance_id: Optional[str] = None,
+) -> List[Any]:
+    """Parse a Shodan JSON output file and return data_model Record objects."""
+
+    with open(output_file, 'r') as file_fd:
+        data = file_fd.read()
+
+    ret_arr: List[Any] = []
+    path_hash_map: Dict[str, Any] = {}
+    hash_alg = hashlib.sha1
+
+    if len(data) > 0:
+        json_data = json.loads(data)
+        if json_data and len(json_data) > 0:
+            scan_data = json_data['data']
+
+            for service in scan_data:
+                host_id = None
+                port_id = None
+                web_path_id = None
+
+                ip_int = service['ip']
+                if host_id is None:
+                    ip_object = netaddr.IPAddress(ip_int)
+
+                    host_obj = data_model.Host(id=host_id)
+                    host_obj.collection_tool_instance_id = tool_instance_id
+
+                    if ip_object.version == 4:
+                        host_obj.ipv4_addr = str(ip_object)
+                    elif ip_object.version == 6:
+                        host_obj.ipv6_addr = str(ip_object)
+                    host_id = host_obj.id
+
+                    ret_arr.append(host_obj)
+
+                port = service['port']
+                port_obj = data_model.Port(parent_id=host_id)
+                port_obj.collection_tool_instance_id = tool_instance_id
+                port_obj.proto = 0
+                port_obj.port = port
+                port_id = port_obj.id
+
+                ret_arr.append(port_obj)
+
+                if 'ssl' in service:
+                    port_obj.secure = True
+
+                    ssl = service['ssl']
+                    if 'cert' in ssl:
+                        cert = ssl['cert']
+                        if 'subject' in cert:
+                            subject = cert['subject']
+                            if 'CN' in subject:
+                                domain_str = subject['CN'].lower()
+
+                                domain_obj = data_model.Domain(
+                                    parent_id=host_id)
+                                domain_obj.collection_tool_instance_id = tool_instance_id
+                                domain_obj.name = domain_str
+
+                                ret_arr.append(domain_obj)
+
+                if 'http' in service:
+                    http_dict = service['http']
+
+                    endpoint_domain_id = None
+                    status_code = None
+                    title = None
+                    favicon_hash = None
+                    tmp_fav_hash = None
+
+                    if 'status' in http_dict:
+                        status_code = http_dict['status']
+
+                    if 'title' in http_dict:
+                        title = http_dict['title']
+
+                    if 'server' in http_dict:
+                        server_str = http_dict['server']
+                        if server_str:
+                            server = server_str.strip().lower()
+                            if len(server) > 0:
+                                if " " in server:
+                                    server_tech = server.split(" ")[0]
+                                else:
+                                    server_tech = server
+
+                                server_version = None
+                                if "/" in server_tech:
+                                    server_tech_arr = server_tech.split("/")
+                                    server_tech = server_tech_arr[0]
+                                    temp_val = server_tech_arr[-1].strip()
+                                    if len(temp_val) > 0:
+                                        server_version = temp_val
+
+                                    component_obj = data_model.WebComponent(
+                                        parent_id=port_id)
+                                    component_obj.collection_tool_instance_id = tool_instance_id
+                                    component_obj.name = server_tech
+
+                                    if server_version:
+                                        component_obj.version = server_version
+
+                                    ret_arr.append(component_obj)
+
+                    if 'favicon' in http_dict:
+                        favicon_dict = http_dict['favicon']
+                        tmp_fav_hash = favicon_dict['hash']
+
+                    if 'components' in http_dict:
+                        components_dict = http_dict['components']
+                        for component_name in components_dict:
+                            components_dict_obj = components_dict[component_name]
+                            component_name = component_name.lower()
+
+                            component_obj = data_model.WebComponent(
+                                parent_id=port_id)
+                            component_obj.collection_tool_instance_id = tool_instance_id
+                            component_obj.name = component_name
+
+                            if 'versions' in components_dict_obj:
+                                version_arr = components_dict_obj['versions']
+                                if len(version_arr) > 0:
+                                    component_obj.version = version_arr[0]
+
+                            ret_arr.append(component_obj)
+
+                    if 'ssl' in service:
+                        port_obj.secure = True
+
+                        ssl = service['ssl']
+                        if 'cert' in ssl:
+                            cert = ssl['cert']
+
+                            cert_obj = data_model.Certificate(
+                                parent_id=port_obj.id)
+                            cert_obj.collection_tool_instance_id = tool_instance_id
+
+                            if 'issued' in cert:
+                                issued = cert['issued']
+                                dt = datetime.strptime(issued, '%Y%m%d%H%M%SZ')
+                                cert_obj.issued = int(
+                                    time.mktime(dt.timetuple()))
+
+                            if 'expires' in cert:
+                                expires = cert['expires']
+                                dt = datetime.strptime(
+                                    expires, '%Y%m%d%H%M%SZ')
+                                cert_obj.expires = int(
+                                    time.mktime(dt.timetuple()))
+
+                            if 'fingerprint' in cert:
+                                cert_hash_map = cert['fingerprint']
+                                if 'sha1' in cert_hash_map:
+                                    sha_cert_hash = cert_hash_map['sha1']
+                                    cert_obj.fingerprint_hash = sha_cert_hash
+
+                            if 'subject' in cert:
+                                subject = cert['subject']
+                                if 'CN' in subject:
+                                    domain_str = subject['CN'].lower()
+
+                                    domain_obj = cert_obj.add_domain(
+                                        host_id, domain_str, tool_instance_id)
+                                    if domain_obj:
+                                        ret_arr.append(domain_obj)
+                                        endpoint_domain_id = domain_obj.id
+
+                            ret_arr.append(cert_obj)
+
+                    hostname_arr = service['hostnames']
+                    for domain_name in hostname_arr:
+                        if len(domain_name) > 0:
+                            domain_name = domain_name.lower()
+
+                            domain_obj = data_model.Domain(parent_id=host_id)
+                            domain_obj.collection_tool_instance_id = tool_instance_id
+                            domain_obj.name = domain_name
+
+                            ret_arr.append(domain_obj)
+
+                    if 'location' in http_dict:
+                        path_location = http_dict['location']
+                        if path_location and len(path_location) > 0:
+                            split_url = urlsplit(path_location)
+                            trimmed_url = split_url._replace(query='')
+                            trimmed_path = urlunsplit(trimmed_url)
+                            if tmp_fav_hash and trimmed_path == "/":
+                                favicon_hash = tmp_fav_hash
+
+                            hashobj = hash_alg()
+                            hashobj.update(trimmed_path.encode())
+                            path_hash = hashobj.digest()
+                            hex_str = binascii.hexlify(path_hash).decode()
+                            web_path_hash = hex_str
+
+                            if web_path_hash in path_hash_map:
+                                path_obj = path_hash_map[web_path_hash]
+                            else:
+                                path_obj = data_model.ListItem()
+                                path_obj.collection_tool_instance_id = tool_instance_id
+                                path_obj.web_path = trimmed_path
+                                path_obj.web_path_hash = web_path_hash
+                                path_hash_map[web_path_hash] = path_obj
+                                ret_arr.append(path_obj)
+
+                            web_path_id = path_obj.id
+
+                    http_endpoint_obj = data_model.HttpEndpoint(
+                        parent_id=port_obj.id)
+                    http_endpoint_obj.collection_tool_instance_id = tool_instance_id
+                    http_endpoint_obj.web_path_id = web_path_id
+
+                    ret_arr.append(http_endpoint_obj)
+
+                    http_endpoint_data_obj = data_model.HttpEndpointData(
+                        parent_id=http_endpoint_obj.id)
+                    http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
+                    http_endpoint_data_obj.domain_id = endpoint_domain_id
+                    http_endpoint_data_obj.title = title
+                    http_endpoint_data_obj.status = status_code
+                    http_endpoint_data_obj.fav_icon_hash = favicon_hash
+
+                    ret_arr.append(http_endpoint_data_obj)
+
+    return ret_arr
+
+
 @inherits(ShodanScan)
 class ImportShodanOutput(data_model.ImportToolXOutput):
     """
@@ -748,279 +979,5 @@ class ImportShodanOutput(data_model.ImportToolXOutput):
 
         scheduled_scan_obj = self.scan_input
         tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-
-        # Read the Shodan output file
-        shodan_output_file = self.input().path
-        with open(shodan_output_file, 'r') as file_fd:
-            data = file_fd.read()
-
-        ret_arr: List[Any] = []
-        path_hash_map: Dict[str, Any] = {}
-        hash_alg = hashlib.sha1
-
-        if len(data) > 0:
-            # Parse the Shodan JSON data
-            json_data = json.loads(data)
-            if json_data and len(json_data) > 0:
-                scan_data = json_data['data']
-
-                # Process each service discovered by Shodan
-                for service in scan_data:
-                    host_id = None
-                    port_id = None
-
-                    # Extract IP address and create Host object
-                    ip_int = service['ip']
-                    if host_id is None:
-                        ip_object = netaddr.IPAddress(ip_int)
-
-                        host_obj = data_model.Host(id=host_id)
-                        host_obj.collection_tool_instance_id = tool_instance_id
-
-                        # Set appropriate IP address field based on version
-                        if ip_object.version == 4:
-                            host_obj.ipv4_addr = str(ip_object)
-                        elif ip_object.version == 6:
-                            host_obj.ipv6_addr = str(ip_object)
-                        host_id = host_obj.id
-
-                        # Add host to results
-                        ret_arr.append(host_obj)
-
-                    # Create Port object for the discovered service
-                    port = service['port']
-                    port_obj = data_model.Port(parent_id=host_id)
-                    port_obj.collection_tool_instance_id = tool_instance_id
-                    port_obj.proto = 0  # Protocol will be determined from service data
-                    port_obj.port = port
-                    port_id = port_obj.id
-
-                    # Add port to results
-                    ret_arr.append(port_obj)
-
-                    # Extract organizational and timestamp information
-                    # org_str = service['org']
-                    # timestamp = service['timestamp']
-                    # last_updated = int(datetime.fromisoformat(timestamp).timestamp())
-
-                    # Process SSL/TLS certificate information for non-HTTP services
-                    if 'ssl' in service:
-                        port_obj.secure = True
-
-                        ssl = service['ssl']
-                        if 'cert' in ssl:
-                            cert = ssl['cert']
-                            if 'subject' in cert:
-                                subject = cert['subject']
-                                if 'CN' in subject:
-                                    domain_str = subject['CN'].lower()
-
-                                    # Create Domain object for certificate CN
-                                    domain_obj = data_model.Domain(
-                                        parent_id=host_id)
-                                    domain_obj.collection_tool_instance_id = tool_instance_id
-                                    domain_obj.name = domain_str
-
-                                    # Add domain to results
-                                    ret_arr.append(domain_obj)
-
-                    # Process HTTP service data for web services
-                    if 'http' in service:
-                        http_dict = service['http']
-
-                        endpoint_domain_id = None
-                        status_code = None
-                        title = None
-
-                        # Extract HTTP response status code
-                        if 'status' in http_dict:
-                            status_code = http_dict['status']
-
-                        # Extract page title from HTTP response
-                        if 'title' in http_dict:
-                            title = http_dict['title']
-
-                        # Process web server information
-                        if 'server' in http_dict:
-                            server_str = http_dict['server']
-                            if server_str:
-                                server = server_str.strip().lower()
-                                if len(server) > 0:
-                                    # Extract server technology name
-                                    if " " in server:
-                                        server_tech = server.split(" ")[0]
-                                    else:
-                                        server_tech = server
-
-                                    server_version = None
-                                    # Extract version information if present
-                                    if "/" in server_tech:
-                                        server_tech_arr = server_tech.split(
-                                            "/")
-                                        server_tech = server_tech_arr[0]
-                                        temp_val = server_tech_arr[-1].strip()
-                                        if len(temp_val) > 0:
-                                            server_version = temp_val
-
-                                        # Create WebComponent for server technology
-                                        component_obj = data_model.WebComponent(
-                                            parent_id=port_id)
-                                        component_obj.collection_tool_instance_id = tool_instance_id
-                                        component_obj.name = server_tech
-
-                                        # Add version if available
-                                        if server_version:
-                                            component_obj.version = server_version
-
-                                        ret_arr.append(component_obj)
-
-                        favicon_hash = None
-                        tmp_fav_hash = None
-
-                        # Extract favicon hash for fingerprinting
-                        if 'favicon' in http_dict:
-                            favicon_dict = http_dict['favicon']
-                            tmp_fav_hash = favicon_dict['hash']
-                            # favicon_url = favicon_dict['location']
-
-                        # Process web technology components detected by Shodan
-                        if 'components' in http_dict:
-                            components_dict = http_dict['components']
-                            for component_name in components_dict:
-                                components_dict_obj = components_dict[component_name]
-                                # Convert to lowercase to avoid case sensitivity issues
-                                component_name = component_name.lower()
-
-                                # Create WebComponent for detected technology
-                                component_obj = data_model.WebComponent(
-                                    parent_id=port_id)
-                                component_obj.collection_tool_instance_id = tool_instance_id
-                                component_obj.name = component_name
-
-                                # Add version information if available
-                                if 'versions' in components_dict_obj:
-                                    version_arr = components_dict_obj['versions']
-                                    if len(version_arr) > 0:
-                                        component_obj.version = version_arr[0]
-
-                                ret_arr.append(component_obj)
-
-                        if 'ssl' in service:
-                            port_obj.secure = True
-
-                            ssl = service['ssl']
-                            if 'cert' in ssl:
-                                cert = ssl['cert']
-
-                                # Create a certificate object
-                                cert_obj = data_model.Certificate(
-                                    parent_id=port_obj.id)
-                                cert_obj.collection_tool_instance_id = tool_instance_id
-                                if 'issued' in cert:
-                                    issued = cert['issued']
-                                    # Parse the time string into a datetime object in UTC
-                                    dt = datetime.strptime(
-                                        issued, '%Y%m%d%H%M%SZ')
-                                    cert_obj.issued = int(
-                                        time.mktime(dt.timetuple()))
-
-                                if 'expires' in cert:
-                                    expires = cert['expires']
-                                    dt = datetime.strptime(
-                                        expires,  '%Y%m%d%H%M%SZ')
-                                    cert_obj.expires = int(
-                                        time.mktime(dt.timetuple()))
-
-                                if 'fingerprint' in cert:
-                                    cert_hash_map = cert['fingerprint']
-                                    if 'sha1' in cert_hash_map:
-                                        sha_cert_hash = cert_hash_map['sha1']
-                                        cert_obj.fingerprint_hash = sha_cert_hash
-
-                                if 'subject' in cert:
-                                    subject = cert['subject']
-                                    if 'CN' in subject:
-                                        domain_str = subject['CN'].lower()
-
-                                        domain_obj = cert_obj.add_domain(
-                                            host_id, domain_str, tool_instance_id)
-                                        if domain_obj:
-                                            ret_arr.append(domain_obj)
-
-                                            endpoint_domain_id = domain_obj.id
-
-                                 # Add the cert object
-                                ret_arr.append(cert_obj)
-
-                        hostname_arr = service['hostnames']
-                        for domain_name in hostname_arr:
-                            # Convert the domain to a lower since case doesn't matter
-                            if len(domain_name) > 0:
-                                domain_name = domain_name.lower()
-
-                                # Get or create a domain object
-                                domain_obj = data_model.Domain(
-                                    parent_id=host_id)
-                                domain_obj.collection_tool_instance_id = tool_instance_id
-                                domain_obj.name = domain_name
-
-                                # Add domain
-                                ret_arr.append(domain_obj)
-
-                        # Path may be "location"
-                        if 'location' in http_dict:
-                            path_location = http_dict['location']
-                            if path_location and len(path_location) > 0:
-                                split_url = urlsplit(path_location)
-
-                                # Remove the query part
-                                trimmed_url = split_url._replace(query='')
-
-                                # Reconstruct the URL without the query part
-                                trimmed_path = urlunsplit(trimmed_url)
-                                if tmp_fav_hash and trimmed_path == "/":
-                                    favicon_hash = tmp_fav_hash
-
-                                hashobj = hash_alg()
-                                hashobj.update(trimmed_path.encode())
-                                path_hash = hashobj.digest()
-                                hex_str = binascii.hexlify(path_hash).decode()
-                                web_path_hash = hex_str
-
-                                if web_path_hash in path_hash_map:
-                                    path_obj = path_hash_map[web_path_hash]
-                                else:
-                                    path_obj = data_model.ListItem()
-                                    path_obj.collection_tool_instance_id = tool_instance_id
-                                    path_obj.web_path = trimmed_path
-                                    path_obj.web_path_hash = web_path_hash
-
-                                    # Add to map and the object list
-                                    path_hash_map[web_path_hash] = path_obj
-                                    ret_arr.append(path_obj)
-
-                                web_path_id = path_obj.id
-
-                        # Add http endpoint
-                        http_endpoint_obj = data_model.HttpEndpoint(
-                            parent_id=port_obj.id)
-                        http_endpoint_obj.collection_tool_instance_id = tool_instance_id
-                        http_endpoint_obj.web_path_id = web_path_id
-
-                        # Add the endpoint
-                        ret_arr.append(http_endpoint_obj)
-
-                        http_endpoint_data_obj = data_model.HttpEndpointData(
-                            parent_id=http_endpoint_obj.id)
-                        http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
-                        http_endpoint_data_obj.domain_id = endpoint_domain_id
-                        http_endpoint_data_obj.title = title
-                        http_endpoint_data_obj.status = status_code
-                        http_endpoint_data_obj.fav_icon_hash = favicon_hash
-
-                        # Add the endpoint
-                        ret_arr.append(http_endpoint_data_obj)
-
-        # Import, Update, & Save
-        scheduled_scan_obj = self.scan_input
+        ret_arr = parse_shodan_output(self.input().path, tool_instance_id)
         self.import_results(scheduled_scan_obj, ret_arr)

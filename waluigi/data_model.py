@@ -45,9 +45,8 @@ waluigi_tools: List[Tuple[str, str]] = [
     ('waluigi.feroxbuster_scan', 'Feroxbuster'),  # Directory/file brute forcer
     ('waluigi.shodan_lookup', 'Shodan'),     # Shodan API integration
     ('waluigi.httpx_scan', 'Httpx'),         # HTTP toolkit
-    # SecurityTrails API integration
-    ('waluigi.sectrails_ip_lookup', 'Sectrails'),
-    ('waluigi.module_scan', 'Module'),       # Custom module execution
+    # ('waluigi.sectrails_ip_lookup', 'Sectrails'), # SecurityTrails API
+    # ('waluigi.module_scan', 'Module'),       # Custom module execution
     ('waluigi.crapsecrets_scan', 'Crapsecrets'),  # Secret detection
     ('waluigi.webcap_scan', 'Webcap'),        # Web capture and analysis
     ('waluigi.gau_scan', 'Gau'),        # Web endpoint crawling results

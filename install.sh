@@ -191,9 +191,23 @@ pipx install git+https://github.com/securifera/NetExec
 
 # Install metasploit
 cd /tmp
-curl https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > msfinstall &&  chmod 755 msfinstall && sudo ./msfinstall
-sudo msfrpcd -P msf -S -a 127.0.0.1
-python3 -m pip install pymetasploit3
+curl https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > msfinstall && chmod 755 msfinstall && sudo ./msfinstall
+
+# Create a dedicated non-root user for msfdb and the JSON RPC server.
+# msfdb explicitly refuses to run as root; all msf state lives under this user's home.
+sudo useradd -r -m -s /bin/bash msf 2>/dev/null || true
+
+# Initialize the embedded PostgreSQL database as the msf user.
+# msfdb manages its own postgres instance (port 5433) under ~/.msf4/db — no system
+# postgres required.  --component database skips the interactive webservice wizard;
+# --use-defaults accepts all prompts non-interactively.
+sudo -u msf /opt/metasploit-framework/bin/msfdb init --component database --use-defaults
+
+# Generate a random 40-hex-char bearer token for the JSON RPC API and persist it.
+# The collector reads this via MSF_JSON_RPC_TOKEN env var; puma uses MSF_WS_JSON_RPC_API_TOKEN.
+MSF_TOKEN=$(openssl rand -hex 20)
+echo "$MSF_TOKEN" | sudo tee /opt/collector/msf_rpc_token > /dev/null
+sudo chmod 644 /opt/collector/msf_rpc_token
 
 # Clean seclists in the background
 sudo git clone -c http.sslVerify=false https://github.com/danielmiessler/SecLists.git /usr/share/seclists &

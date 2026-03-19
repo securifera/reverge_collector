@@ -305,6 +305,150 @@ class GauScan(luigi.Task):
                     {'domain_map': domain_host_map, 'output_file': gau_scan_output_path}))
 
 
+def parse_gau_output(
+    meta_file: str,
+    tool_instance_id: Optional[str] = None,
+) -> List[Any]:
+    """Parse a Gau JSON metadata/output file and return data_model Record objects."""
+
+    with open(meta_file, 'r') as file_fd:
+        data = file_fd.read()
+
+    hash_alg = hashlib.sha1
+    path_hash_map = {}
+    port_host_map = {}
+    host_ip_id_map = {}
+    domain_name_id_map = {}
+    domain_map = {}
+    ret_arr = []
+
+    if len(data) > 0:
+        data_obj = json.loads(data)
+
+        if 'domain_map' in data_obj:
+            domain_map = data_obj['domain_map']
+
+        if 'output_file' in data_obj:
+            gau_output_file_path = data_obj['output_file']
+
+            with open(gau_output_file_path, 'r') as file_fd:
+                for line in file_fd:
+                    if not line.strip():
+                        continue
+
+                    port_id = None
+                    host_id = None
+                    domain_id = None
+                    url_entry = json.loads(line)
+                    if 'url' in url_entry:
+                        endpoint_url = url_entry['url']
+
+                        u = urlparse(endpoint_url)
+                        web_path_str = u.path
+                        if web_path_str and len(web_path_str) > 0:
+                            hashobj = hash_alg()
+                            hashobj.update(web_path_str.encode())
+                            path_hash = hashobj.digest()
+                            web_path_hash = binascii.hexlify(
+                                path_hash).decode()
+
+                        host = u.netloc
+                        port_str = None
+                        if ":" in host:
+                            host_arr = host.split(":")
+                            domain_str = host_arr[0].lower()
+                            port_str = host_arr[1]
+                        else:
+                            domain_str = host.lower()
+
+                        if not port_str:
+                            port_str = str(u.port) if u.port else (
+                                '443' if u.scheme == 'https' else '80')
+                        secure = u.scheme == 'https'
+
+                        try:
+                            netaddr.IPAddress(domain_str)
+                            continue
+                        except Exception:
+                            pass
+
+                        if domain_str not in domain_map:
+                            domain_map[domain_str] = {}
+
+                        port_data = domain_map[domain_str]
+                        if 'host_id' in port_data:
+                            host_id = port_data['host_id']
+                        else:
+                            ret_list = scan_utils.dns_wrapper(
+                                set([domain_str]))
+                            if ret_list and len(ret_list) > 0:
+                                ip_addr = ret_list[0]['ip']
+                                if ip_addr in host_ip_id_map:
+                                    host_id = host_ip_id_map[ip_addr]
+                                else:
+                                    host_obj = data_model.Host()
+                                    host_obj.collection_tool_instance_id = tool_instance_id
+                                    host_obj.ipv4_addr = ip_addr
+                                    ret_arr.append(host_obj)
+                                    host_id = host_obj.id
+                                    host_ip_id_map[ip_addr] = host_id
+
+                        if 'port_id' in port_data:
+                            port_id = port_data['port_id']
+                        else:
+                            if (port_str, host_id) in port_host_map:
+                                port_id = port_host_map[(port_str, host_id)]
+                            else:
+                                port_obj = data_model.Port(parent_id=host_id)
+                                port_obj.collection_tool_instance_id = tool_instance_id
+                                port_obj.proto = 0
+                                port_obj.port = port_str
+                                port_obj.secure = secure
+                                port_id = port_obj.id
+                                ret_arr.append(port_obj)
+                                port_host_map[(port_str, host_id)] = port_id
+
+                        if 'domain_id' in port_data:
+                            domain_id = port_data['domain_id']
+                        else:
+                            if domain_str in domain_name_id_map:
+                                domain_id = domain_name_id_map[domain_str]
+                            else:
+                                domain_obj = data_model.Domain(
+                                    parent_id=host_id)
+                                domain_obj.collection_tool_instance_id = tool_instance_id
+                                domain_obj.name = domain_str
+                                domain_id = domain_obj.id
+                                ret_arr.append(domain_obj)
+                                domain_name_id_map[domain_str] = domain_id
+
+                        if web_path_hash in path_hash_map:
+                            path_obj = path_hash_map[web_path_hash]
+                        else:
+                            path_obj = data_model.ListItem()
+                            path_obj.collection_tool_instance_id = tool_instance_id
+                            path_obj.web_path = web_path_str
+                            path_obj.web_path_hash = web_path_hash
+                            path_hash_map[web_path_hash] = path_obj
+                            ret_arr.append(path_obj)
+
+                        web_path_id = path_obj.id
+
+                        http_endpoint_obj = data_model.HttpEndpoint(
+                            parent_id=port_id)
+                        http_endpoint_obj.collection_tool_instance_id = tool_instance_id
+                        http_endpoint_obj.web_path_id = web_path_id
+                        ret_arr.append(http_endpoint_obj)
+
+                        http_endpoint_data_obj = data_model.HttpEndpointData(
+                            parent_id=http_endpoint_obj.id)
+                        http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
+                        http_endpoint_data_obj.domain_id = domain_id
+                        ret_arr.append(http_endpoint_data_obj)
+
+    return ret_arr
+
+
 @inherits(GauScan)
 class GauImport(data_model.ImportToolXOutput):
     """
@@ -341,176 +485,5 @@ class GauImport(data_model.ImportToolXOutput):
 
         scheduled_scan_obj = self.scan_input
         tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-
-        # Read the output file
-        hash_alg = hashlib.sha1
-        path_hash_map = {}
-        port_host_map = {}
-        host_ip_id_map = {}
-        domain_name_id_map = {}
-
-        gau_meta_file_path = self.input().path
-        with open(gau_meta_file_path, 'r') as file_fd:
-            data = file_fd.read()
-
-        domain_map = {}
-        ret_arr = []
-        if len(data) > 0:
-            data_obj = json.loads(data)
-
-            if 'domain_map' in data_obj:
-                domain_map = data_obj['domain_map']
-
-            if 'output_file' in data_obj:
-                gau_output_file_path = data_obj['output_file']
-
-                with open(gau_output_file_path, 'r') as file_fd:
-                    for line in file_fd:
-                        if not line.strip():
-                            continue
-
-                        port_id = None
-                        host_id = None
-                        domain_id = None
-                        url_entry = json.loads(line)
-                        if 'url' in url_entry:
-                            endpoint_url = url_entry['url']
-
-                            u = urlparse(endpoint_url)
-                            web_path_str = u.path
-                            if web_path_str and len(web_path_str) > 0:
-                                hashobj = hash_alg()
-                                hashobj.update(web_path_str.encode())
-                                path_hash = hashobj.digest()
-                                web_path_hash = binascii.hexlify(
-                                    path_hash).decode()
-
-                            host = u.netloc
-                            port_str = None
-                            if ":" in host:
-                                host_arr = host.split(":")
-                                domain_str = host_arr[0].lower()
-                                port_str = host_arr[1]
-                            else:
-                                domain_str = host.lower()
-
-                            # Parse port
-                            if not port_str:
-                                port_str = str(u.port) if u.port else (
-                                    '443' if u.scheme == 'https' else '80')
-                            secure = u.scheme == 'https'
-
-                            # Check if the domain is an IP adress
-                            try:
-                                netaddr.IPAddress(domain_str)
-                                continue
-                            except Exception as e:
-                                pass
-
-                            # Create empty entry in domain map if not exists
-                            if domain_str not in domain_map:
-                                domain_map[domain_str] = {}
-
-                            port_data = domain_map[domain_str]
-                            # Get host_id, this should be in all scans
-                            if 'host_id' in port_data:
-                                host_id = port_data['host_id']
-                            else:
-
-                                ret_list = scan_utils.dns_wrapper(
-                                    set([domain_str]))
-                                if ret_list and len(ret_list) > 0:
-                                    logging.getLogger(__name__).warning(
-                                        f"Domain {domain_str} not found in domain map from gau scan output. Resolved via DNS: {ret_list[0]['ip']}")
-
-                                    ip_addr = ret_list[0]['ip']
-                                    if ip_addr in host_ip_id_map:
-                                        host_id = host_ip_id_map[ip_addr]
-                                    else:
-
-                                        host_obj = data_model.Host()
-                                        host_obj.collection_tool_instance_id = tool_instance_id
-
-                                        # Set appropriate IP address field based on version
-                                        host_obj.ipv4_addr = ip_addr
-                                        ret_arr.append(host_obj)
-                                        host_id = host_obj.id
-
-                                        # Add the mapping
-                                        host_ip_id_map[ip_addr] = host_id
-
-                            # This will be in port scans
-                            if 'port_id' in port_data:
-                                port_id = port_data['port_id']
-                            else:
-
-                                if (port_str, host_id) in port_host_map:
-                                    port_id = port_host_map[(
-                                        port_str, host_id)]
-                                else:
-                                    port_obj = data_model.Port(
-                                        parent_id=host_id)
-                                    port_obj.collection_tool_instance_id = tool_instance_id
-                                    port_obj.proto = 0
-                                    port_obj.port = port_str
-                                    port_obj.secure = secure
-                                    port_id = port_obj.id
-
-                                    # Add port
-                                    ret_arr.append(port_obj)
-                                    port_host_map[(
-                                        port_str, host_id)] = port_id
-
-                            # This will be set if we've already seen this domain
-                            if 'domain_id' in port_data:
-                                domain_id = port_data['domain_id']
-                            else:
-
-                                if domain_str in domain_name_id_map:
-                                    domain_id = domain_name_id_map[domain_str]
-                                else:
-                                    domain_obj = data_model.Domain(
-                                        parent_id=host_id)
-                                    domain_obj.collection_tool_instance_id = tool_instance_id
-                                    domain_obj.name = domain_str
-
-                                    # Set domain id
-                                    domain_id = domain_obj.id
-
-                                    # Add domain
-                                    ret_arr.append(domain_obj)
-                                    domain_name_id_map[domain_str] = domain_id
-
-                            if web_path_hash in path_hash_map:
-                                path_obj = path_hash_map[web_path_hash]
-                            else:
-                                path_obj = data_model.ListItem()
-                                path_obj.collection_tool_instance_id = tool_instance_id
-                                path_obj.web_path = web_path_str
-                                path_obj.web_path_hash = web_path_hash
-
-                                # Add to map and the object list
-                                path_hash_map[web_path_hash] = path_obj
-                                ret_arr.append(path_obj)
-
-                            web_path_id = path_obj.id
-
-                            # Create http endpoint
-                            http_endpoint_obj = data_model.HttpEndpoint(
-                                parent_id=port_id)
-                            http_endpoint_obj.collection_tool_instance_id = tool_instance_id
-                            http_endpoint_obj.web_path_id = web_path_id
-
-                            # Add the endpoint
-                            ret_arr.append(http_endpoint_obj)
-
-                            http_endpoint_data_obj = data_model.HttpEndpointData(
-                                parent_id=http_endpoint_obj.id)
-                            http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
-                            http_endpoint_data_obj.domain_id = domain_id
-
-                            # Add the endpoint
-                            ret_arr.append(http_endpoint_data_obj)
-
-        scheduled_scan_obj = self.scan_input
+        ret_arr = parse_gau_output(self.input().path, tool_instance_id)
         self.import_results(scheduled_scan_obj, ret_arr)

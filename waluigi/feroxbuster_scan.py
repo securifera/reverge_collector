@@ -412,6 +412,112 @@ class FeroxScan(luigi.Task):
                         scheduled_scan_obj.id, exit_code, err_msg))
 
 
+def parse_feroxbuster_output(
+    output_file: str,
+    tool_instance_id: Optional[str] = None,
+) -> List[Any]:
+    """Parse a Feroxbuster JSON metadata output file and return data_model Record objects."""
+
+    with open(output_file, 'r') as file_fd:
+        data = file_fd.read()
+
+    ret_arr = []
+    path_hash_map = {}
+    domain_name_id_map = {}
+    hash_alg = hashlib.sha1
+
+    if len(data) > 0:
+        scan_data_dict = json.loads(data)
+
+        url_to_id_map = scan_data_dict['url_to_id_map']
+        for url_str in url_to_id_map:
+            obj_data = url_to_id_map[url_str]
+            scan_output_file = obj_data['output_file']
+            port_id = obj_data['port_id']
+            host_id = obj_data['host_id']
+
+            obj_arr = scan_utils.parse_json_blob_file(scan_output_file)
+            for web_result in obj_arr:
+                if 'type' in web_result:
+                    result_type = web_result['type']
+
+                    if result_type == "response":
+                        if 'status' in web_result:
+                            status_code = web_result['status']
+                            endpoint_url = None
+
+                            if 'url' in web_result:
+                                endpoint_url = web_result['url']
+
+                                u = urlparse(endpoint_url)
+                                web_path_str = u.path
+                                if web_path_str and len(web_path_str) > 0:
+                                    hashobj = hash_alg()
+                                    hashobj.update(web_path_str.encode())
+                                    path_hash = hashobj.digest()
+                                    web_path_hash = binascii.hexlify(
+                                        path_hash).decode()
+
+                                host = u.netloc
+                                if ":" in host:
+                                    host_arr = host.split(":")
+                                    domain_str = host_arr[0].lower()
+                                else:
+                                    domain_str = host.lower()
+
+                                endpoint_domain_id = None
+                                try:
+                                    netaddr.IPAddress(domain_str)
+                                except Exception as e:
+                                    if domain_str in domain_name_id_map:
+                                        endpoint_domain_id = domain_name_id_map[domain_str]
+                                    else:
+                                        domain_obj = data_model.Domain(
+                                            parent_id=host_id)
+                                        domain_obj.collection_tool_instance_id = tool_instance_id
+                                        domain_obj.name = domain_str
+
+                                        ret_arr.append(domain_obj)
+                                        endpoint_domain_id = domain_obj.id
+                                        domain_name_id_map[domain_str] = endpoint_domain_id
+
+                                        ret_arr.append(domain_obj)
+
+                                if web_path_hash in path_hash_map:
+                                    path_obj = path_hash_map[web_path_hash]
+                                else:
+                                    path_obj = data_model.ListItem()
+                                    path_obj.collection_tool_instance_id = tool_instance_id
+                                    path_obj.web_path = web_path_str
+                                    path_obj.web_path_hash = web_path_hash
+                                    path_hash_map[web_path_hash] = path_obj
+                                    ret_arr.append(path_obj)
+
+                                web_path_id = path_obj.id
+
+                                http_endpoint_obj = data_model.HttpEndpoint(
+                                    parent_id=port_id)
+                                http_endpoint_obj.collection_tool_instance_id = tool_instance_id
+                                http_endpoint_obj.web_path_id = web_path_id
+
+                                ret_arr.append(http_endpoint_obj)
+
+                                content_length = None
+                                if 'content_length' in web_result:
+                                    content_length = web_result['content_length']
+
+                                http_endpoint_data_obj = data_model.HttpEndpointData(
+                                    parent_id=http_endpoint_obj.id)
+                                http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
+                                http_endpoint_data_obj.domain_id = endpoint_domain_id
+                                http_endpoint_data_obj.status = status_code
+                                http_endpoint_data_obj.content_length = content_length
+
+                                ret_arr.append(http_endpoint_data_obj)
+
+    return ret_arr
+
+
 @inherits(FeroxScan)
 class ImportFeroxOutput(data_model.ImportToolXOutput):
     """
@@ -500,121 +606,7 @@ class ImportFeroxOutput(data_model.ImportToolXOutput):
             only 'response' type entries from Feroxbuster output.
         """
 
-        path_hash_map = {}
-        domain_name_id_map = {}
-
         scheduled_scan_obj = self.scan_input
         tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-
-        http_output_file = self.input().path
-        with open(http_output_file, 'r') as file_fd:
-            data = file_fd.read()
-
-        ret_arr = []
-        hash_alg = hashlib.sha1
-        if len(data) > 0:
-            scan_data_dict = json.loads(data)
-
-            # Get data and map
-            url_to_id_map = scan_data_dict['url_to_id_map']
-            for url_str in url_to_id_map:
-
-                obj_data = url_to_id_map[url_str]
-                output_file = obj_data['output_file']
-                port_id = obj_data['port_id']
-                host_id = obj_data['host_id']
-
-                obj_arr = scan_utils.parse_json_blob_file(output_file)
-                for web_result in obj_arr:
-
-                    if 'type' in web_result:
-                        result_type = web_result['type']
-
-                        # Get the port object that maps to this url
-                        if result_type == "response":
-
-                            if 'status' in web_result:
-                                status_code = web_result['status']
-                                endpoint_url = None
-
-                                if 'url' in web_result:
-                                    endpoint_url = web_result['url']
-
-                                    u = urlparse(endpoint_url)
-                                    web_path_str = u.path
-                                    if web_path_str and len(web_path_str) > 0:
-                                        hashobj = hash_alg()
-                                        hashobj.update(web_path_str.encode())
-                                        path_hash = hashobj.digest()
-                                        web_path_hash = binascii.hexlify(
-                                            path_hash).decode()
-
-                                    host = u.netloc
-                                    if ":" in host:
-                                        host_arr = host.split(":")
-                                        domain_str = host_arr[0].lower()
-                                    else:
-                                        domain_str = host.lower()
-
-                                    # Check if the domain is an IP adress
-                                    endpoint_domain_id = None
-                                    try:
-                                        netaddr.IPAddress(domain_str)
-                                    except Exception as e:
-
-                                        if domain_str in domain_name_id_map:
-                                            endpoint_domain_id = domain_name_id_map[domain_str]
-                                        else:
-                                            domain_obj = data_model.Domain(
-                                                parent_id=host_id)
-                                            domain_obj.collection_tool_instance_id = tool_instance_id
-                                            domain_obj.name = domain_str
-
-                                            # Add domain
-                                            ret_arr.append(domain_obj)
-                                            # Set endpoint id
-                                            endpoint_domain_id = domain_obj.id
-                                            domain_name_id_map[domain_str] = endpoint_domain_id
-
-                                            # Add domain
-                                            ret_arr.append(domain_obj)
-
-                                    if web_path_hash in path_hash_map:
-                                        path_obj = path_hash_map[web_path_hash]
-                                    else:
-                                        path_obj = data_model.ListItem()
-                                        path_obj.collection_tool_instance_id = tool_instance_id
-                                        path_obj.web_path = web_path_str
-                                        path_obj.web_path_hash = web_path_hash
-
-                                        # Add to map and the object list
-                                        path_hash_map[web_path_hash] = path_obj
-                                        ret_arr.append(path_obj)
-
-                                    web_path_id = path_obj.id
-
-                                    # Create http endpoint
-                                    http_endpoint_obj = data_model.HttpEndpoint(
-                                        parent_id=port_id)
-                                    http_endpoint_obj.collection_tool_instance_id = tool_instance_id
-                                    http_endpoint_obj.web_path_id = web_path_id
-
-                                    # Add the endpoint
-                                    ret_arr.append(http_endpoint_obj)
-
-                                    content_length = None
-                                    if 'content_length' in web_result:
-                                        content_length = web_result['content_length']
-
-                                    http_endpoint_data_obj = data_model.HttpEndpointData(
-                                        parent_id=http_endpoint_obj.id)
-                                    http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
-                                    http_endpoint_data_obj.domain_id = endpoint_domain_id
-                                    http_endpoint_data_obj.status = status_code
-                                    http_endpoint_data_obj.content_length = content_length
-
-                                    # Add the endpoint
-                                    ret_arr.append(http_endpoint_data_obj)
-
-        scheduled_scan_obj = self.scan_input
+        ret_arr = parse_feroxbuster_output(self.input().path, tool_instance_id)
         self.import_results(scheduled_scan_obj, ret_arr)

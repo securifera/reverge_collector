@@ -26,8 +26,10 @@ import logging
 import yaml
 import traceback
 
+import netaddr
 from functools import partial
 from luigi.util import inherits
+from urllib.parse import urlparse
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
@@ -486,6 +488,119 @@ class NucleiScan(luigi.Task):
             file_fd.write(json.dumps(results_dict))
 
 
+def parse_nuclei_output(
+    output_file: str,
+    endpoint_port_obj_map: Optional[Dict[str, Any]] = None,
+    tool_instance_id: Optional[str] = None,
+    tool_id: Optional[str] = None,
+    scope_obj: Optional[Any] = None,
+) -> List[Any]:
+    """Parse a Nuclei JSON output file and return data_model Record objects.
+
+    Args:
+        output_file:          Path to the Nuclei JSON output file.
+        endpoint_port_obj_map: URL-to-port mapping from the Luigi metadata file.
+                               When ``None`` (standalone/MCP use), host and port
+                               objects are derived from the result URL.
+        tool_instance_id:     Value for ``collection_tool_instance_id`` on each record.
+        tool_id:              Parent tool ID for CollectionModule records.
+        scope_obj:            Optional scan data for module-output correlation.
+
+    Returns:
+        List of data_model Record objects.
+    """
+    ret_arr: List[Any] = []
+    obj_arr = scan_utils.parse_json_blob_file(output_file)
+
+    for nuclei_scan_result in obj_arr:
+        if 'url' not in nuclei_scan_result:
+            continue
+
+        endpoint: str = nuclei_scan_result['url']
+        port_id = None
+
+        if endpoint_port_obj_map is not None:
+            if endpoint not in endpoint_port_obj_map:
+                logging.getLogger(__name__).debug(
+                    "Endpoint not in map: %s %s" % (endpoint, str(endpoint_port_obj_map)))
+                continue
+            port_id = endpoint_port_obj_map[endpoint]['port_id']
+        else:
+            # Standalone: build host/port from the result URL
+            parsed_url = urlparse(endpoint)
+            hostname = parsed_url.hostname
+            port_num = parsed_url.port or (
+                443 if parsed_url.scheme == 'https' else 80)
+
+            host_obj = data_model.Host()
+            host_obj.collection_tool_instance_id = tool_instance_id
+            try:
+                ip_object = netaddr.IPAddress(hostname)
+                if ip_object.version == 4:
+                    host_obj.ipv4_addr = str(ip_object)
+                else:
+                    host_obj.ipv6_addr = str(ip_object)
+            except (netaddr.core.AddrFormatError, TypeError):
+                pass
+            ret_arr.append(host_obj)
+
+            port_data_obj = data_model.Port(parent_id=host_obj.id)
+            port_data_obj.collection_tool_instance_id = tool_instance_id
+            port_data_obj.proto = 0
+            port_data_obj.port = str(port_num)
+            if parsed_url.scheme == 'https':
+                port_data_obj.secure = True
+            ret_arr.append(port_data_obj)
+            port_id = port_data_obj.id
+
+        if 'template-id' not in nuclei_scan_result:
+            continue
+
+        template_id: str = nuclei_scan_result['template-id'].lower()
+
+        if template_id == 'fingerprinthub-web-fingerprints':
+            if 'matcher-name' in nuclei_scan_result:
+                component_obj = data_model.WebComponent(parent_id=port_id)
+                component_obj.collection_tool_instance_id = tool_instance_id
+                component_obj.name = nuclei_scan_result['matcher-name'].lower()
+                ret_arr.append(component_obj)
+
+        elif template_id.startswith("cve-"):
+            vuln_obj = data_model.Vuln(parent_id=port_id)
+            vuln_obj.collection_tool_instance_id = tool_instance_id
+            vuln_obj.name = template_id
+            ret_arr.append(vuln_obj)
+
+        module_args: Optional[str] = nuclei_scan_result.get('template')
+        module_id: Optional[str] = None
+
+        if scope_obj is not None and scope_obj.module_id:
+            module_id = str(scope_obj.module_id)
+            for output_component in scope_obj.module_outputs:
+                if output_component.name in str(nuclei_scan_result).lower():
+                    component_obj = data_model.WebComponent(parent_id=port_id)
+                    component_obj.collection_tool_instance_id = tool_instance_id
+                    component_obj.name = output_component.name
+                    ret_arr.append(component_obj)
+        else:
+            module_obj = data_model.CollectionModule(parent_id=tool_id)
+            module_obj.collection_tool_instance_id = tool_instance_id
+            module_obj.name = template_id
+            module_obj.args = module_args
+            ret_arr.append(module_obj)
+            module_id = module_obj.id
+
+        if module_id:
+            module_output_obj = data_model.CollectionModuleOutput(
+                parent_id=module_id)
+            module_output_obj.collection_tool_instance_id = tool_instance_id
+            module_output_obj.output = nuclei_scan_result
+            module_output_obj.port_id = port_id
+            ret_arr.append(module_output_obj)
+
+    return ret_arr
+
+
 @inherits(NucleiScan)
 class ImportNucleiOutput(data_model.ImportToolXOutput):
     """
@@ -548,108 +663,22 @@ class ImportNucleiOutput(data_model.ImportToolXOutput):
             # Imports vulnerabilities, components, and modules
         """
         scheduled_scan_obj = self.scan_input
-        tool_instance_id: int = scheduled_scan_obj.current_tool_instance_id
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
         scope_obj = scheduled_scan_obj.scan_data
+        tool_id = scheduled_scan_obj.current_tool.id
 
-        # Import the ports to the manager
-        tool_id: int = scheduled_scan_obj.current_tool.id
-
-        nuclei_output_file: str = self.input().path
+        nuclei_output_file = self.input().path
         with open(nuclei_output_file, 'r') as file_fd:
-            data: str = file_fd.read()
+            data = file_fd.read()
 
         ret_arr: List[Any] = []
         if len(data) > 0:
-            scan_data_dict: Dict[str, Any] = json.loads(data)
-            endpoint_port_obj_map: Dict[str, Dict[str, Any]
-                                        ] = scan_data_dict['endpoint_port_obj_map']
-            output_file_path: Optional[str] = scan_data_dict.get(
-                'output_file_path')
-
-            # Read nuclei output if file exists
+            scan_data_dict = json.loads(data)
+            endpoint_port_obj_map = scan_data_dict['endpoint_port_obj_map']
+            output_file_path = scan_data_dict.get('output_file_path')
             if output_file_path:
-                obj_arr: List[Dict[str, Any]] = scan_utils.parse_json_blob_file(
-                    output_file_path)
+                ret_arr = parse_nuclei_output(
+                    output_file_path, endpoint_port_obj_map,
+                    tool_instance_id, tool_id, scope_obj)
 
-                for nuclei_scan_result in obj_arr:
-                    if 'url' not in nuclei_scan_result:
-                        continue
-
-                    endpoint: str = nuclei_scan_result['url']
-
-                    # Get the port object that maps to this url
-                    if endpoint not in endpoint_port_obj_map:
-                        logging.getLogger(__name__).debug("Endpoint not in map: %s %s" %
-                                                          (endpoint, str(endpoint_port_obj_map)))
-                        continue
-
-                    port_obj: Dict[str, int] = endpoint_port_obj_map[endpoint]
-                    port_id: int = port_obj['port_id']
-
-                    if 'template-id' not in nuclei_scan_result:
-                        continue
-
-                    template_id: str = nuclei_scan_result['template-id'].lower()
-
-                    # Handle fingerprinting templates
-                    if template_id == 'fingerprinthub-web-fingerprints':
-                        if 'matcher-name' in nuclei_scan_result:
-                            matcher_name: str = nuclei_scan_result['matcher-name'].lower(
-                            )
-
-                            # Add web component
-                            component_obj = data_model.WebComponent(
-                                parent_id=port_id)
-                            component_obj.collection_tool_instance_id = tool_instance_id
-                            component_obj.name = matcher_name
-                            ret_arr.append(component_obj)
-
-                    # Handle CVE templates
-                    elif template_id.startswith("cve-"):
-                        # Add vulnerability
-                        vuln_obj = data_model.Vuln(parent_id=port_id)
-                        vuln_obj.collection_tool_instance_id = tool_instance_id
-                        vuln_obj.name = template_id
-                        ret_arr.append(vuln_obj)
-
-                    # Extract module arguments from template
-                    module_args: Optional[str] = None
-                    if 'template' in nuclei_scan_result:
-                        module_args = nuclei_scan_result['template']
-
-                    module_id: Optional[str] = None
-
-                    # Handle module-specific processing
-                    if scope_obj.module_id:
-                        module_id = str(scope_obj.module_id)
-
-                        # Parse output and add components if present
-                        output_components = scope_obj.module_outputs
-                        for output_component in output_components:
-                            if output_component.name in str(nuclei_scan_result).lower():
-                                component_obj = data_model.WebComponent(
-                                    parent_id=port_id)
-                                component_obj.collection_tool_instance_id = tool_instance_id
-                                component_obj.name = output_component.name
-                                ret_arr.append(component_obj)
-                    else:
-                        # Add collection module for non-module scans
-                        module_obj = data_model.CollectionModule(
-                            parent_id=tool_id)
-                        module_obj.collection_tool_instance_id = tool_instance_id
-                        module_obj.name = template_id
-                        module_obj.args = module_args
-                        ret_arr.append(module_obj)
-                        module_id = module_obj.id
-
-                    # Add module output for all scan results
-                    if module_id:
-                        module_output_obj = data_model.CollectionModuleOutput(
-                            parent_id=module_id)
-                        module_output_obj.collection_tool_instance_id = tool_instance_id
-                        module_output_obj.output = nuclei_scan_result
-                        module_output_obj.port_id = port_id
-                        ret_arr.append(module_output_obj)
-
-        # Import, Update, & Save all collected results
         self.import_results(scheduled_scan_obj, ret_arr)
