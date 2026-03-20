@@ -110,6 +110,9 @@ class Netexec(data_model.WaluigiTool):
         modules. Each module becomes a CollectionModule object that can be
         selectively enabled for scanning.
 
+        Results are cached on disk and only regenerated when the ``netexec``
+        version string changes.
+
         Returns:
             List[data_model.CollectionModule]: List of collection modules, one for each Netexec module
 
@@ -119,6 +122,25 @@ class Netexec(data_model.WaluigiTool):
             >>> for module in modules:
             ...     print(f"{module.name}: {module.args}")
         """
+        from waluigi.module_cache import get_cached_modules
+        return get_cached_modules('netexec', Netexec._fingerprint,
+                                  Netexec._generate_netexec_modules)
+
+    @staticmethod
+    def _fingerprint() -> Optional[str]:
+        """Cache fingerprint: stripped output of 'netexec --version'."""
+        netexec_path = os.path.expanduser('~/.local/bin/netexec')
+        if not os.path.exists(netexec_path):
+            return None
+        result = process_wrapper(cmd_args=[netexec_path, '--version'], store_output=True)
+        if not result:
+            return None
+        version = (result.get('stdout', '') + result.get('stderr', '')).strip()
+        return version if version else None
+
+    @staticmethod
+    def _generate_netexec_modules() -> List:
+        """Internal: enumerate Netexec modules without cache."""
         modules = []
 
         try:

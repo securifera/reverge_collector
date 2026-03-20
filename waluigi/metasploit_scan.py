@@ -20,6 +20,7 @@ Functions:
 
 """
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 import json
 import os
@@ -253,6 +254,10 @@ class Metasploit(data_model.WaluigiTool):
         then retrieves module metadata for each. Each module becomes a CollectionModule
         object that can be selectively enabled for scanning.
 
+        Results are cached on disk and only regenerated when the Metasploit
+        framework version changes (or the msfconsole binary hash changes when
+        the RPC server is not reachable).
+
         Returns:
             List[data_model.CollectionModule]: List of collection modules, one for each Metasploit module
 
@@ -262,8 +267,217 @@ class Metasploit(data_model.WaluigiTool):
             >>> for module in modules:
             ...     print(f"{module.name}: {module.args}")
         """
-        modules = []
+        from waluigi.module_cache import get_cached_modules
 
+        msf_host = os.environ.get("MSF_JSON_RPC_HOST", "127.0.0.1")
+        msf_port = int(os.environ.get("MSF_JSON_RPC_PORT", "8081"))
+        bearer_token = Metasploit._read_msf_token()
+        use_ssl = os.environ.get(
+            "MSF_JSON_RPC_SSL", "").lower() in ("1", "true", "yes")
+
+        def fp_func(): return Metasploit._fingerprint(
+            msf_host, msf_port, bearer_token, use_ssl)
+
+        def gen_func(): return Metasploit._generate_metasploit_modules(
+            msf_host, msf_port, bearer_token, use_ssl
+        )
+        return get_cached_modules('metasploit', fp_func, gen_func)
+
+    @staticmethod
+    def _read_msf_token() -> str:
+        """Return the MSF JSON RPC bearer token from env or token file."""
+        _token_file = "/opt/collector/msf_rpc_token"
+        token = os.environ.get("MSF_JSON_RPC_TOKEN", "")
+        if token:
+            return token
+        if os.path.exists(_token_file):
+            try:
+                with open(_token_file, 'r') as fh:
+                    return fh.read().strip()
+            except Exception:
+                pass
+        return ""
+
+    @staticmethod
+    def _fingerprint(
+        msf_host: str = "127.0.0.1",
+        msf_port: int = 8081,
+        bearer_token: str = "",
+        use_ssl: bool = False,
+    ) -> Optional[str]:
+        """Cache fingerprint: MSF framework version from core.version RPC.
+
+        Falls back to SHA-256 of the msfconsole binary when the server is
+        not reachable.
+        """
+        import shutil as _shutil
+        from waluigi.module_cache import sha256_file
+        _log = logging.getLogger(__name__)
+        scheme = "https" if use_ssl else "http"
+        url = f"{scheme}://{msf_host}:{msf_port}/api/v1/json-rpc"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {bearer_token}",
+        }
+        try:
+            payload = {
+                "jsonrpc": "2.0",
+                "method": "core.version",
+                "id": str(uuid_lib.uuid4()),
+                "params": [],
+            }
+            resp = requests.post(url, json=payload, headers=headers,
+                                 verify=use_ssl, timeout=5)
+            resp.raise_for_status()
+            result = resp.json().get("result", {})
+            version = result.get("version") or result.get("framework")
+            if version:
+                _log.debug("MSF fingerprint via RPC core.version: %s", version)
+                return str(version).strip()
+            _log.debug(
+                "MSF core.version RPC returned no version field; result=%s", result)
+        except Exception as exc:
+            _log.debug("MSF core.version RPC failed (%s: %s); falling back to binary hash",
+                       type(exc).__name__, exc)
+
+        path = _shutil.which('msfconsole')
+        if path and os.path.exists(path):
+            h = sha256_file(path)
+            _log.debug(
+                "MSF fingerprint via msfconsole binary hash: %s (path=%s)", h, path)
+            return h
+        _log.debug(
+            "MSF fingerprint: msfconsole not found on PATH; returning None")
+        return None
+
+    @staticmethod
+    def _generate_metasploit_modules(
+        msf_host: str,
+        msf_port: int,
+        bearer_token: str,
+        use_ssl: bool,
+        info_workers: int = 50,
+    ) -> List:
+        """Enumerate auxiliary and exploit modules via the Metasploit JSON RPC.
+
+        Strategy:
+        1. ``module.search type:<X>`` returns the full module list quickly but
+           does **not** include a description field.
+        2. ``module.info <type> <name>`` (where name is the path *without* the
+           leading type component) returns the full description.
+        So we first fetch all names via search, then fan-out ``module.info``
+        calls concurrently (``info_workers`` threads) to enrich descriptions.
+        Since the results are cached this cost is only paid once.
+        """
+        _log = logging.getLogger(__name__)
+        modules = []
+        scheme = "https" if use_ssl else "http"
+        url = f"{scheme}://{msf_host}:{msf_port}/api/v1/json-rpc"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {bearer_token}",
+        }
+
+        def _post(method: str, params: list) -> dict:
+            payload = {
+                "jsonrpc": "2.0",
+                "method": method,
+                "id": str(uuid_lib.uuid4()),
+                "params": params,
+            }
+            resp = requests.post(url, json=payload, headers=headers,
+                                 verify=use_ssl, timeout=30)
+            resp.raise_for_status()
+            return resp.json()
+
+        def _search_names(mtype: str) -> List[str]:
+            """Return list of short module names (without type prefix) for a type."""
+            try:
+                data = _post("module.search", [f"type:{mtype}"])
+                if "error" in data:
+                    _log.warning("module.search(type:%s) error: %s",
+                                 mtype, data["error"])
+                    return []
+                result = data.get("result", [])
+                if isinstance(result, dict):
+                    result = result.get("modules", [])
+                if not isinstance(result, list):
+                    return []
+                # Each entry has 'name' (short) and optionally 'fullname'
+                names = []
+                for e in result:
+                    fullname = e.get("fullname", "")
+                    if fullname:
+                        # strip leading type prefix to get the short name
+                        parts = fullname.split("/", 1)
+                        names.append(parts[1] if len(parts) == 2 else fullname)
+                    elif e.get("name"):
+                        names.append(e["name"])
+                _log.debug("module.search(type:%s) returned %d names",
+                           mtype, len(names))
+                return names
+            except Exception as exc:
+                _log.warning("module.search(type:%s) failed: %s",
+                             mtype, exc)
+            return []
+
+        # Options that are auto-populated by the framework at run time;
+        # exclude them from the required-args string so users aren't prompted
+        # to supply values they don't need to think about.
+        _AUTO_OPTIONS = frozenset({"RHOSTS", "RPORT"})
+
+        def _fetch_info(mtype: str, name: str) -> Optional[data_model.CollectionModule]:
+            """Call module.info and return a CollectionModule, or None on error."""
+            try:
+                data = _post("module.info", [mtype, name])
+                if "error" in data:
+                    return None
+                info = data.get("result", {})
+                if not isinstance(info, dict):
+                    return None
+                fullname = info.get("fullname") or f"{mtype}/{name}"
+                description = (info.get("description") or "").strip()
+                if not description:
+                    description = fullname
+
+                # Build args from required, non-advanced options that have no
+                # default and aren't auto-populated by the framework.
+                required_args = []
+                for opt_name, opt in (info.get("options") or {}).items():
+                    if (
+                        opt.get("required")
+                        and not opt.get("advanced")
+                        and "default" not in opt
+                        and opt_name not in _AUTO_OPTIONS
+                    ):
+                        required_args.append(opt_name)
+                required_args.sort()
+
+                m = data_model.CollectionModule()
+                m.name = fullname
+                m.description = description
+                m.args = " ".join(f"{k}=CHANGEME" for k in required_args)
+                return m
+            except Exception as exc:
+                _log.debug("module.info(%s, %s) failed: %s", mtype, name, exc)
+            return None
+
+        for mtype in ("auxiliary", "exploit"):
+            names = _search_names(mtype)
+            if not names:
+                continue
+            _log.debug("Fetching module.info for %d %s modules (%d workers) …",
+                       len(names), mtype, info_workers)
+            with ThreadPoolExecutor(max_workers=info_workers) as pool:
+                futures = {pool.submit(
+                    _fetch_info, mtype, n): n for n in names}
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result is not None:
+                        modules.append(result)
+
+        _log.debug("_generate_metasploit_modules: total %d modules built",
+                   len(modules))
         return modules
 
     @staticmethod

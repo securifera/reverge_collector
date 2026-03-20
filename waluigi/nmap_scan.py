@@ -109,6 +109,9 @@ class Nmap(data_model.WaluigiTool):
         Engine (NSE) scripts and converts them to CollectionModule objects.
         Each script becomes a module that can be selectively enabled for scanning.
 
+        Results are cached on disk and only regenerated when the ``nmap`` binary
+        changes on disk (version upgrade / reinstall).
+
         Returns:
             List[data_model.CollectionModule]: List of collection modules, one for each NSE script
 
@@ -118,6 +121,22 @@ class Nmap(data_model.WaluigiTool):
             >>> for module in modules:
             ...     print(f"{module.name}: {module.args}")
         """
+        from waluigi.module_cache import get_cached_modules
+        return get_cached_modules('nmap', Nmap._fingerprint,
+                                  Nmap._generate_nmap_modules)
+
+    @staticmethod
+    def _fingerprint() -> Optional[str]:
+        """Cache fingerprint: SHA-256 of the nmap binary."""
+        from waluigi.module_cache import sha256_file
+        path = shutil.which('nmap')
+        if path and os.path.exists(path):
+            return sha256_file(path)
+        return None
+
+    @staticmethod
+    def _generate_nmap_modules() -> List:
+        """Internal: enumerate NSE scripts without cache."""
         modules = []
 
         try:

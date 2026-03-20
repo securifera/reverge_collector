@@ -209,5 +209,9 @@ MSF_TOKEN=$(openssl rand -hex 20)
 echo "$MSF_TOKEN" | sudo tee /opt/collector/msf_rpc_token > /dev/null
 sudo chmod 644 /opt/collector/msf_rpc_token
 
+# Install sqlmap
+sudo git clone -c http.sslVerify=false https://github.com/securifera/sqlmap.git /opt/sqlmap
+sudo chmod +x /opt/sqlmap/sqlmap.py
+
 # Clean seclists in the background
 sudo git clone -c http.sslVerify=false https://github.com/danielmiessler/SecLists.git /usr/share/seclists &

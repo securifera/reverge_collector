@@ -101,6 +101,9 @@ class Nuclei(data_model.WaluigiTool):
         "Template: " entries with template IDs from the list, and extracts
         metadata to convert them to CollectionModule objects.
 
+        Results are cached on disk and only regenerated when the ``.templates-index``
+        file changes (i.e. after a ``nuclei -update-templates`` run).
+
         Returns:
             List[data_model.CollectionModule]: List of collection modules, one for each Nuclei template
 
@@ -110,6 +113,31 @@ class Nuclei(data_model.WaluigiTool):
             >>> for module in modules:
             ...     print(f"{module.name}: {module.args}")
         """
+        from waluigi.module_cache import get_cached_modules
+        return get_cached_modules('nuclei', Nuclei._fingerprint,
+                                  Nuclei._generate_nuclei_modules)
+
+    @staticmethod
+    def _fingerprint() -> Optional[str]:
+        """Cache fingerprint: SHA-256 of the .templates-index file."""
+        from waluigi.module_cache import sha256_file
+        result = process_wrapper(cmd_args=['nuclei', '-tv'], store_output=True)
+        if not result or result.get('exit_code', 1) != 0:
+            return None
+        for line in result.get('stderr', '').split('\n'):
+            if 'nuclei-templates version' in line and '(' in line and ')' in line:
+                start = line.rfind('(')
+                end = line.rfind(')')
+                if 0 <= start < end:
+                    root = line[start + 1:end].strip()
+                    index = os.path.join(root, '.templates-index')
+                    if os.path.exists(index):
+                        return sha256_file(index)
+        return None
+
+    @staticmethod
+    def _generate_nuclei_modules() -> List:
+        """Internal: enumerate Nuclei templates without cache."""
         modules = []
 
         try:

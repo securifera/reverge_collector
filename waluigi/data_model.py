@@ -55,8 +55,8 @@ waluigi_tools: List[Tuple[str, str]] = [
     # ('waluigi.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
     ('waluigi.ip_thc_lookup', 'IPThc'),  # IP THC API integration
     ('waluigi.netexec_scan', 'Netexec'),  # Netexec network scanner integration
-    # Metasploit network scanner integration
-    # ('waluigi.metasploit_scan', 'Metasploit'),
+    ('waluigi.metasploit_scan', 'Metasploit'),  # Metasploit integration
+    ('waluigi.sqlmap_scan', 'Sqlmap'),   # SQL injection scanner
 ]
 
 # Global configuration: Wordlist storage path
