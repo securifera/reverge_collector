@@ -98,11 +98,12 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
     if additional_options:
         options.update(additional_options)
 
-    logger.debug("console execute — module=%s options=%s",
-                 module_path, options)
+    # logger.debug("console execute — module=%s options=%s",
+    #             module_path, options)
 
     console_id: Optional[str] = None
     console_output: str = ""
+    session_opened: bool = False
 
     try:
         # Create a dedicated console for this module run
@@ -116,8 +117,8 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
             logger.error("console.create returned no id for %s", module_path)
             return ""
 
-        logger.debug("Console id=%s created for module %s",
-                     console_id, module_path)
+        # logger.debug("Console id=%s created for module %s",
+        #             console_id, module_path)
 
         def _drain(max_rounds: int = 5) -> str:
             """Read from the console until it reports busy=false."""
@@ -140,7 +141,22 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
         _rpc_call("console.write", [console_id, f"use {module_path}\n"])
         for key, val in options.items():
             _rpc_call("console.write", [console_id, f"set {key} {val}\n"])
-        _rpc_call("console.write", [console_id, "run\n"])
+        # Exploit modules are run with 'check' to test exploitability without
+        # setting up a full callback listener.  Auxiliary modules use 'run'.
+        run_cmd = "check" if module_path.startswith("exploit/") else "run"
+        _rpc_call("console.write", [console_id, f"{run_cmd}\n"])
+
+        # Indicators that tell us the module has definitively finished without
+        # waiting for busy=false (useful for exploit modules that leave a
+        # reverse-TCP handler running and never go idle on their own).
+        _SESSION_OPENED = re.compile(
+            r'(Meterpreter session|Command shell session|session \d+ opened)',
+            re.IGNORECASE)
+        _EXPLOIT_ABORTED = re.compile(
+            r'(Exploit aborted|exploit failed|no session|module failed)',
+            re.IGNORECASE)
+
+        session_opened = False
 
         # Drain until the module finishes (busy=false after the run)
         elapsed = 0.0
@@ -152,11 +168,25 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
             data = chunk.get("data", "")
             if data:
                 console_output += data
+                # logger.debug("[t=%.0fs console=%s] %s",
+                #             elapsed, console_id, data.rstrip())
+                # Incrementally persist output so it survives a hard timeout
+                with open(output_file, 'w') as _fd:
+                    _fd.write(console_output)
+                # Session opened — we're done, preserve the session
+                if _SESSION_OPENED.search(data):
+                    # logger.info("Session opened for module %s — stopping poll",
+                    #            module_path)
+                    session_opened = True
+                    break
+                # Clear failure — no point waiting for busy=false
+                if _EXPLOIT_ABORTED.search(data) and not chunk.get("busy", True):
+                    logger.info("Exploit aborted for module %s — stopping poll",
+                                module_path)
+                    break
+
             if not chunk.get("busy", True):
                 # Drain any buffered output that arrived just as busy cleared.
-                # Keep reading until we get an empty response with busy=False —
-                # a single extra read is not enough when MSF flushes output in
-                # multiple chunks after the foreground job finishes.
                 for _ in range(20):
                     time.sleep(poll_interval)
                     read_resp = _rpc_call("console.read", [console_id])
@@ -164,12 +194,19 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
                     trailing = trailing_chunk.get("data", "")
                     if trailing:
                         console_output += trailing
+                        # logger.debug("[trailing console=%s] %s",
+                        #             console_id, trailing.rstrip())
+                        with open(output_file, 'w') as _fd:
+                            _fd.write(console_output)
                     if not trailing_chunk.get("busy", True) and not trailing:
                         break
                 break
         else:
-            logger.warning("Timed out waiting for module %s on console %s",
-                           module_path, console_id)
+            logger.warning(
+                "Timed out after %.0fs waiting for module %s on console %s — "
+                "output so far:\n%s",
+                max_wait, module_path, console_id,
+                console_output[-2000:] if console_output else "(none)")
 
         if not console_output.strip():
             logger.warning(
@@ -179,15 +216,20 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
     except Exception as e:
         logger.error("Console execution failed for %s: %s", module_path, e)
     finally:
-        if console_id is not None:
+        # Don't destroy the console if a session was opened — doing so would
+        # kill the session.  Leave it for the operator to interact with.
+        if console_id is not None and not session_opened:
             try:
                 _rpc_call("console.destroy", [console_id])
-                logger.debug("Console id=%s destroyed", console_id)
+                # logger.debug("Console id=%s destroyed", console_id)
             except Exception as e:
                 logger.warning(
                     "console.destroy failed for id=%s: %s", console_id, e)
+        elif session_opened:
+            logger.info(
+                "Console id=%s left open — session is active", console_id)
 
-    # Write raw console text to the output file
+    # Final write (covers the no-data and exception paths)
     with open(output_file, 'w') as out_fd:
         out_fd.write(console_output)
 
@@ -447,23 +489,28 @@ class Metasploit(data_model.WaluigiTool):
                 if not description:
                     description = fullname
 
-                # Build args from required, non-advanced options that have no
-                # default and aren't auto-populated by the framework.
-                required_args = []
+                # Build args from required, non-advanced options that aren't
+                # auto-populated by the framework.  Options without a default
+                # get "CHANGEME" as a placeholder; options that have a default
+                # are included with their default value so the user can see and
+                # override them.
+                required_args: List[tuple] = []
                 for opt_name, opt in (info.get("options") or {}).items():
                     if (
                         opt.get("required")
                         and not opt.get("advanced")
-                        and "default" not in opt
                         and opt_name not in _AUTO_OPTIONS
                     ):
-                        required_args.append(opt_name)
-                required_args.sort()
+                        default = opt.get("default")
+                        value = str(
+                            default) if default is not None else "CHANGEME"
+                        required_args.append((opt_name, value))
+                required_args.sort(key=lambda x: x[0])
 
                 m = data_model.CollectionModule()
                 m.name = fullname
                 m.description = description
-                opts = " ".join(f"{k}=CHANGEME" for k in required_args)
+                opts = " ".join(f"{k}={v}" for k, v in required_args)
                 m.args = (fullname + " " + opts) if opts else fullname
                 return m
             except Exception as exc:
