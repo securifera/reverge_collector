@@ -122,7 +122,7 @@ class Sqlmap(data_model.WaluigiTool):
         self.project_url = "https://sqlmap.org/"
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 12
-        self.args = "--batch --level=1 --risk=1"
+        self.args = "--batch --level=1 --risk=1 --crawl=2"
         self.scan_func = Sqlmap.sqlmap_scan_func
         self.import_func = Sqlmap.sqlmap_import
         self.input_records = [

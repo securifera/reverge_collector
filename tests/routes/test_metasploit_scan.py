@@ -361,8 +361,8 @@ class TestMetasploitScan:
 
         # smb_ms17_010 has a required DOMAIN option with no default
         smb = by_name["auxiliary/scanner/smb/smb_ms17_010"]
-        assert smb.args == "auxiliary/scanner/smb/smb_ms17_010 DOMAIN=CHANGEME", (
-            f"Expected 'auxiliary/scanner/smb/smb_ms17_010 DOMAIN=CHANGEME', got {smb.args!r}"
+        assert smb.args == "auxiliary/scanner/smb/smb_ms17_010 DOMAIN=CHANGEME THREADS=1", (
+            f"Expected 'auxiliary/scanner/smb/smb_ms17_010 DOMAIN=CHANGEME THREADS=1', got {smb.args!r}"
         )
 
         # ssh_version has only auto-populated opts — args should be just the module path
