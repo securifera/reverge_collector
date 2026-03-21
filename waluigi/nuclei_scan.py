@@ -371,13 +371,8 @@ class NucleiScan(luigi.Task):
         dir_path: str = scan_utils.init_tool_folder(
             tool_name, 'outputs', scan_id)
 
-        mod_str: str = ''
-        if scheduled_scan_obj.scan_data.module_id:
-            module_id: str = str(scheduled_scan_obj.scan_data.module_id)
-            mod_str = "_" + module_id
-
         nuclei_outputs_file: str = dir_path + os.path.sep + \
-            "nuclei_outputs_" + scan_id + mod_str
+            "nuclei_outputs_" + scan_id
         return luigi.LocalTarget(nuclei_outputs_file)
 
     def run(self) -> None:
@@ -448,13 +443,8 @@ class NucleiScan(luigi.Task):
         counter: int = 0
         if len(total_endpoint_set) > 0:
 
-            mod_str: str = ''
-            if scheduled_scan_obj.scan_data.module_id:
-                module_id: str = str(scheduled_scan_obj.scan_data.module_id)
-                mod_str = "_" + module_id
-
             nuclei_scan_input_file_path: str = (
-                output_dir + os.path.sep + "nuclei_scan_in" + mod_str).strip()
+                output_dir + os.path.sep + "nuclei_scan_in").strip()
 
             # Write target endpoints to input file
             with open(nuclei_scan_input_file_path, 'w') as file_fd:
@@ -463,7 +453,7 @@ class NucleiScan(luigi.Task):
 
             # Prepare output file path
             nuclei_output_file = output_dir + os.path.sep + \
-                "nuclei_scan_out" + mod_str + "_" + str(counter)
+                "nuclei_scan_out" + "_" + str(counter)
 
             # Build command arguments
             command: List[str] = []
@@ -600,23 +590,12 @@ def parse_nuclei_output(
             ret_arr.append(vuln_obj)
 
         module_args: Optional[str] = nuclei_scan_result.get('template')
-        module_id: Optional[str] = None
-
-        if scope_obj is not None and scope_obj.module_id:
-            module_id = str(scope_obj.module_id)
-            for output_component in scope_obj.module_outputs:
-                if output_component.name in str(nuclei_scan_result).lower():
-                    component_obj = data_model.WebComponent(parent_id=port_id)
-                    component_obj.collection_tool_instance_id = tool_instance_id
-                    component_obj.name = output_component.name
-                    ret_arr.append(component_obj)
-        else:
-            module_obj = data_model.CollectionModule(parent_id=tool_id)
-            module_obj.collection_tool_instance_id = tool_instance_id
-            module_obj.name = template_id
-            module_obj.args = module_args
-            ret_arr.append(module_obj)
-            module_id = module_obj.id
+        module_obj = data_model.CollectionModule(parent_id=tool_id)
+        module_obj.collection_tool_instance_id = tool_instance_id
+        module_obj.name = template_id
+        module_obj.args = module_args
+        ret_arr.append(module_obj)
+        module_id = module_obj.id
 
         if module_id:
             module_output_obj = data_model.CollectionModuleOutput(

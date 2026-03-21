@@ -322,17 +322,12 @@ class NmapScan(luigi.Task):
         scheduled_scan_obj = self.scan_input
         scan_id: str = scheduled_scan_obj.id
 
-        mod_str: str = ''
-        if scheduled_scan_obj.scan_data.module_id:
-            module_id: str = str(scheduled_scan_obj.scan_data.module_id)
-            mod_str = "_" + module_id
-
         # Init directory
         tool_name: str = scheduled_scan_obj.current_tool.name
         dir_path: str = scan_utils.init_tool_folder(
             tool_name, 'outputs', scan_id)
         meta_file_path: str = dir_path + os.path.sep + \
-            "nmap_scan_" + scan_id + mod_str + ".meta"
+            "nmap_scan_" + scan_id + ".meta"
 
         return luigi.LocalTarget(meta_file_path)
 
@@ -527,13 +522,6 @@ class NmapScan(luigi.Task):
 
                     nmap_scan_list.append(scan_obj)
 
-        # Prepare module string for file naming
-        module_id: Optional[str] = None
-        mod_str: str = ''
-        if scheduled_scan_obj.scan_data.module_id:
-            module_id = str(scheduled_scan_obj.scan_data.module_id)
-            mod_str = "_" + module_id
-
         # Output structure for scan jobs
         nmap_scan_cmd_list: List[Dict[str, Any]] = []
         nmap_scan_data = {}
@@ -549,7 +537,7 @@ class NmapScan(luigi.Task):
             port_comma_list: str = ','.join(port_list)
 
             ip_list_path: str = dir_path + os.path.sep + \
-                "nmap_in_" + str(counter) + mod_str
+                "nmap_in_" + str(counter)
 
             # Write IPs to input file
             ip_list: Union[Set[str], List[str]] = scan_obj['ip_set']
@@ -562,7 +550,7 @@ class NmapScan(luigi.Task):
 
             # Prepare output file
             nmap_output_xml_file: str = dir_path + os.path.sep + \
-                "nmap_out_" + str(counter) + mod_str
+                "nmap_out_" + str(counter)
 
             # Build command arguments
             command: List[str] = []
@@ -831,23 +819,12 @@ def parse_nmap_xml(
                 if not output:
                     continue
 
-                temp_module_id: Optional[str] = None
-
-                if scope_obj is not None and scope_obj.module_id:
-                    temp_module_id = scope_obj.module_id
-                    for output_component in scope_obj.module_outputs:
-                        if output_component.name in output.lower():
-                            comp = data_model.WebComponent(parent_id=port_id)
-                            comp.collection_tool_instance_id = tool_instance_id
-                            comp.name = output_component.name
-                            ret_arr.append(comp)
-                else:
-                    module_obj = data_model.CollectionModule(parent_id=tool_id)
-                    module_obj.collection_tool_instance_id = tool_instance_id
-                    module_obj.name = script_id
-                    module_obj.args = "--script +%s" % script_id
-                    ret_arr.append(module_obj)
-                    temp_module_id = module_obj.id
+                module_obj = data_model.CollectionModule(parent_id=tool_id)
+                module_obj.collection_tool_instance_id = tool_instance_id
+                module_obj.name = script_id
+                module_obj.args = "--script +%s" % script_id
+                ret_arr.append(module_obj)
+                temp_module_id = module_obj.id
 
                 module_output_obj = data_model.CollectionModuleOutput(
                     parent_id=temp_module_id

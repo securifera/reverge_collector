@@ -1,14 +1,14 @@
 """
 Metasploit network scanning module for the Waluigi framework.
 
-This module provides comprehensive network scanning capabilities using Metasploit Framework via
-msfrpc daemon, a post-exploitation framework used for network reconnaissance and security assessment.
-It implements protocol-specific scanning for FTP, SSH, NFS, WMI, LDAP, SMB, MySQL, RDP, VNC, and WinRM services.
+This module provides network scanning capabilities using Metasploit Framework via the msfrpc
+daemon. The Metasploit module to execute is specified in the tool's args field as the first
+slash-delimited token (e.g. ``auxiliary/scanner/smb/smb_ms17_010``), followed by any optional
+``KEY=VALUE`` datastore options.  RHOSTS is populated from the target IP list and RPORT is
+populated from the port number for each scan job.
 
-The module supports both subnet-based and targeted scanning, with intelligent scan optimization
-based on previous port discovery results. It processes JSON-formatted output with fields
-(protocol, host, port, hostname, message, module_name) to extract detailed host, port, and
-service information.
+The module supports both subnet-based and targeted scanning. It processes JSON-formatted output
+to extract host, port, and service information.
 
 Classes:
     Metasploit: Tool configuration class for Metasploit scanner
@@ -38,20 +38,6 @@ from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
 
-# Maps well-known port numbers to their corresponding Metasploit auxiliary module paths
-metasploit_protocol_map: Dict[str, str] = {
-    '21':   'auxiliary/scanner/ftp/ftp_version',
-    '22':   'auxiliary/scanner/ssh/ssh_version',
-    '111':  'auxiliary/scanner/nfs/nfsmount',
-    '135':  'auxiliary/scanner/dcerpc/endpoint_mapper',
-    '389':  'auxiliary/scanner/ldap/ldap_search',
-    '445':  'auxiliary/scanner/smb/smb_ms17_010',
-    '3306': 'auxiliary/scanner/mysql/mysql_version',
-    '3389': 'auxiliary/scanner/rdp/rdp_scanner',
-    '5900': 'auxiliary/scanner/vnc/vnc_none_auth',
-    '5985': 'auxiliary/scanner/winrm/winrm_enum_users',
-}
-
 
 def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: str,
                             additional_options: Optional[Dict[str, Any]] = None,
@@ -59,32 +45,33 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
                             msf_host: str = "127.0.0.1",
                             msf_port: int = 8081, use_ssl: bool = False,
                             poll_interval: float = 2.0,
-                            max_wait: int = 300) -> Dict[str, Any]:
+                            max_wait: int = 300) -> str:
     """
-    Execute a Metasploit module via the JSON RPC interface.
+    Execute a Metasploit module via the JSON RPC console interface.
 
-    Submits a module run request to the Metasploit JSON RPC server, polls until the
-    job completes, retrieves the structured results, acknowledges them to free server
-    memory, and writes the full JSON response to *output_file*.
+    Creates a dedicated MSF console, sets RHOSTS / RPORT and any extra datastore
+    options, runs the module, drains the console output until the module finishes,
+    destroys the console, and writes the raw console text to *output_file*.
 
-    The JSON RPC server must already be running (e.g. started with
-    ``bundle exec thin --rackup msf-json-rpc.ru ...``).
+    Using the console API (rather than module.execute + module.results) is required
+    because most scanner modules return ``nil`` from their Ruby ``run`` method —
+    all useful output is printed to the console, not returned as a structured value.
 
     Args:
         ip_list: Target IP addresses / hostnames to scan (set as RHOSTS).
         module_path: Fully-qualified Metasploit module path, e.g.
-            ``auxiliary/scanner/smb/smb_ms17_010``.
-        output_file: Path where the JSON response from ``module.results`` is written.
+            ``auxiliary/scanner/ssh/ssh_version``.
+        output_file: Path where the captured console text is written.
         additional_options: Extra module datastore options merged on top of RHOSTS.
         bearer_token: Bearer token for the ``Authorization`` header (may be empty).
         msf_host: Hostname / IP of the JSON RPC server (default ``127.0.0.1``).
         msf_port: TCP port of the JSON RPC server (default ``8081``).
         use_ssl: Whether to use HTTPS (default ``False``).
-        poll_interval: Seconds between ``module.running_stats`` polls (default ``2.0``).
+        poll_interval: Seconds between ``console.read`` polls (default ``2.0``).
         max_wait: Maximum seconds to wait for the module to finish (default ``300``).
 
     Returns:
-        The decoded JSON response dict from ``module.results``, or an empty dict on error.
+        The captured console output string, or an empty string on error.
     """
     logger = logging.getLogger(__name__)
     scheme = "https" if use_ssl else "http"
@@ -106,82 +93,105 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
         resp.raise_for_status()
         return resp.json()
 
-    # JSON RPC module.execute takes (mtype, mname, opts) where mname is the path
-    # *without* the leading type component:
-    #   module_path = "auxiliary/scanner/smb/smb_ms17_010"
-    #   module_type = "auxiliary"
-    #   module_name = "scanner/smb/smb_ms17_010"
-    path_parts = module_path.split('/', 1)
-    module_type = path_parts[0]
-    module_name = path_parts[1] if len(path_parts) > 1 else module_path
-
-    # Build module options; RHOSTS accepts comma-separated values
-    options: Dict[str, Any] = {"RHOSTS": ",".join(ip_list)}
+    # Build datastore options dict: RHOSTS from ip_list, rest from additional_options
+    options: Dict[str, Any] = {"RHOSTS": " ".join(ip_list)}
     if additional_options:
         options.update(additional_options)
 
-    # Submit the module run request via module.execute
+    logger.debug("console execute — module=%s options=%s",
+                 module_path, options)
+
+    console_id: Optional[str] = None
+    console_output: str = ""
+
     try:
-        submit_result = _rpc_call(
-            "module.execute", [module_type, module_name, options])
+        # Create a dedicated console for this module run
+        create_resp = _rpc_call("console.create", [{}])
+        if "error" in create_resp:
+            logger.error("console.create failed for %s: %s",
+                         module_path, create_resp["error"])
+            return ""
+        console_id = str(create_resp.get("result", {}).get("id", ""))
+        if not console_id:
+            logger.error("console.create returned no id for %s", module_path)
+            return ""
+
+        logger.debug("Console id=%s created for module %s",
+                     console_id, module_path)
+
+        def _drain(max_rounds: int = 5) -> str:
+            """Read from the console until it reports busy=false."""
+            out = ""
+            for _ in range(max_rounds):
+                time.sleep(poll_interval)
+                read_resp = _rpc_call("console.read", [console_id])
+                chunk = read_resp.get("result", {})
+                data = chunk.get("data", "")
+                if data:
+                    out += data
+                if not chunk.get("busy", True):
+                    break
+            return out
+
+        # Drain the MSF banner so subsequent reads only contain module output
+        _drain(max_rounds=10)
+
+        # Write all setup commands in one shot
+        _rpc_call("console.write", [console_id, f"use {module_path}\n"])
+        for key, val in options.items():
+            _rpc_call("console.write", [console_id, f"set {key} {val}\n"])
+        _rpc_call("console.write", [console_id, "run\n"])
+
+        # Drain until the module finishes (busy=false after the run)
+        elapsed = 0.0
+        while elapsed < max_wait:
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            read_resp = _rpc_call("console.read", [console_id])
+            chunk = read_resp.get("result", {})
+            data = chunk.get("data", "")
+            if data:
+                console_output += data
+            if not chunk.get("busy", True):
+                # Drain any buffered output that arrived just as busy cleared.
+                # Keep reading until we get an empty response with busy=False —
+                # a single extra read is not enough when MSF flushes output in
+                # multiple chunks after the foreground job finishes.
+                for _ in range(20):
+                    time.sleep(poll_interval)
+                    read_resp = _rpc_call("console.read", [console_id])
+                    trailing_chunk = read_resp.get("result", {})
+                    trailing = trailing_chunk.get("data", "")
+                    if trailing:
+                        console_output += trailing
+                    if not trailing_chunk.get("busy", True) and not trailing:
+                        break
+                break
+        else:
+            logger.warning("Timed out waiting for module %s on console %s",
+                           module_path, console_id)
+
+        if not console_output.strip():
+            logger.warning(
+                "Module %s produced no console output (RHOSTS=%s)",
+                module_path, options.get("RHOSTS", ""))
+
     except Exception as e:
-        logger.error("JSON RPC module.execute failed for %s: %s",
-                     module_path, e)
-        return {}
+        logger.error("Console execution failed for %s: %s", module_path, e)
+    finally:
+        if console_id is not None:
+            try:
+                _rpc_call("console.destroy", [console_id])
+                logger.debug("Console id=%s destroyed", console_id)
+            except Exception as e:
+                logger.warning(
+                    "console.destroy failed for id=%s: %s", console_id, e)
 
-    if "error" in submit_result:
-        logger.error("JSON RPC error submitting %s: %s",
-                     module_path, submit_result["error"])
-        return {}
-
-    module_uuid: str = submit_result.get("result", {}).get("uuid", "")
-    if not module_uuid:
-        logger.error("No UUID returned for module %s", module_path)
-        return {}
-
-    logger.debug("Module %s submitted, uuid=%s", module_path, module_uuid)
-
-    # Poll until the UUID appears in the 'results' bucket
-    elapsed = 0.0
-    while elapsed < max_wait:
-        time.sleep(poll_interval)
-        elapsed += poll_interval
-        try:
-            stats = _rpc_call("module.running_stats", []).get("result", {})
-        except Exception as e:
-            logger.warning("module.running_stats error: %s", e)
-            continue
-
-        if module_uuid in stats.get("results", []):
-            break
-
-        # UUID is no longer tracked as waiting or running — treat as done
-        if (module_uuid not in stats.get("waiting", [])
-                and module_uuid not in stats.get("running", [])):
-            time.sleep(poll_interval)  # one final grace period
-            break
-    else:
-        logger.warning("Timed out waiting for module %s (uuid=%s)",
-                       module_path, module_uuid)
-
-    # Retrieve the results
-    try:
-        results_response = _rpc_call("module.results", [module_uuid])
-    except Exception as e:
-        logger.error("module.results failed for uuid %s: %s", module_uuid, e)
-        results_response = {}
-
-    # Acknowledge to allow the server to free memory
-    try:
-        _rpc_call("module.ack", [module_uuid])
-    except Exception as e:
-        logger.warning("module.ack failed for uuid %s: %s", module_uuid, e)
-
-    # Persist the response on disk
+    # Write raw console text to the output file
     with open(output_file, 'w') as out_fd:
-        json.dump(results_response, out_fd)
+        out_fd.write(console_output)
 
-    return results_response
+    return console_output
 
 
 class Metasploit(data_model.WaluigiTool):
@@ -237,10 +247,7 @@ class Metasploit(data_model.WaluigiTool):
         self.output_records = [
             data_model.ServerRecordType.COLLECTION_MODULE,
             data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
-            data_model.ServerRecordType.WEB_COMPONENT,
             data_model.ServerRecordType.DOMAIN,
-            data_model.ServerRecordType.CERTIFICATE,
-            data_model.ServerRecordType.LIST_ITEM,
             data_model.ServerRecordType.PORT,
             data_model.ServerRecordType.HOST
         ]
@@ -456,7 +463,8 @@ class Metasploit(data_model.WaluigiTool):
                 m = data_model.CollectionModule()
                 m.name = fullname
                 m.description = description
-                m.args = " ".join(f"{k}=CHANGEME" for k in required_args)
+                opts = " ".join(f"{k}=CHANGEME" for k in required_args)
+                m.args = (fullname + " " + opts) if opts else fullname
                 return m
             except Exception as exc:
                 _log.debug("module.info(%s, %s) failed: %s", mtype, name, exc)
@@ -630,25 +638,34 @@ class MetasploitScan(luigi.Task):
         # Load input file
         scope_obj = scheduled_scan_obj.scan_data
 
-        metasploit_scan_data: Optional[Dict[str, Any]] = None
-        metasploit_scan_args: Optional[List[str]] = None
+        # Parse module path and base datastore options from tool args.
+        # The module path is the first slash-containing, non-KEY=VALUE token.
+        # All remaining KEY=VALUE tokens become extra datastore options.
+        module_path: Optional[str] = None
+        additional_options: Dict[str, str] = {}
         if scheduled_scan_obj.current_tool.args:
-            metasploit_scan_args = scheduled_scan_obj.current_tool.args.split(
-                " ")
+            for token in scheduled_scan_obj.current_tool.args.split():
+                if '=' in token:
+                    key, _, val = token.partition('=')
+                    additional_options[key.strip()] = val.strip()
+                elif '/' in token and module_path is None:
+                    module_path = token.strip()
 
-        # Map to organize scans by port - only include ports in protocol map
+        if not module_path:
+            logging.getLogger(__name__).warning(
+                "No Metasploit module path found in tool args for scan ID %s" % scheduled_scan_obj.id)
+            metasploit_scan_data: Dict[str, Any] = {'metasploit_scan_list': []}
+            with open(meta_file_path, 'w') as meta_file_fd:
+                meta_file_fd.write(json.dumps(metasploit_scan_data))
+            return
+
+        # Map to organize scans by port
         port_scan_map: Dict[str, Dict[str, Any]] = {}
 
-        # Use original scope for comprehensive scanning
         target_map = scope_obj.host_port_obj_map
         port_num_list: List[str] = scope_obj.get_port_number_list_from_scope()
-
-        # Filter port list to only include ports with defined protocols
-        valid_port_list: List[str] = [
-            p for p in port_num_list if p in metasploit_protocol_map]
-
-        # Create scan for each subnet with supported ports
         subnet_map: Dict[int, Any] = scope_obj.subnet_map
+
         if len(target_map) > 0:
             # Process individual targets organized by port
             for target_key in target_map:
@@ -656,57 +673,44 @@ class MetasploitScan(luigi.Task):
                 port_obj = target_obj_dict['port_obj']
                 port_str = port_obj.port
 
-                # Skip ports not in protocol map
-                if port_str not in metasploit_protocol_map:
-                    continue
-
                 host_obj = target_obj_dict['host_obj']
                 ip_addr = host_obj.ipv4_addr
 
-                # Get or create scan object for this port
                 if port_str not in port_scan_map:
                     port_scan_map[port_str] = {
-                        'protocol': metasploit_protocol_map[port_str],
-                        'tool_args': metasploit_scan_args,
+                        'protocol': module_path,
                         'ip_set': set()
                     }
 
                 ip_set: Set[str] = port_scan_map[port_str]['ip_set']
-
-                # Add IP
                 ip_set.add(ip_addr)
 
-                # Add domain if different from IP
                 target_arr = target_key.split(":")
-                if target_arr[0] != ip_addr:
-                    domain_str = target_arr[0]
-                    ip_set.add(domain_str)
+                extra = target_arr[0]
+                # Only add the extra token if it's a routable FQDN (contains a dot)
+                # or a valid IP — bare NetBIOS/mDNS names like "ubuntu" won't resolve
+                # via Metasploit's RHOSTS resolver and produce empty results.
+                if extra != ip_addr and ('.' in extra):
+                    ip_set.add(extra)
 
         else:
-            # Full scope scanning when no specific targets - organize by supported ports
-            if len(valid_port_list) > 0:
+            # Full scope scanning when no specific targets
+            if len(port_num_list) > 0:
                 target_set: Set[str] = set()
 
-                # Collect all targets (subnets, hosts, domains)
                 for subnet_id in subnet_map:
                     subnet_obj = subnet_map[subnet_id]
-                    subnet_str: str = "%s/%s" % (subnet_obj.subnet,
-                                                 subnet_obj.mask)
-                    target_set.add(subnet_str)
+                    target_set.add("%s/%s" %
+                                   (subnet_obj.subnet, subnet_obj.mask))
 
-                # Get all hosts in scope
                 host_list = scope_obj.get_hosts(
                     [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
-
                 for host_obj in host_list:
-                    ip_addr = host_obj.ipv4_addr
-                    target_set.add(ip_addr)
+                    target_set.add(host_obj.ipv4_addr)
 
-                # Create a scan object for each supported port
-                for port_str in valid_port_list:
+                for port_str in port_num_list:
                     port_scan_map[port_str] = {
-                        'protocol': metasploit_protocol_map[port_str],
-                        'tool_args': metasploit_scan_args,
+                        'protocol': module_path,
                         'ip_set': target_set.copy()
                     }
 
@@ -721,28 +725,18 @@ class MetasploitScan(luigi.Task):
         use_ssl: bool = os.environ.get(
             "MSF_JSON_RPC_SSL", "").lower() in ("1", "true", "yes")
 
-        # Parse tool args as extra module datastore options (KEY=VALUE pairs)
-        additional_options: Dict[str, str] = {}
-        if metasploit_scan_args:
-            for arg in metasploit_scan_args:
-                if '=' in arg:
-                    key, _, val = arg.partition('=')
-                    additional_options[key.strip()] = val.strip()
-
         # Create and execute metasploit commands — one per port
         counter: int = 0
         futures: List[Any] = []
 
         if len(port_scan_map) == 0:
             logging.getLogger(__name__).warning(
-                "No valid ports found for Metasploit scan for scan ID %s" % scheduled_scan_obj.id)
+                "No scan targets found for Metasploit scan ID %s" % scheduled_scan_obj.id)
 
         for port_str in sorted(port_scan_map.keys()):
             port_obj = port_scan_map[port_str]
             metasploit_scan_inst: Dict[str, Any] = {}
-            port_id: str = port_obj.get('port_id')
-            host_id: str = port_obj.get('host_id')
-            module_path: str = port_obj['protocol']
+            module_path_for_port: str = port_obj['protocol']
 
             # Prepare output file
             metasploit_output_file: str = dir_path + os.path.sep + \
@@ -761,11 +755,14 @@ class MetasploitScan(luigi.Task):
                 for ip in ip_list:
                     in_file_fd.write(ip + "\n")
 
+            # Build per-port options: RPORT comes from the current port number
+            port_options: Dict[str, str] = dict(additional_options)
+            port_options['RPORT'] = port_str
+
             # Store scan metadata (protocol key is consumed by ImportMetasploitOutput)
             metasploit_scan_inst['output_file'] = metasploit_output_file
-            metasploit_scan_inst['protocol'] = module_path
-            metasploit_scan_inst['port_id'] = port_id
-            metasploit_scan_inst['host_id'] = host_id
+            metasploit_scan_inst['protocol'] = module_path_for_port
+            metasploit_scan_inst['port'] = port_str
             metasploit_scan_inst['ip_list'] = ip_list_path
             metasploit_scan_cmd_list.append(metasploit_scan_inst)
 
@@ -773,9 +770,9 @@ class MetasploitScan(luigi.Task):
             futures.append(scan_utils.executor.submit(
                 execute_msfrpc_commands,
                 ip_list=ip_list,
-                module_path=module_path,
+                module_path=module_path_for_port,
                 output_file=metasploit_output_file,
-                additional_options=additional_options if additional_options else None,
+                additional_options=port_options,
                 bearer_token=bearer_token,
                 msf_host=msf_host,
                 msf_port=msf_port,
@@ -790,15 +787,7 @@ class MetasploitScan(luigi.Task):
                 scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
             for future in futures:
-                result = future.result()
-                if result:
-                    status = result.get("result", {}).get("status", "")
-                    if status == "errored":
-                        error_msg = result.get("result", {}).get(
-                            "error", "unknown error")
-                        logging.getLogger(__name__).error(
-                            "Metasploit module errored for scan ID %s: %s" % (
-                                scheduled_scan_obj.id, error_msg))
+                future.result()
 
         # Store scan metadata
         metasploit_scan_data['metasploit_scan_list'] = metasploit_scan_cmd_list
@@ -869,209 +858,178 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                     if os.path.exists(metasploit_out) and os.path.getsize(metasploit_out) > 0:
 
                         try:
-                            # First pass: Consolidate all data from the Metasploit output.
-                            # Supports two formats:
-                            #   (a) JSON RPC module.results response (new) – structured JSON
-                            #       written by execute_msfrpc_commands.
-                            #   (b) Raw Metasploit console text (legacy) – lines prefixed
-                            #       with [*] / [+] / [-] / [!].
-                            # Structure: {(host, port, hostname, protocol, module_name): {messages: [], data: {...}}}
-                            consolidated_data: Dict[tuple, Dict[str, Any]] = {}
+                            # Output file contains raw console text written by
+                            # execute_msfrpc_commands (console API approach).
 
                             with open(metasploit_out, 'r') as output_file:
-                                raw_content = output_file.read()
+                                all_output = output_file.read()
 
-                            # Try to interpret the file as a JSON RPC module.results response.
-                            # If successful, extract the console message text from it so the
-                            # existing line-based parser can process it unchanged.
-                            all_output = raw_content
-                            json_result_details: Optional[Dict[str, Any]] = None
-                            try:
-                                rpc_response = json.loads(raw_content)
-                                rpc_inner = rpc_response.get("result", {})
-                                if isinstance(rpc_inner, dict) and "status" in rpc_inner:
-                                    if rpc_inner.get("status") == "errored":
-                                        logging.getLogger(__name__).warning(
-                                            "Module %s reported error: %s",
-                                            metasploit_scan_entry.get(
-                                                'protocol'),
-                                            rpc_inner.get("error", "unknown"))
-                                    inner_result = rpc_inner.get(
-                                        "result") or {}
-                                    all_output = inner_result.get(
-                                        "message", "") or ""
-                                    json_result_details = inner_result.get(
-                                        "details")
-                            except (json.JSONDecodeError, TypeError, AttributeError):
-                                pass  # plain-text console output — parse as-is
+                            logging.getLogger(__name__).debug(
+                                "Scan Output: \n%s" % all_output)
 
-                            # Parse console-style output lines
-                            # Expected format: [prefix] IP:PORT - Message
-                            # Prefixes: [*] info, [+] success, [-] error, [!] warning
+                            # Phase 1: Group output lines by IP address.
+                            # [prefix] lines that contain an IP set the current context;
+                            # non-prefixed lines (table data, continuation) are attributed
+                            # to the last seen IP so multi-line blocks stay together.
+                            # Expected prefixed format: [prefix] IP:PORT - Message
+                            #                       or: [prefix] IP - Message
+                            ip_lines_map: Dict[str, List[str]] = {}
+                            ip_port_map_local: Dict[str, str] = {}
+                            current_ip: Optional[str] = None
 
                             for line in all_output.split('\n'):
-                                line = line.strip()
-                                if not line:
-                                    continue
+                                stripped = line.strip()
+                                if stripped.startswith('[*]') or stripped.startswith('[+]') or \
+                                        stripped.startswith('[-]') or stripped.startswith('[!]'):
+                                    content = stripped[3:].strip()
+                                    # Pattern 1: IP:PORT - Message
+                                    ip_match = re.match(
+                                        r'^(\d+\.\d+\.\d+\.\d+):(\d+)\s+-\s+', content)
+                                    if ip_match:
+                                        ip = ip_match.group(1)
+                                        port = ip_match.group(2)
+                                        current_ip = ip
+                                        if ip not in ip_lines_map:
+                                            ip_lines_map[ip] = []
+                                            ip_port_map_local[ip] = port
+                                        ip_lines_map[ip].append(stripped)
+                                    else:
+                                        # Pattern 2: IP - Message
+                                        ip_match = re.match(
+                                            r'^(\d+\.\d+\.\d+\.\d+)\s+-\s+', content)
+                                        if ip_match:
+                                            ip = ip_match.group(1)
+                                            current_ip = ip
+                                            if ip not in ip_lines_map:
+                                                ip_lines_map[ip] = []
+                                                ip_port_map_local[ip] = str(
+                                                    metasploit_scan_entry.get('port', '0'))
+                                            ip_lines_map[ip].append(stripped)
+                                        # else: global status line (e.g. "Scanned X of Y hosts")
+                                        # — do not change current_ip context
+                                elif stripped and current_ip is not None:
+                                    # Non-prefixed content (table rows, continuation lines)
+                                    # belongs to the last IP we saw
+                                    ip_lines_map[current_ip].append(stripped)
 
-                                # Skip ASCII art, headers, and non-message lines
-                                if not line.startswith('['):
-                                    continue
+                            # Create/retrieve the CollectionModule object once per module path
+                            module_key = protocol
+                            if module_key not in module_id_map:
+                                module_obj = data_model.CollectionModule(
+                                    parent_id=tool_id)
+                                module_obj.collection_tool_instance_id = tool_instance_id
+                                module_obj.name = module_key.lower()
+                                ret_arr.append(module_obj)
+                                module_id_map[module_key] = module_obj.id
+                            temp_module_id = module_id_map[module_key]
 
-                                # Parse message prefix and determine type
-                                output_level = 'INFO'
-                                output_type = 'info'
-
-                                if line.startswith('[*]'):
-                                    output_level = 'INFO'
-                                    output_type = 'info'
-                                    message_start = 3
-                                elif line.startswith('[+]'):
-                                    output_level = 'SUCCESS'
-                                    output_type = 'success'
-                                    message_start = 3
-                                elif line.startswith('[-]'):
-                                    output_level = 'ERROR'
-                                    output_type = 'error'
-                                    message_start = 3
-                                elif line.startswith('[!]'):
-                                    output_level = 'WARNING'
-                                    output_type = 'warning'
-                                    message_start = 3
-                                else:
-                                    continue
-
-                                # Extract the rest of the line after the prefix
-                                content = line[message_start:].strip()
-
-                                # Try to extract IP and port from format: IP:PORT - Message or IP - Message
-                                ip_address = None
-                                port_str = None
-                                hostname = None
-                                script_output = content
-
-                                # Pattern 1: IP:PORT - Message
-                                match = re.match(
-                                    r'^(\d+\.\d+\.\d+\.\d+):(\d+)\s+-\s+(.+)$', content)
-                                if match:
-                                    ip_address = match.group(1)
-                                    port_str = match.group(2)
-                                    script_output = match.group(3)
-                                    hostname = ip_address
-                                else:
-                                    # Pattern 2: IP - Message
-                                    match = re.match(
-                                        r'^(\d+\.\d+\.\d+\.\d+)\s+-\s+(.+)$', content)
-                                    if match:
-                                        ip_address = match.group(1)
-                                        script_output = match.group(2)
-                                        hostname = ip_address
-                                        # Use port from scan entry if not in output
-                                        port_str = str(
-                                            metasploit_scan_entry.get('port', '0'))
-
-                                # Skip if no IP address found
-                                if not ip_address:
-                                    continue
-
-                                # Ensure port_str is set
-                                if not port_str:
-                                    port_str = str(
-                                        metasploit_scan_entry.get('port', '0'))
-
-                                # Extract OS information if present in message
-                                server_os = None
-                                os_match = re.search(
-                                    r'Host is running (.+?)(?:\s+\(build:|\s*$)', script_output)
-                                if os_match:
-                                    server_os = os_match.group(1).strip()
-
-                                module_name = metasploit_scan_entry.get(
-                                    'protocol')
-
-                                # Create consolidation key: (host, port, hostname, protocol, module_name, server_os)
-                                consolidation_key = (
-                                    ip_address, port_str, hostname, protocol, module_name, server_os)
-
-                                # Add or update consolidated data
-                                if consolidation_key not in consolidated_data:
-                                    consolidated_data[consolidation_key] = {
-                                        'messages': [],
-                                        'output_level': output_level,
-                                        'output_type': output_type,
-                                        'timestamps': []
-                                    }
-
-                                # Append message to the list for this consolidation key
-                                consolidated_data[consolidation_key]['messages'].append(
-                                    script_output)
-                                consolidated_data[consolidation_key]['timestamps'].append(
-                                    time.strftime('%Y-%m-%dT%H:%M:%S'))
-
-                            # Second pass: Create data model objects from consolidated data
                             # Track created objects to avoid duplicates
-                            # Key: IP address, Value: host_id
                             host_id_map: Dict[str, str] = {}
-                            # Key: (host_id, port), Value: port_id
                             port_id_map: Dict[tuple, str] = {}
-                            # Key: domain name, Value: domain_id
                             domain_id_map: Dict[str, str] = {}
-                            # Key: host_id, Value: (os_name, os_obj) - track OS objects to prevent duplicates
                             host_os_map: Dict[str, tuple] = {}
 
-                            for consolidation_key, consolidated_entry in consolidated_data.items():
-                                ip_address, port_str, hostname, protocol_out, module_name, server_os = consolidation_key
+                            # Phase 2: Build one data model entry per IP from its
+                            # grouped lines.
+                            for ip_address, ip_lines in ip_lines_map.items():
+                                port_str = ip_port_map_local.get(
+                                    ip_address,
+                                    str(metasploit_scan_entry.get('port', '0')))
+                                hostname = ip_address
+                                server_os = None
 
-                                # Create or retrieve Host object using IP address as key
+                                # Scan the IP's lines for OS information.
+                                # Priority: "Host is running" message > os.product table key
+                                # > os.family table key.
+                                for ln in ip_lines:
+                                    if ln.startswith('['):
+                                        # Check prefixed lines for "Host is running"
+                                        msg = ln[3:].strip()
+                                        os_match = re.search(
+                                            r'Host is running (.+?)(?:\s+\(build:|\s*$)', msg)
+                                        if os_match:
+                                            server_os = os_match.group(
+                                                1).strip()
+                                            break
+                                    else:
+                                        # Parse table rows: "os.product   Linux"
+                                        # Table columns are separated by 2+ spaces.
+                                        tbl = re.match(
+                                            r'^(os\.\w+)\s{2,}(\S[^\s]*)$', ln)
+                                        if tbl:
+                                            key, value = tbl.group(
+                                                1), tbl.group(2).strip()
+                                            if key == 'os.product' and not server_os:
+                                                server_os = value
+                                            elif key == 'os.family' and not server_os:
+                                                server_os = value
+
+                                # Resolve host_id / port_id from scope if available
+                                host_id: Optional[str] = None
+                                port_id: Optional[str] = None
+                                host_key = "%s:%s" % (ip_address, port_str)
+                                if host_key in scope_obj.host_port_obj_map:
+                                    host_port_dict = scope_obj.host_port_obj_map[host_key]
+                                    port_id = host_port_dict["port_obj"].id
+                                    host_id = host_port_dict["host_obj"].id
+                                elif ip_address in scope_obj.host_ip_id_map:
+                                    host_id = scope_obj.host_ip_id_map[ip_address]
+
+                                # Create or retrieve Host object
                                 if ip_address not in host_id_map:
-                                    # Create new Host object with proper IPv4/IPv6 handling
                                     ip_object = netaddr.IPAddress(ip_address)
-
-                                    host_obj = data_model.Host(id=None)
+                                    host_obj = data_model.Host(id=host_id)
                                     host_obj.collection_tool_instance_id = tool_instance_id
-
-                                    # Set appropriate IP address field based on version
                                     if ip_object.version == 4:
                                         host_obj.ipv4_addr = str(ip_object)
                                     elif ip_object.version == 6:
                                         host_obj.ipv6_addr = str(ip_object)
-
                                     host_id = host_obj.id
                                     host_id_map[ip_address] = host_id
-
-                                    # Add host object to results
                                     ret_arr.append(host_obj)
-
                                 else:
-                                    # Reuse existing host_id
                                     host_id = host_id_map[ip_address]
 
-                                # Handle OperatingSystem object - check if we should create or update
+                                # Create or retrieve Port object
+                                port_key = (host_id, port_str)
+                                if port_key not in port_id_map:
+                                    port_obj = data_model.Port(
+                                        parent_id=host_id, id=port_id)
+                                    port_obj.collection_tool_instance_id = tool_instance_id
+                                    port_obj.proto = 0
+                                    port_obj.port = port_str
+                                    port_id = port_obj.id
+                                    port_id_map[port_key] = port_id
+                                    ret_arr.append(port_obj)
+                                else:
+                                    port_id = port_id_map[port_key]
+
+                                # Store per-IP output with the resolved port_id
+                                ip_output_obj = data_model.CollectionModuleOutput(
+                                    parent_id=temp_module_id)
+                                ip_output_obj.collection_tool_instance_id = tool_instance_id
+                                ip_output_obj.output = '\n'.join(ip_lines)
+                                ip_output_obj.port_id = port_id
+                                ret_arr.append(ip_output_obj)
+
+                                # Handle OperatingSystem object
                                 if server_os:
-                                    # Parse server_os to extract name and version
-                                    # Format examples: "Windows Server 2016 Standard 14393", "Linux"
                                     os_name = server_os
                                     os_version = ''
-
-                                    # Split on whitespace and check if last token is numeric (version)
                                     parts = server_os.strip().split()
-                                    if len(parts) > 1 and parts[-1].isdigit():
-                                        # Last part is version number
+                                    # Last token may be a version (numeric or dotted, e.g. "10.2")
+                                    if len(parts) > 1 and re.match(r'^\d+(\.\d+)*$', parts[-1]):
                                         os_version = parts[-1]
                                         os_name = ' '.join(parts[:-1])
 
-                                    # Check if we already have an OS for this host
                                     should_create_os = False
                                     if host_id not in host_os_map:
-                                        # No OS exists for this host yet
                                         should_create_os = True
                                     else:
-                                        # OS exists - check if we should replace it
                                         existing_os_name, existing_os_obj = host_os_map[host_id]
-                                        # Replace if old name has "or" and new name doesn't
-                                        if ' or ' in existing_os_name.lower() and ' or ' not in os_name.lower():
+                                        if ' or ' in existing_os_name.lower() and \
+                                                ' or ' not in os_name.lower():
                                             should_create_os = True
-                                            # Remove old OS object from results
                                             ret_arr.remove(existing_os_obj)
 
                                     if should_create_os:
@@ -1079,79 +1037,24 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                                             parent_id=host_id)
                                         os_obj.collection_tool_instance_id = tool_instance_id
                                         os_obj.name = os_name
-
-                                        # Add version information if available
-                                        if len(os_version) > 0:
+                                        if os_version:
                                             os_obj.version = os_version
-
                                         ret_arr.append(os_obj)
-                                        # Track this OS object
                                         host_os_map[host_id] = (
                                             os_name, os_obj)
 
-                                # Create or retrieve Port object using (host_id, port) as key
-                                port_key = (host_id, port_str)
-                                if port_key not in port_id_map:
-                                    # Create new Port object with parent relationship to host
-                                    port_obj = data_model.Port(
-                                        parent_id=host_id, id=None)
-                                    port_obj.collection_tool_instance_id = tool_instance_id
-                                    # TCP protocol (0 = TCP, 1 = UDP)
-                                    port_obj.proto = 0
-                                    port_obj.port = port_str
-                                    port_id = port_obj.id
-                                    port_id_map[port_key] = port_id
-
-                                    # Add port object to results
-                                    ret_arr.append(port_obj)
-                                else:
-                                    # Reuse existing port_id
-                                    port_id = port_id_map[port_key]
-
-                                # Create or retrieve Domain object using domain name as key
+                                # Create or retrieve Domain object
                                 if ip_address != hostname:
                                     if hostname not in domain_id_map:
-                                        # Create new domain object linked to host
                                         domain_obj = data_model.Domain(
                                             parent_id=host_id)
                                         domain_obj.collection_tool_instance_id = tool_instance_id
                                         domain_obj.name = hostname
                                         domain_id = domain_obj.id
                                         domain_id_map[hostname] = domain_id
-
-                                        # Add domain object to results
                                         ret_arr.append(domain_obj)
                                     else:
-                                        # Reuse existing domain_id
                                         domain_id = domain_id_map[hostname]
-
-                                # Use module_name if present, otherwise use protocol for module identification
-                                module_key = module_name if module_name else protocol_out
-
-                                if module_key not in module_id_map:
-                                    module_obj = data_model.CollectionModule(
-                                        parent_id=tool_id)
-                                    module_obj.collection_tool_instance_id = tool_instance_id
-                                    module_obj.name = module_key.lower()
-
-                                    ret_arr.append(module_obj)
-                                    temp_module_id = module_obj.id
-                                    module_id_map[module_key] = temp_module_id
-                                else:
-                                    temp_module_id = module_id_map[module_key]
-
-                                # Concatenate all messages for this consolidation key
-                                consolidated_messages = '\n'.join(
-                                    consolidated_entry['messages'])
-
-                                # Add single module output with consolidated messages
-                                module_output_obj = data_model.CollectionModuleOutput(
-                                    parent_id=temp_module_id)
-                                module_output_obj.collection_tool_instance_id = tool_instance_id
-                                module_output_obj.output = consolidated_messages
-                                module_output_obj.port_id = port_id
-
-                                ret_arr.append(module_output_obj)
 
                         except Exception as e:
                             logging.getLogger(__name__).error(
