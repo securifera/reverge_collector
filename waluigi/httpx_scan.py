@@ -80,6 +80,7 @@ class Httpx(data_model.WaluigiTool):
         self.name: str = 'httpx'
         self.description: str = 'HTTPX is a fast and multi-purpose HTTP toolkit that allows you to run multiple requests in parallel.'
         self.project_url: str = "https://github.com/projectdiscovery/httpx"
+        self.tags = ['http-crawl', 'service-detection', 'fast']
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 4
         self.args: str = "-favicon -td -t 50 -timeout 3 -maxhr 5 -rstr 10000 -tls-grab"

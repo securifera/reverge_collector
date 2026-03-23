@@ -120,6 +120,7 @@ class Sqlmap(data_model.WaluigiTool):
             'taking over database servers'
         )
         self.project_url = "https://sqlmap.org/"
+        self.tags = ['vuln-scan']
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 12
         self.args = "--batch --level=1 --risk=1 --crawl=2"

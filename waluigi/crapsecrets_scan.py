@@ -135,6 +135,7 @@ class Crapsecrets(data_model.WaluigiTool):
         self.args = "-nh -t 3 -mrd 5 -avsk -fvsp"  # No hashcat
         self.description = 'A pure python library for identifying the use of known or very weak cryptographic secrets across a variety of web application platforms.'
         self.project_url = "https://github.com/irsdl/crapsecrets"
+        self.tags = ['vuln-scan']
         self.input_records = [data_model.ServerRecordType.PORT,
                               data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
         self.output_records = [data_model.ServerRecordType.VULNERABILITY]

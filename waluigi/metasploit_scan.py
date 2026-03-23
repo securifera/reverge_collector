@@ -278,6 +278,8 @@ class Metasploit(data_model.WaluigiTool):
         self.name: str = 'metasploit'
         self.description: str = 'Metasploit Framework is a penetration testing platform that interfaces with the msfrpc daemon to execute exploits, auxiliary modules, and post-exploitation tasks on a computer network.'
         self.project_url: str = "https://github.com/rapid7/metasploit-framework"
+        self.tags = ['vuln-scan', 'authenticated',
+                     'service-detection', 'exploitation']
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 6
         self.args: str = ""

@@ -121,6 +121,7 @@ class Pyshot(data_model.WaluigiTool):
         self.name = 'pyshot'
         self.description = 'A python library that can be used for taking screenshots of web pages using PhantomJS.'
         self.project_url = 'https://github.com/securifera/pyshot'
+        self.tags = ['screenshot', 'load-balancer-incompatible']
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 8
         self.args = ""

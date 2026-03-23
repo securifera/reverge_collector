@@ -75,6 +75,7 @@ class Nuclei(data_model.WaluigiTool):
         self.name: str = 'nuclei'
         self.description: str = 'Nuclei is a fast and flexible vulnerability scanner based on simple YAML based DSL. It allows users to create custom templates for scanning various protocols and services.'
         self.project_url: str = 'https://github.com/projectdiscovery/nuclei'
+        self.tags = ['vuln-scan', 'slow']
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 7
         self.args: str = "-ni -pt http -rl 50 -t http/technologies/fingerprinthub-web-fingerprints.yaml"

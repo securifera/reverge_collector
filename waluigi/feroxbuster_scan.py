@@ -119,6 +119,7 @@ class Feroxbuster(data_model.WaluigiTool):
         self.name = 'feroxbuster'
         self.description = 'Feroxbuster is a fast, simple, and flexible web directory scanner written in Rust'
         self.project_url = "https://github.com/epi052/feroxbuster"
+        self.tags = ['http-crawl']
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 10
         self.args = "--rate-limit 50 -s 200 -n --auto-bail"

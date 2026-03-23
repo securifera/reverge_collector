@@ -86,6 +86,7 @@ class Subfinder(data_model.WaluigiTool):
         self.name = 'subfinder'
         self.description = 'subfinder is a subdomain discovery tool that returns valid subdomains for websites, using passive online sources. It has a simple, modular architecture and is optimized for speed.'
         self.project_url = 'https://github.com/projectdiscovery/subfinder'
+        self.tags = ['passive', 'dns-enum']
         self.collector_type = data_model.CollectorType.PASSIVE.value
         self.scan_order = 1
         self.args = "-all"

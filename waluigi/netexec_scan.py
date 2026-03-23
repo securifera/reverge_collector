@@ -81,6 +81,8 @@ class Netexec(data_model.WaluigiTool):
         self.name: str = 'netexec'
         self.description: str = 'Netexec is a network scanning tool used to discover hosts and services on a computer network. It can be used to perform port scanning, service detection, and OS detection.'
         self.project_url: str = "https://github.com/Pennyw0rth/NetExec"
+        self.tags = ['service-detection',
+                     'authenticated', 'vuln-scan', 'exploitation', 'os-detection']
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 6
         self.args: str = ""
@@ -132,7 +134,8 @@ class Netexec(data_model.WaluigiTool):
         netexec_path = os.path.expanduser('~/.local/bin/netexec')
         if not os.path.exists(netexec_path):
             return None
-        result = process_wrapper(cmd_args=[netexec_path, '--version'], store_output=True)
+        result = process_wrapper(
+            cmd_args=[netexec_path, '--version'], store_output=True)
         if not result:
             return None
         version = (result.get('stdout', '') + result.get('stderr', '')).strip()

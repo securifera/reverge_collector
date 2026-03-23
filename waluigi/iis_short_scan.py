@@ -18,6 +18,7 @@ class IISShortnameScanner(data_model.WaluigiTool):
         self.name: str = 'iis_short_scan'
         self.description: str = 'IIS Shortname Scanner is a tool for discovering short filenames on IIS servers.'
         self.project_url: str = 'https://github.com/lijiejie/IIS_shortname_Scanner'
+        self.tags = ['vuln-scan', 'http-crawl']
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 8
         self.args: str = ""

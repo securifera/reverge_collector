@@ -69,6 +69,7 @@ class Python(data_model.WaluigiTool):
         self.name: str = 'python'
         self.description: str = 'Python is a versatile programming language that enables rapid development and automation.'
         self.project_url: str = 'https://www.python.org/'
+        self.tags = ['code-exec']
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 7
         self.args: str = ""

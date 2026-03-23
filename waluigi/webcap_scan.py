@@ -131,6 +131,7 @@ class Webcap(data_model.WaluigiTool):
         self.name = 'webcap'
         self.description = 'A python library that can be used for taking screenshots of web pages using Chrome and Webcap. Currently only the timeout and threads options can be set.'
         self.project_url = 'https://github.com/blacklanternsecurity/webcap'
+        self.tags = ['screenshot', 'load-balancer-compatible']
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 8
         self.args = "--timeout 5 --threads 5 --quality 20 --format jpeg"

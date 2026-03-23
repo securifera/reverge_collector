@@ -804,6 +804,7 @@ class WaluigiTool:
         self.args: Optional[str] = None
         self.description: Optional[str] = None
         self.project_url: Optional[str] = None
+        self.tags: List[str] = []
         self.input_records: List[ServerRecordType] = []
         self.output_records: List[ServerRecordType] = []
         self.scope_func: Optional[callable] = lambda: False
@@ -835,6 +836,7 @@ class WaluigiTool:
         ret_dict['args'] = self.args
         ret_dict['description'] = self.description
         ret_dict['project_url'] = self.project_url
+        ret_dict['tags'] = self.tags
         ret_dict['input_records'] = [
             input_type.value for input_type in self.input_records]
         ret_dict['output_records'] = [

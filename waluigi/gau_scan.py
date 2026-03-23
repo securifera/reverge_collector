@@ -100,6 +100,7 @@ class Gau(data_model.WaluigiTool):
         self.name = 'gau'
         self.description = "getallurls (gau) fetches known URLs from AlienVault's Open Threat Exchange, the Wayback Machine, Common Crawl, and URLScan for any given domain. Inspired by Tomnomnom's waybackurls."
         self.project_url = 'https://github.com/lc/gau'
+        self.tags = ['passive', 'http-crawl']
         self.collector_type = data_model.CollectorType.PASSIVE.value
         self.scan_order = 1
         # self.args = "--blacklist .png,.jpg,.gif,.ttf,.woff,.svg --retries 3 --timeout 5 --subs"

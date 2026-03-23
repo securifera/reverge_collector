@@ -95,6 +95,7 @@ class Shodan(data_model.WaluigiTool):
         self.name = 'shodan'
         self.description = "Shodan is a search engine for Internet-connected devices"
         self.project_url = 'https://www.shodan.io/'
+        self.tags = ['passive', 'port-scan', 'service-detection']
         self.collector_type = data_model.CollectorType.PASSIVE.value
         self.scan_order = 3
         self.args = ""

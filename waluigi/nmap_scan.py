@@ -81,6 +81,7 @@ class Nmap(data_model.WaluigiTool):
         self.name: str = 'nmap'
         self.description: str = 'Nmap is a network scanning tool used to discover hosts and services on a computer network. It can be used to perform port scanning, service detection, and OS detection.'
         self.project_url: str = "https://github.com/nmap/nmap"
+        self.tags = ['port-scan', 'service-detection', 'os-detection', 'slow']
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 6
         self.args: str = "-sT -sV --script +ssl-cert --script-args ssl=True"
