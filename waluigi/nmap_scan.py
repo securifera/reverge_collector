@@ -83,7 +83,7 @@ class Nmap(data_model.WaluigiTool):
         self.project_url: str = "https://github.com/nmap/nmap"
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 6
-        self.args: str = "-sV --script +ssl-cert --script-args ssl=True"
+        self.args: str = "-sT -sV --script +ssl-cert --script-args ssl=True"
         self.scan_func = Nmap.nmap_scan_func
         self.import_func = Nmap.nmap_import
         self.modules_func = Nmap.nmap_modules
@@ -568,7 +568,6 @@ class NmapScan(luigi.Task):
                 "2m",
                 "--script-args",
                 'http.useragent="%s"' % scan_utils.custom_user_agent,
-                "-sT",
                 "-p",
                 port_comma_list,
                 "-oX",
