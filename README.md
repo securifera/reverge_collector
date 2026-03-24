@@ -22,7 +22,7 @@
 ### Key Highlights
 
 - 🚀 **Distributed Architecture** - Scalable collector-manager design
-- 🔧 **Multi-Tool Integration** - Seamless integration with 10+ security tools
+- 🔧 **Multi-Tool Integration** - Seamless integration with 17 security tools
 - 📊 **Intelligent Optimization** - Smart scan ordering and result correlation
 - 🌐 **Web-Scale Scanning** - Handle massive target lists efficiently
 - 🔒 **Secure Communication** - Encrypted data transmission and API authentication
@@ -212,20 +212,25 @@ Comprehensive object-oriented representation:
 
 ## 🛠️ Supported Tools
 
-| Tool | Purpose | Integration | Status |
-|------|---------|-------------|--------|
-| **Masscan** | Fast port scanning | Native binary | ✅ Active |
-| **Nmap** | Comprehensive port scanning | python-libnmap | ✅ Active |
-| **HTTPX** | HTTP/HTTPS probing | Native binary | ✅ Active |
-| **Subfinder** | Subdomain enumeration | Native binary | ✅ Passive |
-| **Nuclei** | Vulnerability scanning | Native binary | ✅ Active |
-| **Feroxbuster** | Directory enumeration | Native binary | ✅ Active |
-| **Shodan** | Search engine integration | Python API | ✅ Passive |
-| **Pyshot** | Website Screenshot | PhantomJS | ✅ Active |
-| **Crap(Bad)Secrets** | Secret detection | Custom implementation | ✅ Active |
-| **WebCapture** | Website Screenshot | Chrome | ✅ Active |
-| **IP THC DNS** | Subdomain enumeration & reverse IP lookup | Python API | ✅ Passive |
-| **IIS Shortname Scanner** | Website enumeration using IIS Shortname | Python | ✅ Active |
+| Tool | Purpose | Integration | Type |
+|------|---------|-------------|------|
+| **[Masscan](https://github.com/robertdavidgraham/masscan)** | Fast port scanning | Native binary | ✅ Active |
+| **[Nmap](https://github.com/nmap/nmap)** | Comprehensive port scanning & service detection | Native binary | ✅ Active |
+| **[HTTPX](https://github.com/projectdiscovery/httpx)** | HTTP/HTTPS probing & fingerprinting | Native binary | ✅ Active |
+| **[Subfinder](https://github.com/projectdiscovery/subfinder)** | Subdomain enumeration via passive sources | Native binary | ✅ Passive |
+| **[Nuclei](https://github.com/projectdiscovery/nuclei)** | Template-based vulnerability scanning | Native binary | ✅ Active |
+| **[Feroxbuster](https://github.com/epi052/feroxbuster)** | Fast web directory & content enumeration | Native binary | ✅ Active |
+| **[Shodan](https://www.shodan.io/)** | Internet-wide search engine integration | Python API | ✅ Passive |
+| **[GAU](https://github.com/lc/gau)** | Fetch known URLs from passive sources | Native binary | ✅ Passive |
+| **[SQLMap](https://sqlmap.org/)** | Automated SQL injection detection & exploitation | Native binary | ✅ Active |
+| **[NetExec](https://github.com/Pennyw0rth/NetExec)** | Network service enumeration & authentication testing | Native binary | ✅ Active |
+| **[Metasploit](https://github.com/rapid7/metasploit-framework)** | Exploitation framework & vulnerability verification | JSON RPC | ✅ Active |
+| **[Pyshot](https://github.com/securifera/pyshot)** | Website screenshot capture | PhantomJS | ✅ Active |
+| **[Webcap](https://github.com/blacklanternsecurity/webcap)** | Website screenshot capture | Chrome | ✅ Active |
+| **[CrapSecrets](https://github.com/irsdl/crapsecrets)** | Cryptographic secret & weak credential detection | Python library | ✅ Active |
+| **[IIS Shortname Scanner](https://github.com/lijiejie/IIS_shortname_Scanner)** | IIS short filename enumeration | Python library | ✅ Active |
+| **[IP THC DNS](https://hackertarget.com/)** | Reverse IP lookup & subdomain enumeration | Python API | ✅ Passive |
+| **[Python](https://www.python.org/)** | Custom Python-based scan modules | Native | ✅ Active |
 
 ### Tool Execution Flow
 
@@ -424,6 +429,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 - **ProjectDiscovery** - For excellent security tools (HTTPX, Subfinder, Nuclei)
+- **Rapid7** - For Metasploit Framework, the industry-standard penetration testing platform
 - **Luigi** - For robust task orchestration framework
 - **Security Community** - For continuous feedback and contributions
 
