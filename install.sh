@@ -121,6 +121,9 @@ cd /tmp; curl -k -s https://api.github.com/repos/securifera/nmap/releases/latest
 cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o nuclei*.zip; sudo mv nuclei /usr/local/bin/ ; sudo rm nuclei*.zip
 sudo chmod +x /usr/local/bin/nuclei
 
+# Download nuclei templates so the template index exists on first run
+sudo nuclei -update-templates -silent 2>/dev/null || true
+
 # Install gau
 cd /tmp; curl -k -s https://api.github.com/repos/lc/gau/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf gau*.tar.gz ; sudo mv gau /usr/local/bin/ ; sudo rm gau*.tar.gz
 sudo chmod +x /usr/local/bin/gau
