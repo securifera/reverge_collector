@@ -28,7 +28,8 @@ def mock_update_collector_and_session_key():
                                                          'ipthc': '323482209708942791672081599309763638893',
                                                          'crapsecrets': '323482209708942791672081599309763638894',
                                                          'netexec': '323482209708942791672081599309763638895',
-                                                         'metasploit': '323482209708942791672081599309763638896'}}) as mock_update_collector, \
+                                                         'metasploit': '323482209708942791672081599309763638896',
+                                                         'sqlmap': '323482209708942791672081599309763638897'}}) as mock_update_collector, \
             patch.object(ReconManager, '_get_session_key', return_value='mock_session_key') as mock_get_session_key, \
             patch.object(ReconManager, 'update_scan_status', return_value=''):
         yield mock_update_collector, mock_get_session_key

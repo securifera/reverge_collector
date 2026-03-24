@@ -80,6 +80,7 @@ class Httpx(data_model.WaluigiTool):
         self.name: str = 'httpx'
         self.description: str = 'HTTPX is a fast and multi-purpose HTTP toolkit that allows you to run multiple requests in parallel.'
         self.project_url: str = "https://github.com/projectdiscovery/httpx"
+        self.tags = ['http-crawl', 'service-detection', 'fast']
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 4
         self.args: str = "-favicon -td -t 50 -timeout 3 -maxhr 5 -rstr 10000 -tls-grab"
@@ -419,6 +420,311 @@ class HttpXScan(luigi.Task):
             file_fd.write(json.dumps(results_dict))
 
 
+def parse_httpx_output(
+    output_file_list: List[str],
+    tool_instance_id: Optional[str] = None,
+    tool_id: Optional[str] = None,
+    scope_obj: Optional[Any] = None,
+) -> List[Any]:
+    """Parse httpx JSON output files and return data_model Record objects.
+
+    Args:
+        output_file_list: List of paths to httpx JSON output files.
+        tool_instance_id: Value for ``collection_tool_instance_id`` on each record.
+        tool_id:          Parent tool ID for CollectionModule records.
+        scope_obj:        Optional scan data for correlating IDs with existing
+                          records.  When ``None`` every record receives a fresh UUID.
+
+    Returns:
+        List of data_model Record objects.
+    """
+    hash_alg = hashlib.sha1
+    ret_arr: List[Any] = []
+    path_hash_map: Dict[str, Any] = {}
+    screenshot_hash_map: Dict[str, Any] = {}
+    cert_map: Dict[str, Any] = {}
+
+    for output_file in output_file_list:
+
+        obj_arr = scan_utils.parse_json_blob_file(output_file)
+        for httpx_scan in obj_arr:
+
+            target_str = httpx_scan['input']
+            port_str = httpx_scan['port']
+
+            host_id = None
+            host_key = '%s:%s' % (target_str, port_str)
+
+            if scope_obj is not None:
+                if host_key in scope_obj.host_port_obj_map:
+                    host_port_dict = scope_obj.host_port_obj_map[host_key]
+                    host_id = host_port_dict['host_obj'].id
+                elif target_str in scope_obj.host_ip_id_map:
+                    host_id = scope_obj.host_ip_id_map[target_str]
+
+            ip_str = None
+            if 'host_ip' in httpx_scan:
+                ip_str = httpx_scan['host_ip']
+            elif 'a' in httpx_scan:
+                ip_str = httpx_scan['a'][0]
+
+            if ip_str:
+                ip_object = netaddr.IPAddress(ip_str)
+                host_obj = data_model.Host()
+                host_obj.collection_tool_instance_id = tool_instance_id
+                if ip_object.version == 4:
+                    host_obj.ipv4_addr = str(ip_object)
+                elif ip_object.version == 6:
+                    host_obj.ipv6_addr = str(ip_object)
+                host_id = host_obj.id
+                ret_arr.append(host_obj)
+
+            if 'cname' in httpx_scan:
+                cname = httpx_scan['cname']
+                if type(cname) == list:
+                    for cname_inst in cname:
+                        domain_obj = data_model.Domain(parent_id=host_id)
+                        domain_obj.collection_tool_instance_id = tool_instance_id
+                        domain_obj.name = cname_inst
+                        ret_arr.append(domain_obj)
+
+            port_obj = data_model.Port(parent_id=host_id)
+            port_obj.collection_tool_instance_id = tool_instance_id
+            port_obj.proto = 0
+            port_obj.port = port_str
+
+            if 'scheme' in httpx_scan and httpx_scan['scheme'] == "https":
+                port_obj.secure = True
+
+            title = None
+            if 'title' in httpx_scan:
+                title = httpx_scan['title']
+
+            status_code = None
+            if 'status_code' in httpx_scan:
+                try:
+                    status_code = int(httpx_scan['status_code'])
+                except Exception:
+                    status_code = None
+
+            content_length = None
+            if 'content_length' in httpx_scan:
+                try:
+                    content_length = int(httpx_scan['content_length'])
+                except Exception:
+                    content_length = None
+
+            if (status_code and status_code == 400) and (
+                    title and 'The plain HTTP request was sent to HTTPS port' in title):
+                port_obj.secure = True
+
+            ret_arr.append(port_obj)
+
+            last_modified = None
+            if 'header' in httpx_scan:
+                header_dict = httpx_scan['header']
+                if 'last_modified' in header_dict:
+                    last_modified_str = header_dict['last_modified']
+                    try:
+                        timestamp_datetime = datetime.strptime(
+                            last_modified_str, "%A, %d-%b-%Y %H:%M:%S GMT")
+                        last_modified = int(time.mktime(
+                            timestamp_datetime.timetuple()))
+                    except Exception:
+                        pass
+
+            favicon_hash = None
+            tmp_fav_hash = None
+            if 'favicon' in httpx_scan:
+                favicon_hash = httpx_scan['favicon']
+                tmp_fav_hash = favicon_hash
+
+            web_path_id = None
+            if 'path' in httpx_scan:
+                web_path = httpx_scan['path'].strip()
+                hashobj = hash_alg()
+                hashobj.update(web_path.encode())
+                web_path_hash = binascii.hexlify(hashobj.digest()).decode()
+
+                if tmp_fav_hash and web_path == "/":
+                    favicon_hash = tmp_fav_hash
+
+                if web_path_hash in path_hash_map:
+                    path_obj = path_hash_map[web_path_hash]
+                else:
+                    path_obj = data_model.ListItem()
+                    path_obj.collection_tool_instance_id = tool_instance_id
+                    path_obj.web_path = web_path
+                    path_obj.web_path_hash = web_path_hash
+                    path_hash_map[web_path_hash] = path_obj
+                    ret_arr.append(path_obj)
+                web_path_id = path_obj.id
+
+            screenshot_id = None
+            if 'screenshot_bytes' in httpx_scan:
+                screenshot_bytes_b64 = httpx_scan['screenshot_bytes']
+                ss_data = base64.b64decode(screenshot_bytes_b64)
+                hashobj = hash_alg()
+                hashobj.update(ss_data)
+                image_hash_str = binascii.hexlify(hashobj.digest()).decode()
+
+                if image_hash_str in screenshot_hash_map:
+                    screenshot_obj = screenshot_hash_map[image_hash_str]
+                else:
+                    screenshot_obj = data_model.Screenshot()
+                    screenshot_obj.collection_tool_instance_id = tool_instance_id
+                    screenshot_obj.screenshot = screenshot_bytes_b64
+                    screenshot_obj.image_hash = image_hash_str
+                    screenshot_hash_map[image_hash_str] = screenshot_obj
+                    ret_arr.append(screenshot_obj)
+                screenshot_id = screenshot_obj.id
+
+            domain_used = None
+            if 'url' in httpx_scan:
+                u = urlparse(httpx_scan['url'].lower())
+                domain_used = u.netloc
+                if ":" in domain_used:
+                    domain_used = domain_used.split(":")[0]
+
+            cert_obj = None
+            if 'tls' in httpx_scan:
+                tls_data = httpx_scan['tls']
+                new_cert = True
+                if 'fingerprint_hash' in tls_data:
+                    cert_hash_map = tls_data['fingerprint_hash']
+                    if 'sha1' in cert_hash_map:
+                        sha_cert_hash = cert_hash_map['sha1']
+                        if sha_cert_hash in cert_map:
+                            cert_obj = cert_map[sha_cert_hash]
+                            new_cert = False
+                        else:
+                            cert_obj = data_model.Certificate(
+                                parent_id=port_obj.id)
+                            cert_obj.collection_tool_instance_id = tool_instance_id
+                            cert_obj.fingerprint_hash = sha_cert_hash
+                            cert_map[sha_cert_hash] = cert_obj
+
+                if new_cert:
+                    if 'subject_an' in tls_data:
+                        for dns_name in tls_data['subject_an']:
+                            domain_obj = cert_obj.add_domain(
+                                host_id, dns_name, tool_instance_id)
+                            if domain_obj:
+                                ret_arr.append(domain_obj)
+
+                    if 'host' in tls_data:
+                        common_name = tls_data['host']
+                        if type(common_name) == list:
+                            for common_name_inst in common_name:
+                                domain_obj = cert_obj.add_domain(
+                                    host_id, common_name_inst, tool_instance_id)
+                                if domain_obj:
+                                    ret_arr.append(domain_obj)
+                        else:
+                            domain_obj = cert_obj.add_domain(
+                                host_id, common_name, tool_instance_id)
+                            if domain_obj:
+                                ret_arr.append(domain_obj)
+
+                    if 'subject_cn' in tls_data:
+                        common_name = tls_data['subject_cn']
+                        if type(common_name) == list:
+                            for common_name_inst in common_name:
+                                domain_obj = cert_obj.add_domain(
+                                    host_id, common_name_inst, tool_instance_id)
+                                if domain_obj:
+                                    ret_arr.append(domain_obj)
+                        else:
+                            domain_obj = cert_obj.add_domain(
+                                host_id, common_name, tool_instance_id)
+                            if domain_obj:
+                                ret_arr.append(domain_obj)
+
+                    if 'issuer_dn' in tls_data:
+                        cert_obj.issuer = tls_data['issuer_dn']
+
+                    if 'not_before' in tls_data:
+                        dt = datetime.strptime(
+                            tls_data['not_before'], '%Y-%m-%dT%H:%M:%SZ')
+                        cert_obj.issued = int(time.mktime(dt.timetuple()))
+
+                    if 'not_after' in tls_data:
+                        dt = datetime.strptime(
+                            tls_data['not_after'], '%Y-%m-%dT%H:%M:%SZ')
+                        cert_obj.expires = int(time.mktime(dt.timetuple()))
+
+                    ret_arr.append(cert_obj)
+
+            endpoint_domain_id = None
+            if cert_obj and domain_used in cert_obj.domain_name_id_map:
+                endpoint_domain_id = cert_obj.domain_name_id_map[domain_used]
+
+            component_obj = data_model.WebComponent(parent_id=port_obj.id)
+            component_obj.collection_tool_instance_id = tool_instance_id
+            component_obj.name = 'http'
+            ret_arr.append(component_obj)
+
+            if 'tech' in httpx_scan:
+                for tech_entry in httpx_scan['tech']:
+                    component_obj = data_model.WebComponent(
+                        parent_id=port_obj.id)
+                    component_obj.collection_tool_instance_id = tool_instance_id
+                    if ":" in tech_entry:
+                        tech_parts = tech_entry.split(":")
+                        component_obj.name = tech_parts[0]
+                        component_obj.version = tech_parts[1]
+                    else:
+                        component_obj.name = tech_entry
+                    ret_arr.append(component_obj)
+
+            if 'raw_header' in httpx_scan:
+                output = httpx_scan['raw_header']
+                if output and len(output) > 0:
+                    module_obj = data_model.CollectionModule(parent_id=tool_id)
+                    module_obj.collection_tool_instance_id = tool_instance_id
+                    module_obj.name = 'http-response-headers'
+                    ret_arr.append(module_obj)
+                    module_output_obj = data_model.CollectionModuleOutput(
+                        parent_id=module_obj.id)
+                    module_output_obj.collection_tool_instance_id = tool_instance_id
+                    module_output_obj.output = output
+                    module_output_obj.port_id = port_obj.id
+                    ret_arr.append(module_output_obj)
+
+            if 'body' in httpx_scan:
+                output = httpx_scan['body']
+                if output and len(output) > 0:
+                    module_obj = data_model.CollectionModule(parent_id=tool_id)
+                    module_obj.collection_tool_instance_id = tool_instance_id
+                    module_obj.name = 'http-response-body'
+                    ret_arr.append(module_obj)
+                    module_output_obj = data_model.CollectionModuleOutput(
+                        parent_id=module_obj.id)
+                    module_output_obj.collection_tool_instance_id = tool_instance_id
+                    module_output_obj.output = output
+                    module_output_obj.port_id = port_obj.id
+                    ret_arr.append(module_output_obj)
+
+            http_endpoint_obj = data_model.HttpEndpoint(parent_id=port_obj.id)
+            http_endpoint_obj.collection_tool_instance_id = tool_instance_id
+            http_endpoint_obj.web_path_id = web_path_id
+            ret_arr.append(http_endpoint_obj)
+
+            http_endpoint_data_obj = data_model.HttpEndpointData(
+                parent_id=http_endpoint_obj.id)
+            http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
+            http_endpoint_data_obj.domain_id = endpoint_domain_id
+            http_endpoint_data_obj.title = title
+            http_endpoint_data_obj.status = status_code
+            http_endpoint_data_obj.last_modified = last_modified
+            http_endpoint_data_obj.screenshot_id = screenshot_id
+            http_endpoint_data_obj.fav_icon_hash = favicon_hash
+            http_endpoint_data_obj.content_length = content_length
+            ret_arr.append(http_endpoint_data_obj)
+
+    return ret_arr
+
+
 @inherits(HttpXScan)
 class ImportHttpXOutput(data_model.ImportToolXOutput):
     """
@@ -477,359 +783,9 @@ class ImportHttpXOutput(data_model.ImportToolXOutput):
                 "Httpx scan output file is empty")
             return
 
-        hash_alg = hashlib.sha1
         scan_data_dict = json.loads(data)
-
-        # Get data and map
-        ret_arr = []
         output_file_list = scan_data_dict['output_file_list']
+        ret_arr = parse_httpx_output(
+            output_file_list, tool_instance_id, tool_id, scope_obj)
 
-        path_hash_map = {}
-        screenshot_hash_map = {}
-        cert_map = {}
-
-        for output_file in output_file_list:
-
-            obj_arr = scan_utils.parse_json_blob_file(output_file)
-            for httpx_scan in obj_arr:
-
-                # Attempt to get the port id
-                target_str = httpx_scan['input']
-                port_str = httpx_scan['port']
-
-                host_id = None
-                host_key = '%s:%s' % (target_str, port_str)
-
-                # See if we have an host/port mapping already for this ip and port
-                if host_key in scheduled_scan_obj.scan_data.host_port_obj_map:
-                    host_port_dict = scheduled_scan_obj.scan_data.host_port_obj_map[host_key]
-                    host_id = host_port_dict['host_obj'].id
-                elif target_str in scheduled_scan_obj.scan_data.host_ip_id_map:
-                    host_id = scheduled_scan_obj.scan_data.host_ip_id_map[target_str]
-
-                ip_str = None
-                if 'host_ip' in httpx_scan:
-                    ip_str = httpx_scan['host_ip']
-                elif 'a' in httpx_scan:
-                    ip_str = httpx_scan['a'][0]
-
-                # If we have an IP somewhere in the scan
-                if ip_str:
-                    ip_object = netaddr.IPAddress(ip_str)
-
-                    # Create Host object
-                    host_obj = data_model.Host()
-                    host_obj.collection_tool_instance_id = tool_instance_id
-
-                    ip_object = netaddr.IPAddress(ip_str)
-                    if ip_object.version == 4:
-                        host_obj.ipv4_addr = str(ip_object)
-                    elif ip_object.version == 6:
-                        host_obj.ipv6_addr = str(ip_object)
-
-                    host_id = host_obj.id
-
-                    # Add host
-                    ret_arr.append(host_obj)
-
-                # If cname
-                if 'cname' in httpx_scan:
-                    cname = httpx_scan['cname']
-                    if type(cname) == list:
-                        for cname_inst in cname:
-                            domain_obj = data_model.Domain(
-                                parent_id=host_id)
-                            domain_obj.collection_tool_instance_id = tool_instance_id
-                            domain_obj.name = cname_inst
-                            ret_arr.append(domain_obj)
-
-                # Create Port object
-                port_obj = data_model.Port(
-                    parent_id=host_id)
-                port_obj.collection_tool_instance_id = tool_instance_id
-                port_obj.proto = 0
-                port_obj.port = port_str
-
-                # If TLS
-                if 'scheme' in httpx_scan and httpx_scan['scheme'] == "https":
-                    port_obj.secure = True
-
-                # Set data
-                title = None
-                if 'title' in httpx_scan:
-                    title = httpx_scan['title']
-
-                status_code = None
-                if 'status_code' in httpx_scan:
-                    try:
-                        status_code = int(httpx_scan['status_code'])
-                    except:
-                        status_code = None
-
-                content_length = None
-                if 'content_length' in httpx_scan:
-                    try:
-                        content_length = int(httpx_scan['content_length'])
-                    except:
-                        content_length = None
-
-                # Add secure flag if a 400 was returned and it has a certain title
-                if (status_code and status_code == 400) and (title and 'The plain HTTP request was sent to HTTPS port' in title):
-                    port_obj.secure = True
-
-                # Add port
-                ret_arr.append(port_obj)
-
-                last_modified = None
-                if 'header' in httpx_scan:
-                    header_dict = httpx_scan['header']
-                    if 'last_modified' in header_dict:
-                        last_modified_str = header_dict['last_modified']
-                        try:
-                            timestamp_datetime = datetime.strptime(
-                                last_modified_str, "%A, %d-%b-%Y %H:%M:%S GMT")
-                            last_modified = int(time.mktime(
-                                timestamp_datetime.timetuple()))
-                        except:
-                            pass
-
-                favicon_hash = None
-                tmp_fav_hash = None
-                if 'favicon' in httpx_scan:
-                    favicon_hash = httpx_scan['favicon']
-                    tmp_fav_hash = favicon_hash
-
-                web_path_id = None
-                if 'path' in httpx_scan:
-                    web_path = httpx_scan['path'].strip()
-                    hashobj = hash_alg()
-                    hashobj.update(web_path.encode())
-                    path_hash = hashobj.digest()
-                    hex_str = binascii.hexlify(path_hash).decode()
-                    web_path_hash = hex_str
-
-                    # Attach the favicon to the root path
-                    if tmp_fav_hash and web_path == "/":
-                        favicon_hash = tmp_fav_hash
-
-                    if web_path_hash in path_hash_map:
-                        path_obj = path_hash_map[web_path_hash]
-                    else:
-                        path_obj = data_model.ListItem()
-                        path_obj.collection_tool_instance_id = tool_instance_id
-                        path_obj.web_path = web_path
-                        path_obj.web_path_hash = web_path_hash
-
-                        # Add to map and the object list
-                        path_hash_map[web_path_hash] = path_obj
-                        ret_arr.append(path_obj)
-
-                    web_path_id = path_obj.id
-
-                screenshot_id = None
-                if 'screenshot_bytes' in httpx_scan:
-                    screenshot_bytes_b64 = httpx_scan['screenshot_bytes']
-                    ss_data = base64.b64decode(screenshot_bytes_b64)
-                    hashobj = hash_alg()
-                    hashobj.update(ss_data)
-                    image_hash = hashobj.digest()
-                    image_hash_str = binascii.hexlify(image_hash).decode()
-
-                    if image_hash_str in screenshot_hash_map:
-                        screenshot_obj = screenshot_hash_map[image_hash_str]
-                    else:
-                        screenshot_obj = data_model.Screenshot()
-                        screenshot_obj.collection_tool_instance_id = tool_instance_id
-                        screenshot_obj.screenshot = screenshot_bytes_b64
-                        screenshot_obj.image_hash = image_hash_str
-
-                        # Add to map and the object list
-                        screenshot_hash_map[image_hash_str] = screenshot_obj
-                        ret_arr.append(screenshot_obj)
-
-                    screenshot_id = screenshot_obj.id
-
-                domain_used = None
-                if 'url' in httpx_scan:
-                    url = httpx_scan['url'].lower()
-                    u = urlparse(url)
-                    domain_used = u.netloc
-                    if ":" in domain_used:
-                        domain_used = domain_used.split(":")[0]
-
-                # Add domains
-                cert_obj = None
-                if 'tls' in httpx_scan:
-                    tls_data = httpx_scan['tls']
-
-                    new_cert = True
-                    if 'fingerprint_hash' in tls_data:
-                        cert_hash_map = tls_data['fingerprint_hash']
-                        if 'sha1' in cert_hash_map:
-                            sha_cert_hash = cert_hash_map['sha1']
-                            if sha_cert_hash in cert_map:
-                                cert_obj = cert_map[sha_cert_hash]
-                                new_cert = False
-                            else:
-                                # Create a certificate object
-                                cert_obj = data_model.Certificate(
-                                    parent_id=port_obj.id)
-                                cert_obj.collection_tool_instance_id = tool_instance_id
-                                cert_obj.fingerprint_hash = sha_cert_hash
-                                cert_map[sha_cert_hash] = cert_obj
-
-                    # Only add it if it's new
-                    if new_cert:
-                        if 'subject_an' in tls_data:
-                            dns_names = tls_data['subject_an']
-                            for dns_name in dns_names:
-                                domain_obj = cert_obj.add_domain(
-                                    host_id, dns_name, tool_instance_id)
-                                if domain_obj:
-                                    ret_arr.append(domain_obj)
-
-                        if 'host' in tls_data:
-                            common_name = tls_data['host']
-                            if type(common_name) == list:
-                                for common_name_inst in common_name:
-                                    domain_obj = cert_obj.add_domain(host_id,
-                                                                     common_name_inst, tool_instance_id)
-                                    if domain_obj:
-                                        ret_arr.append(domain_obj)
-                            else:
-                                domain_obj = cert_obj.add_domain(
-                                    host_id, common_name, tool_instance_id)
-                                if domain_obj:
-                                    ret_arr.append(domain_obj)
-
-                        if 'subject_cn' in tls_data:
-                            common_name = tls_data['subject_cn']
-                            if type(common_name) == list:
-                                for common_name_inst in common_name:
-                                    domain_obj = cert_obj.add_domain(host_id,
-                                                                     common_name_inst, tool_instance_id)
-                                    if domain_obj:
-                                        ret_arr.append(domain_obj)
-
-                            else:
-                                domain_obj = cert_obj.add_domain(
-                                    host_id, common_name, tool_instance_id)
-                                if domain_obj:
-                                    ret_arr.append(domain_obj)
-
-                        if 'issuer_dn' in tls_data:
-                            issuer = tls_data['issuer_dn']
-                            cert_obj.issuer = issuer
-
-                        if 'not_before' in tls_data:
-                            issued = tls_data['not_before']
-                            # Parse the time string into a datetime object in UTC
-                            dt = datetime.strptime(
-                                issued, '%Y-%m-%dT%H:%M:%SZ')
-                            cert_obj.issued = int(time.mktime(dt.timetuple()))
-
-                        if 'not_after' in tls_data:
-                            expires = tls_data['not_after']
-                            dt = datetime.strptime(
-                                expires, '%Y-%m-%dT%H:%M:%SZ')
-                            cert_obj.expires = int(time.mktime(dt.timetuple()))
-
-                        # Add the cert object
-                        ret_arr.append(cert_obj)
-
-                endpoint_domain_id = None
-                if cert_obj and domain_used in cert_obj.domain_name_id_map:
-                    # logging.getLogger(__name__).debug("Found domain in cert: %s" % domain_used)
-                    endpoint_domain_id = cert_obj.domain_name_id_map[domain_used]
-
-                # Add http component
-                component_obj = data_model.WebComponent(
-                    parent_id=port_obj.id)
-                component_obj.collection_tool_instance_id = tool_instance_id
-                component_obj.name = 'http'
-                ret_arr.append(component_obj)
-
-                if 'tech' in httpx_scan:
-                    tech_list = httpx_scan['tech']
-                    for tech_entry in tech_list:
-
-                        component_obj = data_model.WebComponent(
-                            parent_id=port_obj.id)
-                        component_obj.collection_tool_instance_id = tool_instance_id
-
-                        if ":" in tech_entry:
-                            tech_entry_arr = tech_entry.split(":")
-                            component_obj.name = tech_entry_arr[0]
-                            component_obj.version = tech_entry_arr[1]
-                        else:
-                            component_obj.name = tech_entry
-
-                        ret_arr.append(component_obj)
-
-                # Add collection module
-                if 'raw_header' in httpx_scan:
-                    output = httpx_scan['raw_header']
-                    if output and len(output) > 0:
-                        module_obj = data_model.CollectionModule(
-                            parent_id=tool_id)
-                        module_obj.collection_tool_instance_id = tool_instance_id
-                        module_obj.name = 'http-response-headers'
-
-                        ret_arr.append(module_obj)
-                        temp_module_id = module_obj.id
-
-                        # Add module output
-                        module_output_obj = data_model.CollectionModuleOutput(
-                            parent_id=temp_module_id)
-                        module_output_obj.collection_tool_instance_id = tool_instance_id
-                        module_output_obj.output = output
-                        module_output_obj.port_id = port_obj.id
-
-                        ret_arr.append(module_output_obj)
-
-                # Add http body
-                if 'body' in httpx_scan:
-                    output = httpx_scan['body']
-                    if output and len(output) > 0:
-                        module_obj = data_model.CollectionModule(
-                            parent_id=tool_id)
-                        module_obj.collection_tool_instance_id = tool_instance_id
-                        module_obj.name = 'http-response-body'
-
-                        ret_arr.append(module_obj)
-                        temp_module_id = module_obj.id
-
-                        # Add module output
-                        module_output_obj = data_model.CollectionModuleOutput(
-                            parent_id=temp_module_id)
-                        module_output_obj.collection_tool_instance_id = tool_instance_id
-                        module_output_obj.output = output
-                        module_output_obj.port_id = port_obj.id
-
-                        ret_arr.append(module_output_obj)
-
-                # Add http endpoint
-                http_endpoint_obj = data_model.HttpEndpoint(
-                    parent_id=port_obj.id)
-                http_endpoint_obj.collection_tool_instance_id = tool_instance_id
-                http_endpoint_obj.web_path_id = web_path_id
-
-                # Add the endpoint
-                ret_arr.append(http_endpoint_obj)
-
-                http_endpoint_data_obj = data_model.HttpEndpointData(
-                    parent_id=http_endpoint_obj.id)
-                http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
-                http_endpoint_data_obj.domain_id = endpoint_domain_id
-                http_endpoint_data_obj.title = title
-                http_endpoint_data_obj.status = status_code
-                http_endpoint_data_obj.last_modified = last_modified
-                http_endpoint_data_obj.screenshot_id = screenshot_id
-                http_endpoint_data_obj.fav_icon_hash = favicon_hash
-                http_endpoint_data_obj.content_length = content_length
-
-                # Add the endpoint data
-                ret_arr.append(http_endpoint_data_obj)
-
-        # Import, Update, & Save
         self.import_results(scheduled_scan_obj, ret_arr)

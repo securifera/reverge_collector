@@ -49,8 +49,10 @@ Requirements (collector-side):
 
 import asyncio
 import hmac
+import json
 import logging
 import os
+from typing import Any, Dict, Optional
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -264,6 +266,180 @@ async def list_directory(path: str = ".") -> str:
         return f"[ERROR] permission denied: {path}"
     except Exception as exc:
         return f"[ERROR] {exc}"
+
+
+# ---------------------------------------------------------------------------
+# Optional Waluigi / Reverge API integration
+# ---------------------------------------------------------------------------
+try:
+    import requests as _requests
+    from waluigi import tool_utils as _tool_utils
+
+    _WALUIGI_AVAILABLE = True
+except ImportError as _import_err:
+    _WALUIGI_AVAILABLE = False
+    _import_err_msg = str(_import_err)
+
+
+# ---------------------------------------------------------------------------
+# MCP tool: import_to_reverge
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def import_to_reverge(
+    tool_name: str,
+    output_file_path: str,
+    scan_id: str,
+    tool_id: str,
+    reverge_url: str = "",
+    reverge_token: str = "",
+) -> str:
+    """Parse a scan tool output file and import the results into the Reverge database.
+
+    Selects the correct parser based on *tool_name*, then authenticates with
+    the Reverge management server (RSA/AES key exchange) and POSTs the
+    encrypted records to ``/api/data/import``.
+
+    Typical workflow:
+    1. Use the ``shell`` tool to run a scan and write its output to a file.
+    2. Call this tool with that file path to push the parsed results to Reverge.
+
+    Supported tool names: ``nmap``
+
+    Args:
+        tool_name:        Name of the scan tool that produced the output file.
+                          Determines which parser is used (e.g. ``"nmap"``).
+        output_file_path: Absolute path to the scan output file on disk.
+        scan_id:          Reverge scan ID to associate the results with.
+        tool_id:          Reverge tool ID that produced the results.
+        reverge_url:      Base URL of the Reverge management server.  Defaults
+                          to the ``REVERGE_MANAGER_URL`` environment variable.
+        reverge_token:    API bearer token for the Reverge server.  Defaults to
+                          the ``REVERGE_API_TOKEN`` environment variable.
+    """
+    if not _WALUIGI_AVAILABLE:
+        return json.dumps(
+            {"error": "Waluigi integration not available: " + _import_err_msg}
+        )
+
+    # ---------------------------------------------------------------------------
+    # Parser dispatch
+    # ---------------------------------------------------------------------------
+    _PARSERS = {
+        "nmap": _tool_utils.parse_nmap_xml_to_jsonable,
+        "masscan": _tool_utils.parse_masscan_xml_to_jsonable,
+        "httpx": _tool_utils.parse_httpx_output_to_jsonable,
+        "nuclei": _tool_utils.parse_nuclei_output_to_jsonable,
+        "shodan": _tool_utils.parse_shodan_output_to_jsonable,
+        "feroxbuster": _tool_utils.parse_feroxbuster_output_to_jsonable,
+        "subfinder": _tool_utils.parse_subfinder_output_to_jsonable,
+        "iis_short": _tool_utils.parse_iis_short_scan_output_to_jsonable,
+        "ip_thc": _tool_utils.parse_ip_thc_output_to_jsonable,
+        "gau": _tool_utils.parse_gau_output_to_jsonable,
+        "crapsecrets": _tool_utils.parse_crapsecrets_output_to_jsonable,
+        "webcap": _tool_utils.parse_webcap_output_to_jsonable,
+        "netexec": _tool_utils.parse_netexec_output_to_jsonable,
+        "python": _tool_utils.parse_python_scan_output_to_jsonable,
+    }
+
+    parser = _PARSERS.get(tool_name.lower().strip())
+    if parser is None:
+        return json.dumps(
+            {
+                "error": "Unsupported tool_name %r. Supported values: %s"
+                % (tool_name, ", ".join(sorted(_PARSERS)))
+            }
+        )
+
+    url = (reverge_url or os.environ.get(
+        "REVERGE_MANAGER_URL", "")).rstrip("/")
+    token = reverge_token or os.environ.get("REVERGE_API_TOKEN", "")
+
+    if not url:
+        return json.dumps(
+            {"error": "reverge_url not provided and REVERGE_MANAGER_URL not set"}
+        )
+    if not token:
+        return json.dumps(
+            {"error": "reverge_token not provided and REVERGE_API_TOKEN not set"}
+        )
+
+    try:
+        obj_list = await asyncio.to_thread(parser, output_file_path)
+    except FileNotFoundError:
+        return json.dumps({"error": "Output file not found: %s" % output_file_path})
+    except Exception as exc:
+        logger.exception("import_to_reverge: file parse failed")
+        return json.dumps({"error": "Parse error: %s" % exc})
+
+    if not obj_list:
+        return json.dumps({"status": "ok", "message": "No records to import", "imported": 0})
+
+    headers: Dict[str, str] = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; AS; rv:11.0) like Gecko"
+        ),
+        "Authorization": "Bearer " + token,
+    }
+
+    try:
+        session_key = await asyncio.to_thread(
+            _tool_utils.get_session_key, url, headers
+        )
+    except Exception as exc:
+        logger.exception("import_to_reverge: session key exchange failed")
+        return json.dumps({"error": "Session key exchange failed: %s" % exc})
+
+    payload = json.dumps(
+        {"tool_id": tool_id, "scan_id": scan_id, "obj_list": obj_list}
+    ).encode()
+    b64_enc = await asyncio.to_thread(_tool_utils.encrypt_data, session_key, payload)
+
+    def _post_import():
+        return _requests.post(
+            "%s/api/data/import" % url,
+            headers=headers,
+            json={"data": b64_enc},
+            verify=False,
+            timeout=60,
+        )
+
+    try:
+        r = await asyncio.to_thread(_post_import)
+    except Exception as exc:
+        logger.exception("import_to_reverge: HTTP POST failed")
+        return json.dumps({"error": "HTTP request failed: %s" % exc})
+
+    if r.status_code != 200:
+        return json.dumps(
+            {
+                "error": "Reverge server returned HTTP %d" % r.status_code,
+                "body": r.text[:1024],
+            }
+        )
+
+    updated_records: Any = []
+    if r.content:
+        try:
+            content = r.json()
+            if "data" in content:
+                raw = await asyncio.to_thread(
+                    _tool_utils.decrypt_data, session_key, content["data"]
+                )
+                updated_records = json.loads(raw)
+        except Exception as exc:
+            logger.warning(
+                "import_to_reverge: could not decrypt server response: %s", exc
+            )
+
+    return json.dumps(
+        {
+            "status": "ok",
+            "imported": len(obj_list),
+            "server_response": updated_records,
+        },
+        indent=2,
+    )
 
 
 # ---------------------------------------------------------------------------

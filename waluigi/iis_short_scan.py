@@ -18,6 +18,7 @@ class IISShortnameScanner(data_model.WaluigiTool):
         self.name: str = 'iis_short_scan'
         self.description: str = 'IIS Shortname Scanner is a tool for discovering short filenames on IIS servers.'
         self.project_url: str = 'https://github.com/lijiejie/IIS_shortname_Scanner'
+        self.tags = ['vuln-scan', 'http-crawl']
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 8
         self.args: str = ""
@@ -233,6 +234,56 @@ class IISShortScan(luigi.Task):
             file_fd.write(json.dumps(port_id_results_map))
 
 
+def parse_iis_short_scan_output(
+    output_file: str,
+    tool_instance_id: Optional[str] = None,
+    tool_id: Optional[str] = None,
+) -> List[Any]:
+    """Parse an IIS Shortname Scanner JSON output file and return data_model Record objects."""
+
+    with open(output_file, 'r') as file_fd:
+        data = file_fd.read()
+
+    ret_arr: List[Any] = []
+    if len(data) > 0:
+        module_obj = data_model.CollectionModule(parent_id=tool_id)
+        module_obj.collection_tool_instance_id = tool_instance_id
+        module_obj.name = "iis-shortname-scan"
+        module_obj.args = ''
+        ret_arr.append(module_obj)
+        module_id = module_obj.id
+
+        result_map = json.loads(data)
+        for port_id in result_map.keys():
+            result_entry = result_map[port_id]
+            result_meta_data = result_entry.get('meta_data', [])
+            host_id = result_meta_data.get('host_id', None)
+            ip_addr = result_meta_data.get('ip_addr', None)
+            port_str = result_meta_data.get('port_str', None)
+            result_entry_list = result_entry.get('results', [])
+
+            host_obj = data_model.Host(id=host_id)
+            host_obj.collection_tool_instance_id = tool_instance_id
+            host_obj.ipv4_addr = ip_addr
+            ret_arr.append(host_obj)
+
+            port_obj = data_model.Port(parent_id=host_id, id=port_id)
+            port_obj.collection_tool_instance_id = tool_instance_id
+            port_obj.proto = 0
+            port_obj.port = port_str
+            ret_arr.append(port_obj)
+
+            if module_id:
+                module_output_obj = data_model.CollectionModuleOutput(
+                    parent_id=module_id)
+                module_output_obj.collection_tool_instance_id = tool_instance_id
+                module_output_obj.output = json.dumps(result_entry_list)
+                module_output_obj.port_id = port_id
+                ret_arr.append(module_output_obj)
+
+    return ret_arr
+
+
 @inherits(IISShortScan)
 class ImportIISShortScannerOutput(data_model.ImportToolXOutput):
     """
@@ -267,60 +318,8 @@ class ImportIISShortScannerOutput(data_model.ImportToolXOutput):
         """
 
         scheduled_scan_obj = self.scan_input
-        tool_instance_id: int = scheduled_scan_obj.current_tool_instance_id
-
-        # Import the ports to the manager
-        tool_id: int = scheduled_scan_obj.current_tool.id
-
-        python_output_file: str = self.input().path
-        with open(python_output_file, 'r') as file_fd:
-            data: str = file_fd.read()
-
-        ret_arr: List[Any] = []
-        if len(data) > 0:
-
-            # Add collection module for non-module scans
-            module_obj = data_model.CollectionModule(
-                parent_id=tool_id)
-            module_obj.collection_tool_instance_id = tool_instance_id
-            module_obj.name = "iis-shortname-scan"
-            module_obj.args = ''
-            ret_arr.append(module_obj)
-            module_id = module_obj.id
-
-            result_map = json.loads(data)
-            for port_id in result_map.keys():
-
-                result_entry = result_map[port_id]
-                result_meta_data = result_entry.get('meta_data', [])
-                host_id = result_meta_data.get('host_id', None)
-                ip_addr = result_meta_data.get('ip_addr', None)
-                port_str = result_meta_data.get('port_str', None)
-                result_entry_list = result_entry.get('results', [])
-
-                host_obj = data_model.Host(id=host_id)
-                host_obj.collection_tool_instance_id = tool_instance_id
-                host_obj.ipv4_addr = ip_addr
-
-                # Add host to results
-                ret_arr.append(host_obj)
-
-                port_obj = data_model.Port(parent_id=host_id, id=port_id)
-                port_obj.collection_tool_instance_id = tool_instance_id
-                port_obj.proto = 0
-                port_obj.port = port_str
-
-                # Add port to results
-                ret_arr.append(port_obj)
-
-                # Add module output for all scan results
-                if module_id:
-                    module_output_obj = data_model.CollectionModuleOutput(
-                        parent_id=module_id)
-                    module_output_obj.collection_tool_instance_id = tool_instance_id
-                    module_output_obj.output = json.dumps(result_entry_list)
-                    module_output_obj.port_id = port_id
-                    ret_arr.append(module_output_obj)
-
-        # Import, Update, & Save all collected results
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+        tool_id = scheduled_scan_obj.current_tool.id
+        ret_arr = parse_iis_short_scan_output(
+            self.input().path, tool_instance_id, tool_id)
         self.import_results(scheduled_scan_obj, ret_arr)

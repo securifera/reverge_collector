@@ -69,6 +69,7 @@ class Python(data_model.WaluigiTool):
         self.name: str = 'python'
         self.description: str = 'Python is a versatile programming language that enables rapid development and automation.'
         self.project_url: str = 'https://www.python.org/'
+        self.tags = ['code-exec']
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 7
         self.args: str = ""
@@ -211,6 +212,41 @@ class PythonScan(luigi.Task):
             file_fd.write(scan_results)
 
 
+def parse_python_scan_output(output_file, tool_instance_id, tool_id, target_map=None):
+    """Parse a Python scan output file and return data-model objects."""
+    with open(output_file, 'r') as file_fd:
+        data = file_fd.read()
+
+    ret_arr: List[Any] = []
+    if len(data) > 0:
+
+        # Add collection module for non-module scans
+        module_obj = data_model.CollectionModule(
+            parent_id=tool_id)
+        module_obj.collection_tool_instance_id = tool_instance_id
+        module_obj.name = "python-script"
+        module_obj.args = ''
+        ret_arr.append(module_obj)
+        module_id = module_obj.id
+
+        if target_map is not None:
+            for target_key in target_map:
+                target_obj_dict = target_map[target_key]
+                port_obj = target_obj_dict['port_obj']
+                port_id: int = port_obj.id
+
+                # Add module output for all scan results
+                if module_id:
+                    module_output_obj = data_model.CollectionModuleOutput(
+                        parent_id=module_id)
+                    module_output_obj.collection_tool_instance_id = tool_instance_id
+                    module_output_obj.output = data
+                    module_output_obj.port_id = port_id
+                    ret_arr.append(module_output_obj)
+
+    return ret_arr
+
+
 @inherits(PythonScan)
 class ImportPythonOutput(data_model.ImportToolXOutput):
     """
@@ -245,42 +281,10 @@ class ImportPythonOutput(data_model.ImportToolXOutput):
         """
 
         scheduled_scan_obj = self.scan_input
-        tool_instance_id: int = scheduled_scan_obj.current_tool_instance_id
-        scope_obj = scheduled_scan_obj.scan_data
-        target_map: Dict[str, Dict[str, Any]] = scope_obj.host_port_obj_map
-
-        # Import the ports to the manager
-        tool_id: int = scheduled_scan_obj.current_tool.id
-
-        python_output_file: str = self.input().path
-        with open(python_output_file, 'r') as file_fd:
-            data: str = file_fd.read()
-
-        ret_arr: List[Any] = []
-        if len(data) > 0:
-
-            # Add collection module for non-module scans
-            module_obj = data_model.CollectionModule(
-                parent_id=tool_id)
-            module_obj.collection_tool_instance_id = tool_instance_id
-            module_obj.name = "python-script"
-            module_obj.args = ''
-            ret_arr.append(module_obj)
-            module_id = module_obj.id
-
-            for target_key in target_map:
-                target_obj_dict = target_map[target_key]
-                port_obj = target_obj_dict['port_obj']
-                port_id: int = port_obj.id
-
-                # Add module output for all scan results
-                if module_id:
-                    module_output_obj = data_model.CollectionModuleOutput(
-                        parent_id=module_id)
-                    module_output_obj.collection_tool_instance_id = tool_instance_id
-                    module_output_obj.output = data
-                    module_output_obj.port_id = port_id
-                    ret_arr.append(module_output_obj)
-
-        # Import, Update, & Save all collected results
+        ret_arr = parse_python_scan_output(
+            self.input().path,
+            scheduled_scan_obj.current_tool_instance_id,
+            scheduled_scan_obj.current_tool.id,
+            scheduled_scan_obj.scan_data.host_port_obj_map,
+        )
         self.import_results(scheduled_scan_obj, ret_arr)

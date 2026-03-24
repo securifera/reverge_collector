@@ -116,6 +116,7 @@ class IPThc(data_model.WaluigiTool):
         self.name = 'ipthc'
         self.description = 'IP THC is a threat-intelligence platform specializing in DNS and domain data. It continuously collects both current and historical DNS records, WHOIS information, and passive-DNS data to give users a comprehensive view of any domain\'s evolution over time'
         self.project_url = 'https://ip.thc.org/'
+        self.tags = ['passive', 'dns-enum']
         self.collector_type = data_model.CollectorType.PASSIVE.value
         self.scan_order = 5
         self.args = ""
@@ -680,6 +681,55 @@ class IPThcIPLookupScan(luigi.Task):
             file_fd.write(json.dumps(results_dict))
 
 
+def parse_ip_thc_output(
+    output_file: str,
+    tool_instance_id: Optional[str] = None,
+) -> List[Any]:
+    """Parse an IP THC JSON output file and return data_model Record objects."""
+
+    with open(output_file, 'r') as file_fd:
+        data = file_fd.read()
+
+    host_obj_map: Dict[str, data_model.Host] = {}
+    domain_obj_list: List[data_model.Domain] = []
+
+    if len(data) > 0:
+        scan_data_dict = json.loads(data)
+        ip_to_host_dict_map = scan_data_dict['ip_to_host_dict_map']
+
+        for ip_addr in ip_to_host_dict_map:
+            target_dict = ip_to_host_dict_map[ip_addr]
+
+            if target_dict['host_id'] is None:
+                host_obj = data_model.Host()
+                host_obj.collection_tool_instance_id = tool_instance_id
+
+                try:
+                    ip_obj = netaddr.IPAddress(ip_addr)
+                    if ip_obj.version == 4:
+                        host_obj.ipv4_addr = ip_addr
+                    else:
+                        host_obj.ipv6_addr = ip_addr
+                except (netaddr.core.AddrFormatError, ValueError):
+                    continue
+
+                host_obj_map[ip_addr] = host_obj
+                target_dict['host_id'] = host_obj.id
+
+        for ip_addr in ip_to_host_dict_map:
+            target_dict = ip_to_host_dict_map[ip_addr]
+            host_id = target_dict['host_id']
+            domains = target_dict.get('domains', [])
+
+            for domain in domains:
+                domain_obj = data_model.Domain(parent_id=host_id)
+                domain_obj.collection_tool_instance_id = tool_instance_id
+                domain_obj.name = domain
+                domain_obj_list.append(domain_obj)
+
+    return list(host_obj_map.values()) + domain_obj_list
+
+
 @inherits(IPThcIPLookupScan)
 class ImportIPThcIPLookupOutput(data_model.ImportToolXOutput):
     """
@@ -758,70 +808,6 @@ class ImportIPThcIPLookupOutput(data_model.ImportToolXOutput):
 
         scheduled_scan_obj = self.scan_input
         tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-
-        # Read lookup results from output file
-        scan_output_file = self.input().path
-        with open(scan_output_file, 'r') as file_fd:
-            data = file_fd.read()
-
-        # Initialize object lists for results
-        host_obj_map: Dict[str, data_model.Host] = {}
-        domain_obj_list: List[data_model.Domain] = []
-
-        if len(data) > 0:
-            # Parse JSON results from lookup scan
-            scan_data_dict = json.loads(data)
-
-            # Process IP-to-host-to-domain mappings
-            ip_to_host_dict_map = scan_data_dict['ip_to_host_dict_map']
-            # logging.getLogger(__name__).warning(
-            #    "Dict: %s" % str(ip_to_host_dict_map))
-
-            # First pass: create Host objects for IPs discovered from subnet queries
-            for ip_addr in ip_to_host_dict_map:
-                target_dict = ip_to_host_dict_map[ip_addr]
-
-                # Check if this IP was discovered from a subnet query
-                if target_dict['host_id'] is None:
-                    # Create new Host object for this discovered IP
-                    host_obj = data_model.Host()
-                    host_obj.collection_tool_instance_id = tool_instance_id
-
-                    # Determine if IP is IPv4 or IPv6
-                    try:
-                        ip_obj = netaddr.IPAddress(ip_addr)
-                        if ip_obj.version == 4:
-                            host_obj.ipv4_addr = ip_addr
-                        else:
-                            host_obj.ipv6_addr = ip_addr
-                    except (netaddr.core.AddrFormatError, ValueError):
-                        # Skip invalid IP addresses
-                        continue
-
-                    # Store host object for later reference
-                    host_obj_map[ip_addr] = host_obj
-                    # Update mapping with new host ID
-                    target_dict['host_id'] = host_obj.id
-
-            # Second pass: create Domain objects linked to Host objects
-            for ip_addr in ip_to_host_dict_map:
-                target_dict = ip_to_host_dict_map[ip_addr]
-                host_id = target_dict['host_id']
-                domains = target_dict.get('domains', [])
-
-                # Create Domain objects for each discovered domain
-                for domain in domains:
-                    domain_obj = data_model.Domain(parent_id=host_id)
-                    domain_obj.collection_tool_instance_id = tool_instance_id
-                    domain_obj.name = domain
-
-                    # Add domain to results list
-                    domain_obj_list.append(domain_obj)
-
-            # Combine host and domain objects for import
-            ret_arr: List[Any] = list(host_obj_map.values()) + domain_obj_list
-
-            if len(ret_arr) > 0:
-                # Import results into framework data model
-                scheduled_scan_obj = self.scan_input
-                self.import_results(scheduled_scan_obj, ret_arr)
+        ret_arr = parse_ip_thc_output(self.input().path, tool_instance_id)
+        if len(ret_arr) > 0:
+            self.import_results(scheduled_scan_obj, ret_arr)

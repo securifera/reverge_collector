@@ -45,9 +45,8 @@ waluigi_tools: List[Tuple[str, str]] = [
     ('waluigi.feroxbuster_scan', 'Feroxbuster'),  # Directory/file brute forcer
     ('waluigi.shodan_lookup', 'Shodan'),     # Shodan API integration
     ('waluigi.httpx_scan', 'Httpx'),         # HTTP toolkit
-    # SecurityTrails API integration
-    ('waluigi.sectrails_ip_lookup', 'Sectrails'),
-    ('waluigi.module_scan', 'Module'),       # Custom module execution
+    # ('waluigi.sectrails_ip_lookup', 'Sectrails'), # SecurityTrails API
+    # ('waluigi.module_scan', 'Module'),       # Custom module execution
     ('waluigi.crapsecrets_scan', 'Crapsecrets'),  # Secret detection
     ('waluigi.webcap_scan', 'Webcap'),        # Web capture and analysis
     ('waluigi.gau_scan', 'Gau'),        # Web endpoint crawling results
@@ -56,8 +55,8 @@ waluigi_tools: List[Tuple[str, str]] = [
     # ('waluigi.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
     ('waluigi.ip_thc_lookup', 'IPThc'),  # IP THC API integration
     ('waluigi.netexec_scan', 'Netexec'),  # Netexec network scanner integration
-    # Metasploit network scanner integration
-    # ('waluigi.metasploit_scan', 'Metasploit'),
+    ('waluigi.metasploit_scan', 'Metasploit'),  # Metasploit integration
+    ('waluigi.sqlmap_scan', 'Sqlmap'),   # SQL injection scanner
 ]
 
 # Global configuration: Wordlist storage path
@@ -805,6 +804,7 @@ class WaluigiTool:
         self.args: Optional[str] = None
         self.description: Optional[str] = None
         self.project_url: Optional[str] = None
+        self.tags: List[str] = []
         self.input_records: List[ServerRecordType] = []
         self.output_records: List[ServerRecordType] = []
         self.scope_func: Optional[callable] = lambda: False
@@ -836,6 +836,7 @@ class WaluigiTool:
         ret_dict['args'] = self.args
         ret_dict['description'] = self.description
         ret_dict['project_url'] = self.project_url
+        ret_dict['tags'] = self.tags
         ret_dict['input_records'] = [
             input_type.value for input_type in self.input_records]
         ret_dict['output_records'] = [

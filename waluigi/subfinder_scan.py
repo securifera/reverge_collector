@@ -86,6 +86,7 @@ class Subfinder(data_model.WaluigiTool):
         self.name = 'subfinder'
         self.description = 'subfinder is a subdomain discovery tool that returns valid subdomains for websites, using passive online sources. It has a simple, modular architecture and is optimized for speed.'
         self.project_url = 'https://github.com/projectdiscovery/subfinder'
+        self.tags = ['passive', 'dns-enum']
         self.collector_type = data_model.CollectorType.PASSIVE.value
         self.scan_order = 1
         self.args = "-all"
@@ -267,7 +268,7 @@ def update_config_file(collection_tools: Optional[List[Any]], my_env: Dict[str, 
         None: Updates the configuration file in place
 
     Example:
-        >>> tools = [chaos_tool, shodan_tool, sectrails_tool]
+        >>> tools = [chaos_tool, shodan_tool]
         >>> update_config_file(tools, os.environ.copy())
         >>> # Configuration file now contains API keys
         >>> update_config_file(None, os.environ.copy())  # Clear keys
@@ -299,9 +300,8 @@ def update_config_file(collection_tools: Optional[List[Any]], my_env: Dict[str, 
 
     data['chaos'] = []
     data['shodan'] = []
-    data['securitytrails'] = []
 
-    api_key_arr = ['chaos', 'shodan', 'securitytrails']
+    api_key_arr = ['chaos', 'shodan']
     if collection_tools:
         for collection_tool_inst in collection_tools:
             collection_tool = collection_tool_inst.collection_tool
@@ -490,6 +490,62 @@ class SubfinderScan(luigi.Task):
             output_fd.write(json.dumps({'domain_list': ret_list}))
 
 
+def parse_subfinder_output(
+    output_file: str,
+    tool_instance_id: Optional[str] = None,
+) -> List[Any]:
+    """Parse a Subfinder JSON output file and return data_model Record objects."""
+
+    with open(output_file, 'r') as file_fd:
+        data = file_fd.read()
+
+    obj_map: Dict[str, Any] = {}
+
+    if len(data) > 0:
+        domain_map = json.loads(data)
+
+        if 'domain_list' in domain_map:
+            domain_list = domain_map['domain_list']
+
+            ip_map: Dict[str, Set[str]] = {}
+
+            for domain_entry in domain_list:
+                domain_str = domain_entry['domain']
+                ip_str = domain_entry['ip']
+
+                if ip_str in ip_map:
+                    domain_list_for_ip = ip_map[ip_str]
+                else:
+                    domain_list_for_ip = set()
+                    ip_map[ip_str] = domain_list_for_ip
+
+                domain_list_for_ip.add(domain_str)
+
+            for ip_addr in ip_map:
+                domain_set = ip_map[ip_addr]
+                domains = list(domain_set)
+
+                ip_object = netaddr.IPAddress(ip_addr)
+
+                host_obj = data_model.Host()
+                host_obj.collection_tool_instance_id = tool_instance_id
+
+                if ip_object.version == 4:
+                    host_obj.ipv4_addr = str(ip_object)
+                elif ip_object.version == 6:
+                    host_obj.ipv6_addr = str(ip_object)
+
+                obj_map[host_obj.id] = host_obj
+
+                for domain in domains:
+                    domain_obj = data_model.Domain(parent_id=host_obj.id)
+                    domain_obj.collection_tool_instance_id = tool_instance_id
+                    domain_obj.name = domain
+                    obj_map[domain_obj.id] = domain_obj
+
+    return list(obj_map.values())
+
+
 @inherits(SubfinderScan)
 class SubfinderImport(data_model.ImportToolXOutput):
     """
@@ -566,70 +622,5 @@ class SubfinderImport(data_model.ImportToolXOutput):
 
         scheduled_scan_obj = self.scan_input
         tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-
-        # Read the Subfinder output file
-        subfinder_output_file = self.input().path
-        with open(subfinder_output_file, 'r') as file_fd:
-            data = file_fd.read()
-
-        obj_map: Dict[str, Any] = {}
-        if len(data) > 0:
-            domain_map = json.loads(data)
-
-            if 'domain_list' in domain_map:
-                domain_list = domain_map['domain_list']
-
-                # Create IP-to-domains mapping for efficient processing
-                ip_map: Dict[str, Set[str]] = {}
-
-                # Convert from domain-to-IP map to IP-to-domain map
-                for domain_entry in domain_list:
-                    # Extract domain and IP information
-                    domain_str = domain_entry['domain']
-                    ip_str = domain_entry['ip']
-
-                    # Group domains by IP address
-                    if ip_str in ip_map:
-                        domain_list_for_ip = ip_map[ip_str]
-                    else:
-                        domain_list_for_ip = set()
-                        ip_map[ip_str] = domain_list_for_ip
-
-                    domain_list_for_ip.add(domain_str)
-
-                # Process each unique IP address
-                for ip_addr in ip_map:
-                    domain_set = ip_map[ip_addr]
-                    domains = list(domain_set)
-
-                    # Create IP address object for validation
-                    ip_object = netaddr.IPAddress(ip_addr)
-
-                    # Create Host object for the IP address
-                    host_obj = data_model.Host()
-                    host_obj.collection_tool_instance_id = tool_instance_id
-
-                    # Set appropriate IP address field based on version
-                    if ip_object.version == 4:
-                        host_obj.ipv4_addr = str(ip_object)
-                    elif ip_object.version == 6:
-                        host_obj.ipv6_addr = str(ip_object)
-
-                    # Add host to object map
-                    obj_map[host_obj.id] = host_obj
-
-                    # Create Domain objects for each domain associated with this IP
-                    for domain in domains:
-                        domain_obj = data_model.Domain(parent_id=host_obj.id)
-                        domain_obj.collection_tool_instance_id = tool_instance_id
-                        domain_obj.name = domain
-
-                        # Add domain to object map
-                        obj_map[domain_obj.id] = domain_obj
-
-        # Convert object map to list for import
-        ret_arr = list(obj_map.values())
-
-        # Import results into scan data structure
-        scheduled_scan_obj = self.scan_input
+        ret_arr = parse_subfinder_output(self.input().path, tool_instance_id)
         self.import_results(scheduled_scan_obj, ret_arr)

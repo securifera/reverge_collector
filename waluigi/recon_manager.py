@@ -52,17 +52,15 @@ Constants:
     recon_mgr_inst: Global singleton instance of ReconManager
 """
 
-from Cryptodome.PublicKey import RSA
-from Cryptodome.Cipher import AES, PKCS1_OAEP
 from types import SimpleNamespace
 from threading import Event, Thread
 from waluigi import scan_cleanup
 from waluigi import data_model
+from waluigi import tool_utils
+from waluigi.tool_utils import encrypt_data
 from functools import partial
 
 import requests
-import base64
-import binascii
 import json
 import threading
 import traceback
@@ -72,7 +70,6 @@ import enum
 import functools
 import logging
 import luigi
-import zlib
 from typing import Optional, Dict, List, Any, Union, Tuple
 
 
@@ -201,55 +198,6 @@ def tool_order_cmp(x: Any, y: Any) -> int:
         return -1
     else:
         return 0
-
-
-def encrypt_data(session_key: bytes, data: bytes) -> str:
-    """
-    Encrypt and compress data using AES-EAX mode for secure transmission.
-
-    This function provides secure data encryption for communication with the
-    management server. It combines compression and encryption to optimize
-    both security and bandwidth usage.
-
-    The encryption process:
-    1. Compresses data using zlib for reduced payload size
-    2. Encrypts compressed data using AES-EAX mode
-    3. Combines nonce, authentication tag, and ciphertext
-    4. Encodes the result as base64 for transport
-
-    Args:
-        session_key (bytes): AES session key for encryption (must be valid AES key size)
-        data (bytes): Raw data to be encrypted and transmitted
-
-    Returns:
-        str: Base64-encoded encrypted data packet ready for transmission
-
-    Example:
-        >>> session_key = b'32-byte-aes-key-here-12345678901'
-        >>> data = b'{"scan_results": "data"}'
-        >>> encrypted = encrypt_data(session_key, data)
-        >>> # Send encrypted data to server
-
-    Note:
-        - Uses AES-EAX mode for authenticated encryption
-        - Compression reduces payload size for network efficiency
-        - Output format: base64(nonce + tag + ciphertext)
-        - Compatible with server-side decryption in ReconManager
-    """
-    # Compress data first to reduce payload size
-    compressed_data = zlib.compress(data)
-
-    # Create AES cipher in EAX mode for authenticated encryption
-    cipher_aes = AES.new(session_key, AES.MODE_EAX)
-    ciphertext, tag = cipher_aes.encrypt_and_digest(compressed_data)
-
-    # Combine nonce, authentication tag, and ciphertext
-    packet = cipher_aes.nonce + tag + ciphertext
-
-    # Encode as base64 for safe transport
-    b64_data = base64.b64encode(packet).decode()
-
-    return b64_data
 
 
 class ScheduledScanThread(threading.Thread):
@@ -1211,21 +1159,9 @@ class ReconManager:
         """
         data = None
         if 'data' in content:
-            # Decode base64 encrypted data
             b64_data = content['data']
-            enc_data = base64.b64decode(b64_data)
-
-            # Extract encryption components (16-byte nonce, 16-byte tag, ciphertext)
-            nonce = enc_data[:16]
-            tag = enc_data[16:32]
-            ciphertext = enc_data[32:]
-
-            # Attempt decryption with current session key
-            cipher_aes = AES.new(self.session_key, AES.MODE_EAX, nonce)
             try:
-                compressed_data = cipher_aes.decrypt_and_verify(
-                    ciphertext, tag)
-                data = zlib.decompress(compressed_data)
+                data = tool_utils.decrypt_data(self.session_key, b64_data)
             except Exception as e:
                 logging.getLogger(__name__).error(
                     "Error decrypting response: %s" % str(e))
@@ -1233,12 +1169,8 @@ class ReconManager:
                 # Attempt recovery using session key from disk
                 session_key = self._get_session_key_from_disk()
                 if session_key and session_key != self.session_key:
-                    cipher_aes = AES.new(session_key, AES.MODE_EAX, nonce)
                     try:
-                        compressed_data = cipher_aes.decrypt_and_verify(
-                            ciphertext, tag)
-                        data = zlib.decompress(compressed_data)
-                        # Update current session key on successful recovery
+                        data = tool_utils.decrypt_data(session_key, b64_data)
                         self.session_key = session_key
                         return data
                     except Exception as e:
@@ -1247,7 +1179,6 @@ class ReconManager:
 
                 # Clean up corrupted session and generate new key
                 os.remove('session')
-                # Generate new session key for future requests
                 self.session_key = self._get_session_key()
 
         return data
@@ -1273,15 +1204,7 @@ class ReconManager:
             - File location is './session' in current working directory
             - Returns None if file doesn't exist or cannot be read
         """
-        session_key = None
-        if os.path.exists('session'):
-            with open("session", "r") as file_fd:
-                hex_session = file_fd.read().strip()
-
-            # Convert hexadecimal string back to bytes
-            session_key = binascii.unhexlify(hex_session)
-
-        return session_key
+        return tool_utils._load_session_key()
 
     def _get_session_key(self) -> bytes:
         """
@@ -1311,45 +1234,12 @@ class ReconManager:
             - Session key is stored with 0o777 permissions
             - Automatic fallback to disk-stored key when available
         """
-        # Check for existing session key on disk first
-        session_key = self._get_session_key_from_disk()
-        if session_key:
-            return session_key
-
-        # Generate temporary RSA key pair for secure key exchange
-        key = RSA.generate(2048)
-        private_key = key.export_key(format='DER')
-        public_key = key.publickey().export_key(format='DER')
-
-        session_key = None
-        # Send public key to server for session establishment
-        b64_val = base64.b64encode(public_key).decode()
-        r = requests.post('%s/api/session' % self.manager_url,
-                          headers=self.headers,
-                          json={"data": b64_val},
-                          verify=False)
-
-        if r.status_code != 200:
-            logging.getLogger(__name__).error("Error retrieving session key.")
-            raise SessionException("Session key exchange failed")
-
-        if r.content:
-            ret_json = r.json()
-            if "data" in ret_json:
-                # Receive and decrypt session key from server
-                b64_session_key = ret_json['data']
-                enc_session_key = base64.b64decode(b64_session_key)
-
-                # Decrypt the session key using private RSA key
-                private_key_obj = RSA.import_key(private_key)
-                cipher_rsa = PKCS1_OAEP.new(private_key_obj)
-                session_key = cipher_rsa.decrypt(enc_session_key)
-
-                # Store session key to disk for persistence
-                with open(os.open('session', os.O_CREAT | os.O_WRONLY, 0o777), 'w') as fh:
-                    fh.write(binascii.hexlify(session_key).decode())
-
-        return session_key
+        try:
+            return tool_utils.get_session_key(self.manager_url, self.headers)
+        except RuntimeError as exc:
+            logging.getLogger(__name__).error(
+                "Error retrieving session key: %s", exc)
+            raise SessionException(str(exc)) from exc
 
     def get_subnets(self, scan_id):
 

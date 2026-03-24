@@ -96,6 +96,7 @@ class Masscan(data_model.WaluigiTool):
         self.name = 'masscan'
         self.description = 'Masscan is a fast port scanner that can scan the entire Internet in under 6 minutes, transmitting 10 million packets per second. It is designed to be used for large-scale network scanning and is capable of scanning large ranges of IP addresses quickly.'
         self.project_url = "https://github.com/robertdavidgraham/masscan"
+        self.tags = ['port-scan', 'fast']
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 2
         self.args = "--rate 1000"
@@ -515,6 +516,69 @@ class MasscanScan(luigi.Task):
                 pass
 
 
+def parse_masscan_xml(
+    xml_path: str,
+    tool_instance_id: Optional[str] = None,
+) -> List[Any]:
+    """Parse a Masscan XML output file and return data_model Record objects.
+
+    Args:
+        xml_path:         Path to the Masscan XML output file.
+        tool_instance_id: Value assigned to each record's
+                          ``collection_tool_instance_id`` field.
+
+    Returns:
+        List of Host and Port data_model Record objects.
+    """
+    obj_arr: List[Any] = []
+    if not (os.path.isfile(xml_path) and os.path.getsize(xml_path) > 0):
+        logging.getLogger(__name__).error(
+            'Masscan output file is empty or missing: %s', xml_path)
+        return obj_arr
+
+    try:
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        for host in root.iter('host'):
+            address = host.find('address')
+            addr = address.get('addr')
+            addr_type = address.get('addrtype')
+            try:
+                ip_addr = str(netaddr.IPAddress(addr))
+            except netaddr.core.AddrFormatError:
+                continue
+
+            host_obj = data_model.Host()
+            host_obj.collection_tool_instance_id = tool_instance_id
+            if addr_type == 'ipv4':
+                host_obj.ipv4_addr = ip_addr
+            elif addr_type == 'ipv6':
+                host_obj.ipv6_addr = ip_addr
+            obj_arr.append(host_obj)
+
+            ports_obj = host.find('ports')
+            if ports_obj is None:
+                continue
+            for port in ports_obj.findall('port'):
+                port_id_str = port.get('portid')
+                proto_str = port.get('protocol', '').strip()
+                proto = 0 if proto_str == TCP else 1
+                port_obj = data_model.Port(parent_id=host_obj.id)
+                port_obj.collection_tool_instance_id = tool_instance_id
+                port_obj.proto = proto
+                port_obj.port = port_id_str
+                obj_arr.append(port_obj)
+
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            'Masscan results parsing error: %s', str(e))
+        if os.path.exists(xml_path):
+            os.remove(xml_path)
+        raise
+
+    return obj_arr
+
+
 @inherits(MasscanScan)
 class ImportMasscanOutput(data_model.ImportToolXOutput):
     """
@@ -594,81 +658,8 @@ class ImportMasscanOutput(data_model.ImportToolXOutput):
             - Handles empty scan results gracefully
         """
 
-        obj_arr: List[Any] = []
-        masscan_output_file = self.input().path
         scheduled_scan_obj = self.scan_input
         tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-
-        # Verify output file exists and has content
-        if os.path.isfile(masscan_output_file) and os.path.getsize(masscan_output_file) > 0:
-
-            try:
-                # Parse Masscan XML output
-                tree = ET.parse(masscan_output_file)
-                root = tree.getroot()
-
-                # Process each discovered host in the XML
-                for host in root.iter('host'):
-                    # Extract IP address information
-                    address = host.find('address')
-                    addr = address.get('addr')
-                    addr_type = address.get('addrtype')
-
-                    try:
-                        # Validate and normalize IP address
-                        ip_addr = str(netaddr.IPAddress(addr))
-                    except netaddr.core.AddrFormatError:
-                        # Skip invalid IP addresses
-                        continue
-
-                    # Create Host object for the discovered IP
-                    host_obj = data_model.Host()
-                    host_obj.collection_tool_instance_id = tool_instance_id
-
-                    # Set appropriate IP address field based on version
-                    if addr_type == 'ipv4':
-                        host_obj.ipv4_addr = ip_addr
-                    elif addr_type == 'ipv6':
-                        host_obj.ipv6_addr = ip_addr  # Note: Original code has bug using ipv4_addr
-
-                    # Add host to results
-                    obj_arr.append(host_obj)
-
-                    # Process discovered ports for this host
-                    ports_obj = host.find('ports')
-                    ports = ports_obj.findall('port')
-                    for port in ports:
-                        # Extract port information
-                        port_id = port.get('portid')
-                        proto_str = port.get('protocol').strip()
-
-                        # Map protocol string to numeric identifier
-                        if proto_str == TCP:
-                            proto = 0  # TCP protocol
-                        else:
-                            proto = 1  # UDP protocol (or other)
-
-                        # Create Port object for the discovered service
-                        port_obj = data_model.Port(parent_id=host_obj.id)
-                        port_obj.collection_tool_instance_id = tool_instance_id
-                        port_obj.proto = proto
-                        port_obj.port = port_id
-
-                        # Add port to results
-                        obj_arr.append(port_obj)
-
-            except Exception as e:
-                # Handle XML parsing errors
-                logging.getLogger(__name__).error(
-                    'Masscan results parsing error: %s' % str(e))
-                # Remove corrupted output file
-                os.remove(masscan_output_file)
-                raise e
-        else:
-            # Handle empty or missing output file
-            logging.getLogger(__name__).error(
-                "Masscan output file is empty. Ensure inputs were provided.")
-
-        # Import processed results into scan data structure
-        scheduled_scan_obj = self.scan_input
+        masscan_output_file = self.input().path
+        obj_arr = parse_masscan_xml(masscan_output_file, tool_instance_id)
         self.import_results(scheduled_scan_obj, obj_arr)
