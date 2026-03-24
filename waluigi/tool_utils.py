@@ -59,6 +59,37 @@ def remove_dups_from_dict(dict_array: List[Dict[str, Any]]) -> List[Dict[str, An
     return [json.loads(s) for s in script_set]
 
 
+def consolidate_ports(port_list: List[str]) -> str:
+    """Convert a flat list of port number strings into a compact nmap/masscan-compatible
+    port specification string, collapsing consecutive ports into ranges.
+
+    For example, ['1','2','3','80','443','444','445'] becomes '1-3,80,443-445'.
+
+    Args:
+        port_list: List of port number strings (may be unsorted, may have duplicates).
+
+    Returns:
+        A compact port spec string, e.g. '1-1024,8080,9000-9002'.
+    """
+    if not port_list:
+        return ''
+
+    ports = sorted(set(int(p) for p in port_list))
+    ranges: List[str] = []
+    start = ports[0]
+    end = ports[0]
+
+    for port in ports[1:]:
+        if port == end + 1:
+            end = port
+        else:
+            ranges.append(str(start) if start == end else f'{start}-{end}')
+            start = end = port
+
+    ranges.append(str(start) if start == end else f'{start}-{end}')
+    return ','.join(ranges)
+
+
 # ---------------------------------------------------------------------------
 # Nmap XML parsing (delegates to nmap_scan module)
 # ---------------------------------------------------------------------------

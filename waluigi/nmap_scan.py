@@ -535,7 +535,7 @@ class NmapScan(luigi.Task):
             nmap_scan_inst: Dict[str, Any] = {}
             script_args: Optional[List[str]] = scan_obj.get('tool_args')
             port_list: List[str] = scan_obj['port_list']
-            port_comma_list: str = ','.join(port_list)
+            port_comma_list: str = tool_utils.consolidate_ports(port_list)
 
             ip_list_path: str = dir_path + os.path.sep + \
                 "nmap_in_" + str(counter)

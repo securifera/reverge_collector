@@ -46,6 +46,7 @@ from typing import List, Dict, Set, Optional, Any, Union
 from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
+from waluigi import tool_utils
 from waluigi.proc_utils import process_wrapper
 
 # Protocol constants for network scanning
@@ -325,10 +326,8 @@ def get_masscan_input(scheduled_scan_obj: Any) -> Dict[str, Any]:
         logging.getLogger(__name__).error("Target list is empty")
 
     # Construct ports conf line
-    port_line = "ports = "
-    for port in scan_port_list:
-        port_line += str(port) + ','
-    port_line.strip(',')
+    port_line = "ports = " + \
+        tool_utils.consolidate_ports([str(p) for p in scan_port_list])
 
     # Write ports to config file
     with open(masscan_config_file, 'w') as mass_scan_conf:
