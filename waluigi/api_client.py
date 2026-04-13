@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import traceback
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +27,30 @@ requests.packages.urllib3.disable_warnings()
 _CUSTOM_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; AS; rv:11.0) like Gecko"
 )
+
+
+@dataclass
+class ScheduledScanResponse:
+    """
+    Typed representation of a single entry returned by ``GET /api/scheduler/``.
+
+    Only the fields that ``ScheduledScan.__init__`` accesses are declared here.
+    The ``collection_tools`` list is kept as ``SimpleNamespace`` objects because
+    it is a deeply-nested hierarchy that is consumed entirely inside
+    ``ScheduledScan.__init__`` and benefits from the flexible attribute access
+    that ``object_hook`` deserialization provides.
+
+    Attributes:
+        id:               Scheduled-scan identifier (server-assigned).
+        target_id:        Target scope identifier.
+        scan_id:          Scan run identifier.
+        collection_tools: List of tool-instance namespaces with ``status``,
+                          ``enabled``, ``id``, ``collection_tool`` etc.
+    """
+    id: str
+    target_id: str
+    scan_id: str
+    collection_tools: List[Any] = field(default_factory=list)
 
 
 class ApiClient:
@@ -180,10 +205,23 @@ class ApiClient:
     # API endpoint methods
     # ------------------------------------------------------------------
 
-    def get_scheduled_scans(self) -> List[Any]:
-        """Retrieve pending scheduled scans from the server."""
-        result = self._get("/api/scheduler/", as_namespace=True)
-        return result if result is not None else []
+    def get_scheduled_scans(self) -> List[ScheduledScanResponse]:
+        """Retrieve pending scheduled scans, returning typed ``ScheduledScanResponse`` objects."""
+        raw = self._get("/api/scheduler/", as_namespace=True)
+        if not raw:
+            return []
+        items: List[ScheduledScanResponse] = []
+        for ns in raw:
+            try:
+                items.append(ScheduledScanResponse(
+                    id=ns.id,
+                    target_id=ns.target_id,
+                    scan_id=ns.scan_id,
+                    collection_tools=getattr(ns, 'collection_tools', []),
+                ))
+            except AttributeError as exc:
+                logger.warning("Skipping malformed scheduled scan entry: %s", exc)
+        return items
 
     def get_scheduled_scan(self, sched_scan_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve the full scan configuration for a scheduled scan."""

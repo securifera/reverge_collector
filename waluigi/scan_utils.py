@@ -177,6 +177,10 @@ class ThreadExecutorWrapper:
             future.result()
             logging.getLogger(__name__).debug(
                 f"Task {task_id} completed. {len(self.futures_map)} task(s) remaining.")
+        except socket.gaierror:
+            # DNS resolution failures are expected (e.g. domains that don't resolve).
+            # dns_wrapper catches this from future.result() — no action needed here.
+            pass
         except Exception as e:
             tb = traceback.format_exc()
             logging.getLogger(__name__).debug(

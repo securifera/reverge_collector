@@ -1052,14 +1052,7 @@ def update_scope_array(record_map: Dict[str, Any], updated_record_map: Optional[
 
         # Apply all updates in a single pass
         for record_obj in record_map.values():
-            if record_obj.parent and record_obj.parent.id in id_updates:
-                record_obj.parent.id = id_updates[record_obj.parent.id]
-
-            if isinstance(record_obj, HttpEndpoint) and record_obj.web_path_id in id_updates:
-                record_obj.web_path_id = id_updates[record_obj.web_path_id]
-
-            if isinstance(record_obj, HttpEndpointData) and record_obj.domain_id in id_updates:
-                record_obj.domain_id = id_updates[record_obj.domain_id]
+            record_obj.remap_ids(id_updates)
 
     # Convert all records to JSON-serializable format
     import_arr: List[Dict[str, Any]] = []
@@ -1851,6 +1844,22 @@ class Record:
             f"from_jsonsable called on type: {type(self)}")
         raise Exception('No jsonable method defined for the child object.')
 
+    def remap_ids(self, id_updates: Dict[str, str]) -> None:
+        """
+        Remap any foreign-key IDs in this record according to *id_updates*.
+
+        The base implementation handles the ``parent.id`` FK that is common to
+        all non-root record types.  Subclasses with additional FK fields
+        (e.g. ``web_path_id``, ``domain_id``) override this method and call
+        ``super().remap_ids(id_updates)`` first.
+
+        Args:
+            id_updates: Mapping of old ID → new ID returned by the server
+                        after import.
+        """
+        if self.parent and self.parent.id in id_updates:
+            self.parent.id = id_updates[self.parent.id]
+
     @staticmethod
     def static_from_jsonsable(input_dict: Dict[str, Any], scan_data: Optional['ScanData'] = None,
                               record_tags: Set[str] = None) -> Optional['Record']:
@@ -1897,40 +1906,12 @@ class Record:
                 record_tags_inst.update(record_tags_set)
 
             record_type = input_dict['type']
-            if record_type == 'host':
-                obj = Host(id=obj_id)
-            elif record_type == 'port':
-                obj = Port(id=obj_id, parent_id=parent_id)
-            elif record_type == 'domain':
-                obj = Domain(id=obj_id, parent_id=parent_id)
-            elif record_type == 'listitem':
-                obj = ListItem(id=obj_id)
-            elif record_type == 'httpendpoint':
-                obj = HttpEndpoint(id=obj_id, parent_id=parent_id)
-            elif record_type == 'httpendpointdata':
-                obj = HttpEndpointData(
-                    id=obj_id, parent_id=parent_id)
-            elif record_type == 'screenshot':
-                obj = Screenshot(id=obj_id)
-            elif record_type == 'webcomponent':
-                obj = WebComponent(id=obj_id, parent_id=parent_id)
-            elif record_type == 'vuln':
-                obj = Vuln(id=obj_id, parent_id=parent_id)
-            elif record_type == 'collectionmodule':
-                obj = CollectionModule(
-                    id=obj_id, parent_id=parent_id)
-            elif record_type == 'collectionmoduleoutput':
-                obj = CollectionModuleOutput(id=obj_id, parent_id=parent_id)
-            elif record_type == 'certificate':
-                obj = Certificate(id=obj_id, parent_id=parent_id)
-            elif record_type == 'subnet':
-                obj = Subnet(id=obj_id)
-            elif record_type == 'credential':
-                obj = Credential(id=obj_id)
-            else:
+            factory = RECORD_REGISTRY.get(record_type)
+            if factory is None:
                 logging.getLogger(__name__).debug(
                     "Unknown record type: %s" % record_type)
-                return
+                return None
+            obj = factory(obj_id, parent_id)
 
             # Populate data
             if obj:
@@ -2713,6 +2694,11 @@ class HttpEndpoint(Record):
         except Exception as e:
             raise Exception('Invalid http endpoint object: %s' % str(e))
 
+    def remap_ids(self, id_updates: Dict[str, str]) -> None:
+        super().remap_ids(id_updates)
+        if self.web_path_id and self.web_path_id in id_updates:
+            self.web_path_id = id_updates[self.web_path_id]
+
 
 class HttpEndpointData(Record):
     """
@@ -2887,6 +2873,13 @@ class HttpEndpointData(Record):
 
         except Exception as e:
             raise Exception('Invalid http endpoint data object: %s' % str(e))
+
+    def remap_ids(self, id_updates: Dict[str, str]) -> None:
+        super().remap_ids(id_updates)
+        if self.domain_id and self.domain_id in id_updates:
+            self.domain_id = id_updates[self.domain_id]
+        if self.screenshot_id and self.screenshot_id in id_updates:
+            self.screenshot_id = id_updates[self.screenshot_id]
 
 
 class CollectionModule(Record):
@@ -3130,6 +3123,11 @@ class CollectionModuleOutput(Record):
             raise Exception(
                 'Invalid collection module output object: %s' % str(e))
 
+    def remap_ids(self, id_updates: Dict[str, str]) -> None:
+        super().remap_ids(id_updates)
+        if self.port_id and self.port_id in id_updates:
+            self.port_id = id_updates[self.port_id]
+
 
 class Certificate(Record):
     """
@@ -3228,6 +3226,16 @@ class Certificate(Record):
         except Exception as e:
             raise Exception('Invalid certificate object: %s' % str(e))
 
+    def remap_ids(self, id_updates: Dict[str, str]) -> None:
+        super().remap_ids(id_updates)
+        self.domain_id_list = [
+            id_updates.get(d, d) for d in self.domain_id_list
+        ]
+        self.domain_name_id_map = {
+            name: id_updates.get(did, did)
+            for name, did in self.domain_name_id_map.items()
+        }
+
     def add_domain(self, host_id: str, domain_str: str, collection_tool_instance_id: str) -> Optional['Domain']:
         """
         Add a domain name to the certificate's domain list.
@@ -3294,3 +3302,30 @@ class Credential(Record):
             self.privileged = input_data_dict.get('privileged', False)
         except Exception as e:
             raise Exception('Invalid credential object: %s' % str(e))
+
+
+# ---------------------------------------------------------------------------
+# RECORD_REGISTRY — maps lowercase record-type strings to factory callables.
+#
+# Each factory accepts (id: str, parent_id: Optional[str]) and returns a
+# freshly constructed Record subclass instance.  This lets
+# Record.static_from_jsonsable() do a O(1) lookup instead of an if/elif
+# chain and makes it trivial to register new types in the future.
+# ---------------------------------------------------------------------------
+RECORD_REGISTRY: Dict[str, Any] = {
+    'host':                  lambda id, parent_id: Host(id=id),
+    'subnet':                lambda id, parent_id: Subnet(id=id),
+    'port':                  lambda id, parent_id: Port(id=id, parent_id=parent_id),
+    'domain':                lambda id, parent_id: Domain(id=id, parent_id=parent_id),
+    'listitem':              lambda id, parent_id: ListItem(id=id),
+    'screenshot':            lambda id, parent_id: Screenshot(id=id),
+    'webcomponent':          lambda id, parent_id: WebComponent(id=id, parent_id=parent_id),
+    'operatingsystem':       lambda id, parent_id: OperatingSystem(id=id, parent_id=parent_id),
+    'vuln':                  lambda id, parent_id: Vuln(id=id, parent_id=parent_id),
+    'httpendpoint':          lambda id, parent_id: HttpEndpoint(id=id, parent_id=parent_id),
+    'httpendpointdata':      lambda id, parent_id: HttpEndpointData(id=id, parent_id=parent_id),
+    'collectionmodule':      lambda id, parent_id: CollectionModule(id=id, parent_id=parent_id),
+    'collectionmoduleoutput': lambda id, parent_id: CollectionModuleOutput(id=id, parent_id=parent_id),
+    'certificate':           lambda id, parent_id: Certificate(id=id, parent_id=parent_id),
+    'credential':            lambda id, parent_id: Credential(id=id),
+}

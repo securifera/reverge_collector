@@ -9,7 +9,7 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from waluigi.api_client import ApiClient
+from waluigi.api_client import ApiClient, ScheduledScanResponse
 from waluigi.recon_manager import ScanNotFoundException
 
 
@@ -170,10 +170,14 @@ class TestEndpoints:
     # -- Scheduled scans --
 
     def test_get_scheduled_scans_returns_list(self):
-        scans = [{"id": "abc"}]
-        with patch.object(self.client, "_get", return_value=scans):
+        ns = SimpleNamespace(id="abc", target_id="t1", scan_id="s1", collection_tools=[])
+        with patch.object(self.client, "_get", return_value=[ns]):
             result = self.client.get_scheduled_scans()
-        assert result == scans
+        assert len(result) == 1
+        assert isinstance(result[0], ScheduledScanResponse)
+        assert result[0].id == "abc"
+        assert result[0].target_id == "t1"
+        assert result[0].scan_id == "s1"
 
     def test_get_scheduled_scans_returns_empty_list_on_none(self):
         with patch.object(self.client, "_get", return_value=None):

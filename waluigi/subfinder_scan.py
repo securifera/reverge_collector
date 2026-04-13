@@ -179,8 +179,14 @@ def subfinder_wrapper(scheduled_scan_obj: Any, scan_output_file_path: str,
     # Parse the output
     obj_arr = scan_utils.parse_json_blob_file(scan_output_file_path)
     for domain_entry in obj_arr:
-        domain_name = domain_entry['host']
-        ip_str = domain_entry['ip']
+        domain_name = domain_entry.get('host', '').strip()
+        ip_str = domain_entry.get('ip', '').strip()
+        if not domain_name or not ip_str:
+            # subfinder emits empty ip for unresolved domains — skip them
+            # so they don't corrupt the ip_map with an empty-string key
+            logging.getLogger(__name__).debug(
+                "Subfinder: skipping entry with missing host/ip: %s", domain_entry)
+            continue
         ret_list.append({'ip': ip_str, 'domain': domain_name})
 
     return ret_list
@@ -427,7 +433,12 @@ def parse_subfinder_output(
                 domain_set = ip_map[ip_addr]
                 domains = list(domain_set)
 
-                ip_object = netaddr.IPAddress(ip_addr)
+                try:
+                    ip_object = netaddr.IPAddress(ip_addr)
+                except (netaddr.AddrFormatError, ValueError):
+                    logging.getLogger(__name__).debug(
+                        "Subfinder: skipping unparseable IP %r for domains %s", ip_addr, domains)
+                    continue
 
                 host_obj = data_model.Host()
                 host_obj.collection_tool_instance_id = tool_instance_id

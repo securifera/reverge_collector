@@ -364,6 +364,8 @@ class ScheduledScanThread(threading.Thread):
 
                 # Skip disabled tools or tools without scan order
                 if tool_obj.scan_order == None or collection_tool_inst.enabled == 0:
+                    logging.getLogger(__name__).debug(
+                        "Skipping tool %s due to disabled status or missing scan order", tool_obj.name)
                     continue
 
                 # Set initial status after continue checks
@@ -391,23 +393,24 @@ class ScheduledScanThread(threading.Thread):
                 # Check for individual tool cancellation
                 cancelled_tool_ids = scan_status.cancelled_tool_ids
                 if collection_tool_inst.id in cancelled_tool_ids:
+                    logging.getLogger(__name__).debug(
+                        """Tool %s cancelled before execution, skipping""" % tool_obj.name)
                     continue
 
                 # Update tool status to running
                 scheduled_scan_obj.update_tool_status(
                     collection_tool_inst.id, data_model.CollectionToolStatus.RUNNING.value)
 
-                # Handle active scanning tools that require target connection
-                scan_ran = False
-                if tool_obj.tool_type == 2:
+                try:
+                    # Connect to target only for active scanning tools
+                    if tool_obj.tool_type == 2:
+                        if self.connection_manager and self.connection_manager.connect_to_target() == False:
+                            err_msg = "Failed connecting to target"
+                            logging.getLogger(__name__).error(err_msg)
+                            return err_msg
 
-                    if self.connection_manager and self.connection_manager.connect_to_target() == False:
-                        err_msg = "Failed connecting to target"
-                        logging.getLogger(__name__).error(err_msg)
-                        return err_msg
-
+                    # Execute the actual scanning function
                     try:
-                        # Execute the actual scanning function
                         if self.recon_manager.scan_func(scheduled_scan_obj) == False:
                             err_msg = "Scan function failed"
                             logging.getLogger(__name__).debug(err_msg)
@@ -419,26 +422,24 @@ class ScheduledScanThread(threading.Thread):
                         logging.getLogger(__name__).debug(
                             traceback.format_exc())
                         ret_status = data_model.CollectionToolStatus.ERROR.value
-                    finally:
-                        scan_ran = True
 
-                        # Check for task failures
-                        if self.failed_task_exception:
-                            task_err = f"{self.failed_task_exception[0]}\n{self.failed_task_exception[1]}"
-                            self.failed_task_exception = None
-                            # Append to existing error or use as error
-                            err_msg = task_err if not err_msg else f"{err_msg}\n{task_err}"
+                    # Check for task failures
+                    if self.failed_task_exception:
+                        task_err = f"{self.failed_task_exception[0]}\n{self.failed_task_exception[1]}"
+                        self.failed_task_exception = None
+                        err_msg = task_err if not err_msg else f"{err_msg}\n{task_err}"
 
-                        if self.connection_manager and self.connection_manager.connect_to_extender() == False:
-                            err_msg = "Failed connecting to extender"
-                            logging.getLogger(__name__).error(err_msg)
-                            return err_msg
+                finally:
+                    if self.connection_manager and self.connection_manager.connect_to_extender() == False:
+                        err_msg = "Failed connecting to extender"
+                        logging.getLogger(__name__).error(err_msg)
+                        return err_msg
 
-                    # If scan failed, update status and stop tool loop
-                    if ret_status == data_model.CollectionToolStatus.ERROR.value:
-                        scheduled_scan_obj.update_tool_status(
-                            collection_tool_inst.id, ret_status, err_msg)
-                        break
+                # If scan failed, update status and stop tool loop
+                if ret_status == data_model.CollectionToolStatus.ERROR.value:
+                    scheduled_scan_obj.update_tool_status(
+                        collection_tool_inst.id, ret_status, err_msg)
+                    break
 
                 # Import scan results regardless of tool type
                 try:
@@ -689,6 +690,9 @@ class ScheduledScanThread(threading.Thread):
                                     # Handle new scans
                                     if sched_scan_obj.id not in self.scheduled_scan_map:
 
+                                        logging.getLogger(__name__).debug(
+                                            "Processing new scan: %s", sched_scan_obj.id)
+
                                         # Respect global scan concurrency cap.
                                         if not self.scan_semaphore.acquire(blocking=False):
                                             logging.getLogger(__name__).debug(
@@ -716,6 +720,7 @@ class ScheduledScanThread(threading.Thread):
                                             raise
 
                                     else:
+
                                         # Handle existing scans - check for cancellation
                                         scheduled_scan_obj = self.scheduled_scan_map[sched_scan_obj.id]
                                         status_obj = self.recon_manager.get_scan_status(
@@ -736,6 +741,8 @@ class ScheduledScanThread(threading.Thread):
 
                                             # Terminate cancelled tools
                                             if len(cancelled_tool_ids) > 0:
+                                                logging.getLogger(__name__).debug(
+                                                    "Killing cancelled tools")
                                                 scheduled_scan_obj.kill_scan_processes(
                                                     cancelled_tool_ids)
 
