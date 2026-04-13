@@ -355,26 +355,28 @@ class TestDecrypt:
             result = self.client._decrypt({"data": "b64stuff"})
         assert result == expected
 
-    def test_decrypt_tries_disk_key_on_failure(self):
-        disk_key = b"disk" * 8
+    def test_decrypt_refreshes_key_on_failure(self):
+        refreshed_key = b"refreshed" * 4
         expected = b'{"key": "val"}'
-        call_count = [0]
 
         def fake_decrypt(key, b64):
-            call_count[0] += 1
-            if key == self.client.session_key:
+            if key != refreshed_key:
                 raise Exception("bad key")
             return expected
 
+        def fake_refresh():
+            self.client.session_key = refreshed_key
+            return refreshed_key
+
         with patch("waluigi.tool_utils.decrypt_data", side_effect=fake_decrypt), \
-             patch("waluigi.tool_utils._load_session_key", return_value=disk_key):
+            patch.object(self.client, "_refresh_session_key", side_effect=fake_refresh) as mock_refresh:
             result = self.client._decrypt({"data": "b64stuff"})
+
         assert result == expected
-        assert self.client.session_key == disk_key
+        mock_refresh.assert_called_once()
 
     def test_decrypt_returns_none_when_all_attempts_fail(self):
         with patch("waluigi.tool_utils.decrypt_data", side_effect=Exception("bad")), \
-             patch("waluigi.tool_utils._load_session_key", return_value=None), \
              patch.object(self.client, "_refresh_session_key"):
             result = self.client._decrypt({"data": "b64stuff"})
         assert result is None

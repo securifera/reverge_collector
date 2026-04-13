@@ -108,7 +108,13 @@ def _save_session_key(key: bytes) -> None:
         logger.warning("Could not save session key to disk: %s", exc)
 
 
-def get_session_key(manager_url: str, headers: Dict[str, str]) -> bytes:
+def get_session_key(
+    manager_url: str,
+    headers: Dict[str, str],
+    *,
+    use_cached: bool = True,
+    persist: bool = True,
+) -> bytes:
     """Return the AES session key for communicating with the Reverge server.
 
     Loads from the disk cache when available.  Otherwise performs an RSA/AES
@@ -126,9 +132,10 @@ def get_session_key(manager_url: str, headers: Dict[str, str]) -> bytes:
         RuntimeError: If the key exchange fails or the server response is
                       malformed.
     """
-    cached = _load_session_key()
-    if cached:
-        return cached
+    if use_cached:
+        cached = _load_session_key()
+        if cached:
+            return cached
 
     key = RSA.generate(2048)
     private_key_der = key.export_key(format="DER")
@@ -155,7 +162,8 @@ def get_session_key(manager_url: str, headers: Dict[str, str]) -> bytes:
     enc_session_key = base64.b64decode(ret_json["data"])
     rsa_obj = RSA.import_key(private_key_der)
     session_key: bytes = PKCS1_OAEP.new(rsa_obj).decrypt(enc_session_key)
-    _save_session_key(session_key)
+    if persist:
+        _save_session_key(session_key)
     return session_key
 
 

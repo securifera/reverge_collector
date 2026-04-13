@@ -18,7 +18,6 @@ classifiers = [
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.14"
-luigi = "3.6.0"
 pycryptodomex = "3.23.0"
 netifaces = "0.11.0"
 pyyaml = "6.0.3"

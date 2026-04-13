@@ -32,6 +32,8 @@ import ipaddress
 
 from typing import List, Dict, Set, Optional, Union, Any, Tuple
 from waluigi.scan_utils import get_ports, construct_url
+from waluigi.process_handle import ProcessHandle
+from waluigi.record_store import RecordStore
 
 # Configuration: Available security scanning tools
 # Each tuple contains (module_name, class_name) for dynamic tool loading
@@ -497,16 +499,29 @@ class ScheduledScan():
                 tool_executor_map_main = ToolExecutor()
                 self.tool_executor_map[tool_id] = tool_executor_map_main
 
-            # Remove any completed futures to prevent memory leaks
-            tool_executor_map_main.thread_future_array = [
-                f for f in tool_executor_map_main.thread_future_array if not f.done()
-            ]
+            # Remove completed futures/dead pids before appending new handles.
+            tool_executor_map_main.prune()
 
-            # Update the executor state
-            if len(thread_future_array) > 0:
-                tool_executor_map_main.thread_future_array.extend(
-                    thread_future_array)
-            tool_executor_map_main.proc_pids.update(proc_pids)
+            # Update the executor state and attach done callbacks so idle
+            # executors are removed from map automatically.
+            for future in thread_future_array:
+                tool_executor_map_main.add_future(future)
+                future.add_done_callback(
+                    lambda _f, tool_id=tool_id: self._cleanup_tool_executor(tool_id)
+                )
+
+            for pid in proc_pids:
+                tool_executor_map_main.add_pid(pid)
+
+    def _cleanup_tool_executor(self, tool_id: str) -> None:
+        """Remove idle tool executors after futures complete."""
+        with self.tool_executor_lock:
+            executor = self.tool_executor_map.get(tool_id)
+            if not executor:
+                return
+            executor.prune()
+            if executor.is_empty():
+                self.tool_executor_map.pop(tool_id, None)
 
     def kill_scan_processes(self, tool_id_list: Optional[List[str]] = None) -> None:
         """
@@ -643,8 +658,35 @@ class ToolExecutor:
             thread_future_array (List[Any], optional): List of future objects for thread tracking
             proc_pids (Set[int], optional): Set of process IDs for subprocess tracking
         """
-        self.thread_future_array: List[Any] = thread_future_array or []
-        self.proc_pids: Set[int] = proc_pids or set()
+        self.process_handles: List[ProcessHandle] = []
+        if thread_future_array:
+            for future in thread_future_array:
+                self.process_handles.append(ProcessHandle(future=future))
+        if proc_pids:
+            for pid in proc_pids:
+                self.process_handles.append(ProcessHandle(pid=pid))
+
+    def add_future(self, future: Any) -> None:
+        """Add a future-backed handle."""
+        self.process_handles.append(ProcessHandle(future=future))
+
+    def add_pid(self, pid: int) -> None:
+        """Add a PID-backed handle."""
+        self.process_handles.append(ProcessHandle(pid=pid))
+
+    def prune(self) -> None:
+        """Drop completed/dead handles to prevent map growth."""
+        self.process_handles = [
+            handle for handle in self.process_handles
+            if not (
+                (handle.future is not None and handle.is_done())
+                or (handle.pid is not None and not handle.is_pid_alive())
+            )
+        ]
+
+    def is_empty(self) -> bool:
+        """Return True when no active handles remain."""
+        return len(self.process_handles) == 0
 
     def get_thread_futures(self) -> List[Any]:
         """
@@ -653,7 +695,7 @@ class ToolExecutor:
         Returns:
             List[Any]: List of concurrent.futures objects
         """
-        return self.thread_future_array
+        return [h.future for h in self.process_handles if h.future is not None]
 
     def get_process_pids(self) -> Set[int]:
         """
@@ -662,7 +704,7 @@ class ToolExecutor:
         Returns:
             Set[int]: Set of process IDs for running subprocesses
         """
-        return self.proc_pids
+        return {h.pid for h in self.process_handles if h.pid is not None}
 
 
 class RecordTag(enum.Enum):
@@ -1056,6 +1098,163 @@ class ScanData:
         >>> hosts = scan_data.get_hosts([RecordTag.SCOPE.value])
         >>> urls = scan_data.get_scope_urls()
     """
+
+    # ------------------------------------------------------------------
+    # Compatibility properties — delegate to the RecordStore so that all
+    # existing readers of scan_data.xxx_map continue to work unchanged.
+    # ------------------------------------------------------------------
+
+    @property
+    def scan_obj_map(self) -> Dict[str, Any]:
+        return self._store.scan_obj_map
+
+    @property
+    def subnet_map(self) -> Dict[str, Any]:
+        return self._store.subnet_map
+
+    @property
+    def host_map(self) -> Dict[str, Any]:
+        return self._store.host_map
+
+    @property
+    def host_ip_id_map(self) -> Dict[str, str]:
+        return self._store.host_ip_id_map
+
+    @property
+    def credential_map(self) -> Dict[str, Any]:
+        return self._store.credential_map
+
+    @property
+    def host_port_obj_map(self) -> Dict[str, Dict[str, Any]]:
+        return self._store.host_port_obj_map
+
+    @property
+    def domain_name_map(self) -> Dict[str, Any]:
+        return self._store.domain_name_map
+
+    @property
+    def domain_map(self) -> Dict[str, Any]:
+        return self._store.domain_map
+
+    @property
+    def domain_host_id_map(self) -> Dict[str, List[Any]]:
+        return self._store.domain_host_id_map
+
+    @property
+    def domain_port_id_map(self) -> Dict[str, Any]:
+        return self._store.domain_port_id_map
+
+    @property
+    def port_map(self) -> Dict[str, Any]:
+        return self._store.port_map
+
+    @property
+    def port_host_map(self) -> Dict[str, Set[str]]:
+        return self._store.port_host_map
+
+    @property
+    def host_id_port_map(self) -> Dict[str, List[Any]]:
+        return self._store.host_id_port_map
+
+    @property
+    def component_map(self) -> Dict[str, Any]:
+        return self._store.component_map
+
+    @property
+    def component_port_id_map(self) -> Dict[str, List[Any]]:
+        return self._store.component_port_id_map
+
+    @property
+    def component_name_port_id_map(self) -> Dict[str, List[str]]:
+        return self._store.component_name_port_id_map
+
+    @property
+    def module_name_component_map(self) -> Dict[str, List[Any]]:
+        return self._store.module_name_component_map
+
+    @property
+    def path_map(self) -> Dict[str, Any]:
+        return self._store.path_map
+
+    @property
+    def path_hash_id_map(self) -> Dict[str, List[str]]:
+        return self._store.path_hash_id_map
+
+    @property
+    def screenshot_map(self) -> Dict[str, Any]:
+        return self._store.screenshot_map
+
+    @property
+    def screenshot_hash_id_map(self) -> Dict[str, List[str]]:
+        return self._store.screenshot_hash_id_map
+
+    @property
+    def http_endpoint_map(self) -> Dict[str, Any]:
+        return self._store.http_endpoint_map
+
+    @property
+    def http_endpoint_port_id_map(self) -> Dict[str, List[Any]]:
+        return self._store.http_endpoint_port_id_map
+
+    @property
+    def http_endpoint_path_id_map(self) -> Dict[str, List[Any]]:
+        return self._store.http_endpoint_path_id_map
+
+    @property
+    def http_endpoint_data_screenshot_id_map(self) -> Dict[str, List[Any]]:
+        return self._store.http_endpoint_data_screenshot_id_map
+
+    @property
+    def http_endpoint_data_map(self) -> Dict[str, Any]:
+        return self._store.http_endpoint_data_map
+
+    @property
+    def endpoint_data_endpoint_id_map(self) -> Dict[str, List[Any]]:
+        return self._store.endpoint_data_endpoint_id_map
+
+    @property
+    def collection_module_map(self) -> Dict[str, Any]:
+        return self._store.collection_module_map
+
+    @property
+    def module_name_id_map(self) -> Dict[str, List[Any]]:
+        return self._store.module_name_id_map
+
+    @property
+    def collection_module_output_map(self) -> Dict[str, Any]:
+        return self._store.collection_module_output_map
+
+    @property
+    def collection_module_output_port_id_map(self) -> Dict[str, List[Any]]:
+        return self._store.collection_module_output_port_id_map
+
+    @property
+    def module_output_module_id_map(self) -> Dict[str, List[Any]]:
+        return self._store.module_output_module_id_map
+
+    @property
+    def vulnerability_map(self) -> Dict[str, Any]:
+        return self._store.vulnerability_map
+
+    @property
+    def vulnerability_name_id_map(self) -> Dict[str, List[Any]]:
+        return self._store.vulnerability_name_id_map
+
+    @property
+    def certificate_map(self) -> Dict[str, Any]:
+        return self._store.certificate_map
+
+    @property
+    def certificate_port_id_map(self) -> Dict[str, List[Any]]:
+        return self._store.certificate_port_id_map
+
+    @property
+    def module_map(self) -> Dict[str, Any]:
+        return self._store.module_map
+
+    @property
+    def component_name_module_map(self) -> Dict[str, List[Any]]:
+        return self._store.component_name_module_map
 
     def get_hosts(self, tag_list: Optional[List[str]] = None) -> List['Host']:
         """
@@ -1451,274 +1650,7 @@ class ScanData:
             else:
                 record_obj = obj
 
-            # logging.getLogger(__name__).warning(
-            #    "Processing record of type %s" % type(record_obj))
-            if isinstance(record_obj, Host):
-
-                # Get IP as unique index for map
-                host_ip = record_obj.ipv4_addr
-
-                # If host with this IP already exists, preserve credential_id
-                if host_ip in self.host_ip_id_map:
-                    old_host_id = self.host_ip_id_map[host_ip]
-                    if old_host_id in self.host_map:
-                        record_obj.credential = self.host_map[old_host_id].credential
-
-                self.host_ip_id_map[host_ip] = record_obj.id
-
-                # Add to the host insert list
-                self.host_map[record_obj.id] = record_obj
-
-            elif isinstance(record_obj, Domain):
-
-                # Get host ID of port obj
-                host_id = record_obj.parent.id
-                if host_id in self.domain_host_id_map:
-                    temp_domain_list = self.domain_host_id_map[host_id]
-                else:
-                    temp_domain_list = []
-                    self.domain_host_id_map[host_id] = temp_domain_list
-
-                # Add domain obj to list to be updated
-                temp_domain_list.append(record_obj)
-
-                # Create domain name id mapping
-                domain_name = record_obj.name
-                self.domain_name_map[domain_name] = record_obj
-
-                # Add domain obj to list for being imported
-                self.domain_map[record_obj.id] = record_obj
-
-            elif isinstance(record_obj, Port):
-
-                # Create host id to port list map
-                host_id = record_obj.parent.id
-                if host_id in self.host_id_port_map:
-                    temp_port_list = self.host_id_port_map[host_id]
-                else:
-                    temp_port_list = []
-                    self.host_id_port_map[host_id] = temp_port_list
-
-                 # Add port obj to list to be updated
-                temp_port_list.append(record_obj)
-
-                # Create port number to host id map
-                port_str = record_obj.port
-                if port_str in self.port_host_map:
-                    temp_host_id_set = self.port_host_map[port_str]
-                else:
-                    temp_host_id_set = set()
-                    self.port_host_map[port_str] = temp_host_id_set
-
-                # Add port obj to list to be updated
-                temp_host_id_set.add(host_id)
-
-                # Add port obj to list for being imported
-                self.port_map[record_obj.id] = record_obj
-
-            elif isinstance(record_obj, ListItem):
-
-                # Get path hash
-                if record_obj.web_path_hash:
-                    screenshot_path_hash = record_obj.web_path_hash.upper()
-                    if screenshot_path_hash in self.path_hash_id_map:
-                        temp_screenshot_list = self.path_hash_id_map[screenshot_path_hash]
-                    else:
-                        temp_screenshot_list = []
-                        self.path_hash_id_map[screenshot_path_hash] = temp_screenshot_list
-
-                    # Add port obj to list to be updated
-                    temp_screenshot_list.append(record_obj.id)
-
-                # Add path obj to list for being imported
-                self.path_map[record_obj.id] = record_obj
-
-            elif isinstance(record_obj, WebComponent):
-
-                # Get port id
-                port_id = record_obj.parent.id
-                if port_id in self.component_port_id_map:
-                    temp_list = self.component_port_id_map[port_id]
-                else:
-                    temp_list = []
-                    self.component_port_id_map[port_id] = temp_list
-                # Add port obj to list to be updated
-                temp_list.append(record_obj)
-
-                # Create a mapping of component name to port id
-                component_key = record_obj.name
-                if record_obj.version:
-                    component_key += ":" + record_obj.version
-
-                if component_key in self.component_name_port_id_map:
-                    temp_list = self.component_name_port_id_map[component_key]
-                else:
-                    temp_list = []
-                    self.component_name_port_id_map[component_key] = temp_list
-
-                # Add port obj to list to be updated
-                temp_list.append(port_id)
-
-                # Add component obj to list for being imported
-                self.component_map[record_obj.id] = record_obj
-
-            elif isinstance(record_obj, Screenshot):
-
-                # Get screenshot hash
-                if record_obj.image_hash:
-                    screenshot_path_hash = record_obj.image_hash.upper()
-                    if screenshot_path_hash in self.screenshot_hash_id_map:
-                        temp_screenshot_list = self.screenshot_hash_id_map[screenshot_path_hash]
-                    else:
-                        temp_screenshot_list = []
-                        self.screenshot_hash_id_map[screenshot_path_hash] = temp_screenshot_list
-
-                    # Add screenshot obj to list to be updated
-                    temp_screenshot_list.append(record_obj.id)
-
-                # Add screenshot obj to list for being imported
-                self.screenshot_map[record_obj.id] = record_obj
-
-            elif isinstance(record_obj, HttpEndpoint):
-
-                # Get path id
-                web_path_id = record_obj.web_path_id
-                if web_path_id in self.http_endpoint_path_id_map:
-                    temp_endpoint_list = self.http_endpoint_path_id_map[web_path_id]
-                else:
-                    temp_endpoint_list = []
-                    self.http_endpoint_path_id_map[web_path_id] = temp_endpoint_list
-
-                # Add path obj to list to be updated
-                temp_endpoint_list.append(record_obj)
-
-                # Get port id
-                port_id = record_obj.parent.id
-                if port_id in self.http_endpoint_port_id_map:
-                    temp_endpoint_list = self.http_endpoint_port_id_map[port_id]
-                else:
-                    temp_endpoint_list = []
-                    self.http_endpoint_port_id_map[port_id] = temp_endpoint_list
-
-                # Add port obj to list to be updated
-                temp_endpoint_list.append(record_obj)
-
-                # Add http endpoint obj to list for being imported
-                self.http_endpoint_map[record_obj.id] = record_obj
-
-            elif isinstance(record_obj, HttpEndpointData):
-
-                # Get http endpoint
-                http_endpoint_id = record_obj.parent.id
-                if http_endpoint_id in self.endpoint_data_endpoint_id_map:
-                    temp_endpoint_list = self.endpoint_data_endpoint_id_map[http_endpoint_id]
-                else:
-                    temp_endpoint_list = []
-                    self.endpoint_data_endpoint_id_map[http_endpoint_id] = temp_endpoint_list
-
-                # Add path obj to list to be updated
-                temp_endpoint_list.append(record_obj)
-
-                # Get screenshot id
-                screenshot_id = record_obj.screenshot_id
-                if screenshot_id in self.http_endpoint_data_screenshot_id_map:
-                    temp_endpoint_list = self.http_endpoint_data_screenshot_id_map[screenshot_id]
-                else:
-                    temp_endpoint_list = []
-                    self.http_endpoint_data_screenshot_id_map[screenshot_id] = temp_endpoint_list
-
-                # Add screenshot obj to list to be updated
-                temp_endpoint_list.append(record_obj)
-
-                # Add http endpoint obj to list for being imported
-                self.http_endpoint_data_map[record_obj.id] = record_obj
-
-            elif isinstance(record_obj, Vuln):
-
-                # Get vuln name
-                vuln_name = record_obj.name
-                if vuln_name in self.vulnerability_name_id_map:
-                    temp_vuln_list = self.vulnerability_name_id_map[vuln_name]
-                else:
-                    temp_vuln_list = []
-                    self.vulnerability_name_id_map[vuln_name] = temp_vuln_list
-
-                # Add vuln obj to list
-                temp_vuln_list.append(record_obj)
-
-                # Add vulnerability obj to list for being imported
-                self.vulnerability_map[record_obj.id] = record_obj
-
-            elif isinstance(record_obj, CollectionModule):
-
-                # Get module name
-                module_name = record_obj.name
-                if module_name in self.module_name_id_map:
-                    temp_module_list = self.module_name_id_map[module_name]
-                else:
-                    temp_module_list = []
-                    self.module_name_id_map[module_name] = temp_module_list
-
-                # Add module obj to list
-                temp_module_list.append(record_obj)
-
-                # Add collection module obj to list for being imported
-                self.collection_module_map[record_obj.id] = record_obj
-
-            elif isinstance(record_obj, CollectionModuleOutput):
-
-                # Get module id
-                module_id = record_obj.parent.id
-                if module_id in self.module_output_module_id_map:
-                    temp_module_ouput_list = self.module_output_module_id_map[module_id]
-                else:
-                    temp_module_ouput_list = []
-                    self.module_output_module_id_map[module_id] = temp_module_ouput_list
-
-                # Add module obj to list
-                temp_module_ouput_list.append(record_obj)
-
-                port_id = record_obj.port_id
-                if port_id in self.collection_module_output_port_id_map:
-                    temp_module_ouput_list = self.collection_module_output_port_id_map[port_id]
-                else:
-                    temp_module_ouput_list = []
-                    self.collection_module_output_port_id_map[port_id] = temp_module_ouput_list
-
-                # Add module obj to list
-                temp_module_ouput_list.append(record_obj)
-
-                # Add collection module output obj to list for being imported
-                self.collection_module_output_map[record_obj.id] = record_obj
-
-            elif isinstance(record_obj, Certificate):
-
-                # Get port id
-                port_id = record_obj.parent.id
-                if port_id in self.certificate_port_id_map:
-                    temp_cert_list = self.certificate_port_id_map[port_id]
-                else:
-                    temp_cert_list = []
-                    self.certificate_port_id_map[port_id] = temp_cert_list
-
-                # Add port obj to list to be updated
-                temp_cert_list.append(record_obj)
-
-                # Add certificate obj to list for being imported
-                self.certificate_map[record_obj.id] = record_obj
-
-            elif isinstance(record_obj, Subnet):
-
-                # Add subnet obj to list for being imported
-                self.subnet_map[record_obj.id] = record_obj
-
-            elif isinstance(record_obj, Credential):
-
-                # Add credential obj to list for being imported
-                self.credential_map[record_obj.id] = record_obj
-
-            # Add to overall mapping
-            self.scan_obj_map[record_obj.id] = record_obj
+            self._store.add(record_obj)
 
     def get_port_number_list_from_scope(self) -> List[str]:
         """
@@ -1781,123 +1713,14 @@ class ScanData:
         """
         record_tags = record_tags or set()
 
-        # Initialize all data structure collections
+        # ── scan-level (non-record) state ────────────────────────────────────
         self.scan_obj_list: List[Any] = []
         self.module_id: Optional[str] = None
-
-        # Core object mappings - Maps object IDs to their respective objects
-        # Universal object ID -> object mapping
-        self.scan_obj_map: Dict[str, Any] = {}
-
-        # Network infrastructure mappings
-        # Subnet ID -> Subnet object
-        self.subnet_map: Dict[str, 'Subnet'] = {}
-        # Host ID -> Host object
-        self.host_map: Dict[str, 'Host'] = {}
-        # IP address -> Host ID
-        self.host_ip_id_map: Dict[str, str] = {}
-
-        # Credential ID -> Credential object
-        self.credential_map: Dict[str, 'Credential'] = {}
-
-        # Host-Port relationship mappings
-        # "IP:port"/"domain:port" -> {host_obj, port_obj}
-        self.host_port_obj_map: Dict[str, Dict[str, Any]] = {}
-
-        # Domain name mappings
-        # Domain name -> Domain object
-        self.domain_name_map: Dict[str, 'Domain'] = {}
-        # Domain ID -> Domain object
-        self.domain_map: Dict[str, 'Domain'] = {}
-        # Host ID -> List of Domain objects
-        self.domain_host_id_map: Dict[str, List['Domain']] = {}
-        # "domain:port" -> (host_id, port_id)
-        self.domain_port_id_map: Dict[str, Tuple[str, str]] = {}
-
-        # Port mappings
-        # Port ID -> Port object
-        self.port_map: Dict[str, 'Port'] = {}
-        # Port number -> Set of Host IDs
-        self.port_host_map: Dict[str, Set[str]] = {}
-        # Host ID -> List of Port objects
-        self.host_id_port_map: Dict[str, List['Port']] = {}
-
-        # Web component mappings
-        # Component ID -> WebComponent object
-        self.component_map: Dict[str, 'WebComponent'] = {}
-        self.component_port_id_map: Dict[str, List['WebComponent']] = {
-        }                # Port ID -> List of WebComponent objects
-        # Component name -> List of Port IDs
-        self.component_name_port_id_map: Dict[str, List[str]] = {}
-        # Module name -> List of WebComponent objects
-        self.module_name_component_map: Dict[str, List['WebComponent']] = {}
-
-        # Web path and screenshot mappings
-        # Path ID -> ListItem object
-        self.path_map: Dict[str, 'ListItem'] = {}
-        # Path hash -> List of Path IDs
-        self.path_hash_id_map: Dict[str, List[str]] = {}
-        # Screenshot ID -> Screenshot object
-        self.screenshot_map: Dict[str, 'Screenshot'] = {}
-        # Image hash -> List of Screenshot IDs
-        self.screenshot_hash_id_map: Dict[str, List[str]] = {}
-
-        # HTTP endpoint mappings
-        # Endpoint ID -> HttpEndpoint object
-        self.http_endpoint_map: Dict[str, 'HttpEndpoint'] = {}
-        # Port ID -> List of HttpEndpoint objects
-        self.http_endpoint_port_id_map: Dict[str, List['HttpEndpoint']] = {}
-        # Path ID -> List of HttpEndpoint objects
-        self.http_endpoint_path_id_map: Dict[str, List['HttpEndpoint']] = {}
-        # Screenshot ID -> List of HttpEndpointData objects
-        self.http_endpoint_data_screenshot_id_map: Dict[str, List['HttpEndpointData']] = {
-        }
-
-        # HTTP endpoint data mappings
-        # EndpointData ID -> HttpEndpointData object
-        self.http_endpoint_data_map: Dict[str, 'HttpEndpointData'] = {}
-        # Endpoint ID -> List of HttpEndpointData objects
-        self.endpoint_data_endpoint_id_map: Dict[str, List['HttpEndpointData']] = {
-        }
-
-        # Collection module mappings
-        self.collection_module_map: Dict[str, 'CollectionModule'] = {
-        }                  # Module ID -> CollectionModule object
-        # Module name -> List of CollectionModule objects
-        self.module_name_id_map: Dict[str, List['CollectionModule']] = {}
-        # Output ID -> CollectionModuleOutput object
-        self.collection_module_output_map: Dict[str,
-                                                'CollectionModuleOutput'] = {}
-        # Port ID -> List of outputs
-        self.collection_module_output_port_id_map: Dict[str, List['CollectionModuleOutput']] = {
-        }
-        # Module ID -> List of outputs
-        self.module_output_module_id_map: Dict[str,
-                                               List['CollectionModuleOutput']] = {}
-
-        # Vulnerability mappings
-        # Vulnerability ID -> Vuln object
-        self.vulnerability_map: Dict[str, 'Vuln'] = {}
-        # Vulnerability name -> List of Vuln objects
-        self.vulnerability_name_id_map: Dict[str, List['Vuln']] = {}
-
-        # Certificate mappings
-        # Certificate ID -> Certificate object
-        self.certificate_map: Dict[str, 'Certificate'] = {}
-        # Port ID -> List of Certificate objects
-        self.certificate_port_id_map: Dict[str, List['Certificate']] = {}
-
-        # Scope and configuration
-        # List of port numbers from scan scope
         self.port_number_list: List[str] = []
-        # Count of hosts processed
         self.host_count: int = 0
 
-        # Additional module mappings
-        # Module ID -> Module object
-        self.module_map: Dict[str, Any] = {}
-        self.component_name_module_map: Dict[str, List[Any]] = {
-        }               # Component name -> List of modules
+        # ── indexed record store (replaces the 38 per-type dicts) ────────────
+        self._store: RecordStore = RecordStore()
 
         # Process initial scan data
         # logging.getLogger(__name__).debug(

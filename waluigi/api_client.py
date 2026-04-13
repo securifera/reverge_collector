@@ -41,8 +41,8 @@ class ApiClient:
         manager_url: Base URL of the management server.
         headers:     HTTP headers including the ``Authorization: Bearer`` token.
         session_key: Current AES session key bytes.
-        verify_ssl:  Whether to verify TLS certificates (default ``False`` for
-                     backward compatibility; set via ``REVERGE_VERIFY_SSL`` env var).
+        verify_ssl:  Whether to verify TLS certificates (default ``True``;
+                     override via ``REVERGE_VERIFY_SSL`` env var).
     """
 
     def __init__(self, token: str, manager_url: str) -> None:
@@ -51,7 +51,9 @@ class ApiClient:
             "User-Agent": _CUSTOM_USER_AGENT,
             "Authorization": "Bearer " + token,
         }
-        self.verify_ssl: bool = os.environ.get("REVERGE_VERIFY_SSL", "").lower() in (
+        self.verify_ssl: bool = os.environ.get(
+            "REVERGE_VERIFY_SSL", "true"
+        ).lower() in (
             "1", "true", "yes"
         )
         self.session_key: bytes = self._init_session_key()
@@ -63,20 +65,20 @@ class ApiClient:
     def _init_session_key(self) -> bytes:
         """Obtain the AES session key, performing the RSA handshake if needed."""
         try:
-            return tool_utils.get_session_key(self.manager_url, self.headers)
+            # Collector runtime keeps session key in memory only.
+            return tool_utils.get_session_key(
+                self.manager_url,
+                self.headers,
+                use_cached=False,
+                persist=False,
+            )
         except RuntimeError as exc:
             raise RuntimeError(
                 "Reverge session key exchange failed: %s" % exc
             ) from exc
 
     def _refresh_session_key(self) -> bytes:
-        """Force a new session key by clearing the cached key and re-exchanging."""
-        session_path = os.path.abspath(tool_utils._SESSION_FILE)
-        if os.path.exists(session_path):
-            try:
-                os.remove(session_path)
-            except OSError:
-                pass
+        """Force a new in-memory session key exchange."""
         self.session_key = self._init_session_key()
         return self.session_key
 
@@ -98,16 +100,7 @@ class ApiClient:
             return tool_utils.decrypt_data(self.session_key, b64_data)
         except Exception as exc:
             logger.error("Decryption failed: %s — attempting key refresh", exc)
-            # Try the key stored on disk in case another process refreshed it
-            disk_key = tool_utils._load_session_key()
-            if disk_key and disk_key != self.session_key:
-                try:
-                    result = tool_utils.decrypt_data(disk_key, b64_data)
-                    self.session_key = disk_key
-                    return result
-                except Exception:
-                    pass
-            # Full refresh
+            # Full refresh (memory-only key lifecycle)
             try:
                 self._refresh_session_key()
                 return tool_utils.decrypt_data(self.session_key, b64_data)

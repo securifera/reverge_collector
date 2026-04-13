@@ -60,6 +60,7 @@ from waluigi.api_client import ApiClient
 from functools import partial, cmp_to_key
 
 import logging
+import os
 import netifaces
 import requests
 import threading
@@ -257,8 +258,21 @@ class ScheduledScanThread(threading.Thread):
         self.scan_thread_lock = threading.Lock()
         self.log_queue: Optional[Any] = None
         self.scheduled_scan_map: Dict[str, data_model.ScheduledScan] = {}
+        self.max_concurrent_scans = int(
+            os.environ.get("REVERGE_MAX_CONCURRENT_SCANS", "3")
+        )
+        if self.max_concurrent_scans < 1:
+            self.max_concurrent_scans = 1
+        self.scan_semaphore = threading.Semaphore(self.max_concurrent_scans)
         # Per-instance variable to hold task failures (avoids cross-thread race)
         self.failed_task_exception: Optional[Tuple[Any, Exception]] = None
+
+    def _process_scan_obj_with_slot(self, scheduled_scan_obj: data_model.ScheduledScan) -> None:
+        """Run scan processing while ensuring semaphore slot release."""
+        try:
+            self.process_scan_obj(scheduled_scan_obj)
+        finally:
+            self.scan_semaphore.release()
 
     def catch_failure(self, task: Any, exception: Exception) -> None:
         """Capture tool task failures for inclusion in status updates."""
@@ -333,7 +347,7 @@ class ScheduledScanThread(threading.Thread):
         # Sort tools by execution order for proper dependency handling
         collection_tools = scheduled_scan_obj.collection_tool_map.values()
         sorted_list = sorted(collection_tools,
-                     key=cmp_to_key(tool_order_cmp))
+                             key=cmp_to_key(tool_order_cmp))
 
         # Establish connection to extender for scan status monitoring
         if self.connection_manager and self.connection_manager.connect_to_extender() == False:
@@ -675,14 +689,31 @@ class ScheduledScanThread(threading.Thread):
                                     # Handle new scans
                                     if sched_scan_obj.id not in self.scheduled_scan_map:
 
-                                        # Create new scheduled scan instance
-                                        scheduled_scan_obj = data_model.ScheduledScan(
-                                            self, sched_scan_obj)
-                                        self.scheduled_scan_map[sched_scan_obj.id] = scheduled_scan_obj
+                                        # Respect global scan concurrency cap.
+                                        if not self.scan_semaphore.acquire(blocking=False):
+                                            logging.getLogger(__name__).debug(
+                                                "Max concurrent scans reached (%d); deferring %s",
+                                                self.max_concurrent_scans,
+                                                sched_scan_obj.id,
+                                            )
+                                            continue
 
-                                        # Start scan processing in separate thread
-                                        Thread(target=partial(
-                                            self.process_scan_obj, scheduled_scan_obj)).start()
+                                        # Create new scheduled scan instance
+                                        try:
+                                            scheduled_scan_obj = data_model.ScheduledScan(
+                                                self, sched_scan_obj)
+                                            self.scheduled_scan_map[sched_scan_obj.id] = scheduled_scan_obj
+
+                                            # Start scan processing in separate thread
+                                            Thread(
+                                                target=partial(
+                                                    self._process_scan_obj_with_slot,
+                                                    scheduled_scan_obj,
+                                                )
+                                            ).start()
+                                        except Exception:
+                                            self.scan_semaphore.release()
+                                            raise
 
                                     else:
                                         # Handle existing scans - check for cancellation
