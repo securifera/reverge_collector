@@ -48,18 +48,19 @@ Note:
 import json
 import os
 import binascii
-import luigi
 import traceback
 import hashlib
 import base64
 import logging
 from typing import Dict, Tuple, Any, Optional, List
 
-from luigi.util import inherits
-from pyshot import pyshot as pyshot_lib
 from waluigi import scan_utils
 from os.path import exists
 from waluigi import data_model
+from waluigi.tool_runner import (
+    import_already_done as _import_already_done,
+    import_results as _import_results,
+)
 
 # Global future mapping for screenshot target management and deduplication
 future_map: Dict[str, Tuple[Optional[int], Tuple]] = {}
@@ -125,8 +126,8 @@ class Pyshot(data_model.WaluigiTool):
         self.collector_type = data_model.CollectorType.ACTIVE.value
         self.scan_order = 8
         self.args = ""
-        self.scan_func = Pyshot.pyshot_scan_func
-        self.import_func = Pyshot.pyshot_import
+        self.scan_func = pyshot_scan_func
+        self.import_func = pyshot_import
         self.input_records = [data_model.ServerRecordType.PORT,
                               data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
         self.output_records = [
@@ -136,68 +137,6 @@ class Pyshot(data_model.WaluigiTool):
             data_model.ServerRecordType.HTTP_ENDPOINT,
             data_model.ServerRecordType.HTTP_ENDPOINT_DATA
         ]
-
-    @staticmethod
-    def pyshot_scan_func(scan_input: Any) -> bool:
-        """
-        Execute Pyshot screenshot capture operations.
-
-        This static method serves as the entry point for executing screenshot
-        capture operations within the Waluigi framework. It builds and runs the
-        PyshotScan Luigi task with the provided scan input configuration.
-
-        Args:
-            scan_input (Any): The scan input object containing target information,
-                            endpoint data, and execution parameters
-
-        Returns:
-            bool: True if the screenshot capture completed successfully, False otherwise
-
-        Example:
-            >>> scan_obj = create_scan_input(...)  # Configure scan
-            >>> success = Pyshot.pyshot_scan_func(scan_obj)
-            >>> print(f"Screenshot capture successful: {success}")
-
-        Note:
-            Uses Luigi's local scheduler for task execution and provides detailed
-            summary information for debugging and monitoring purposes.
-        """
-        luigi_run_result = luigi.build([PyshotScan(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
-
-    @staticmethod
-    def pyshot_import(scan_input: Any) -> bool:
-        """
-        Import and process Pyshot screenshot results.
-
-        This static method handles the import phase of the screenshot workflow,
-        processing captured screenshots and importing findings into the database
-        structure with proper metadata and relationships.
-
-        Args:
-            scan_input (Any): The scan input object containing configuration
-                            and metadata for the import operation
-
-        Returns:
-            bool: True if the import completed successfully, False otherwise
-
-        Example:
-            >>> # After successful screenshot capture
-            >>> imported = Pyshot.pyshot_import(scan_obj)
-            >>> print(f"Import successful: {imported}")
-
-        Note:
-            This method depends on the successful completion of the screenshot
-            capture phase and processes all generated screenshot files and metadata.
-        """
-        luigi_run_result = luigi.build([ImportPyshotOutput(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
 
 
 def pyshot_wrapper(ip_addr: str, port: str, dir_path: str, ssl_val: bool, port_id: int,
@@ -246,6 +185,7 @@ def pyshot_wrapper(ip_addr: str, port: str, dir_path: str, ssl_val: bool, port_i
         domain_str = domain
     logging.getLogger(__name__).debug("Running Pyshot scan on %s:%s%s (%s)" %
                                       (ip_addr, port, query_arg, domain_str))
+    from pyshot import pyshot as pyshot_lib  # noqa: PLC0415
     pyshot_lib.take_screenshot(host=ip_addr, port_arg=port, query_arg=query_arg,
                                dest_dir=dir_path, secure=ssl_val, port_id=port_id, domain=domain, endpoint_id=http_endpoint_data_id)
 
@@ -317,404 +257,162 @@ def queue_scan(host: str, port_str: str, dir_path: str, secure: bool, port_id: i
     return
 
 
-class PyshotScan(luigi.Task):
-    """
-    Luigi task for executing Pyshot screenshot capture operations.
-
-    This task orchestrates the execution of screenshot capture against discovered
-    web endpoints, managing input parameters, output file generation, and execution
-    flow within the Luigi workflow framework. It processes HTTP endpoints from
-    previous scanning phases and generates visual documentation.
-
-    Attributes:
-        scan_input (luigi.Parameter): The scan input object containing target information,
-                                    endpoint data, and configuration parameters
-
-    Methods:
-        output: Defines the output file target for the screenshot metadata
-        requires: Specifies task dependencies (inherited from parent tasks)
-        run: Executes the actual screenshot capture operations
-
-    Example:
-        >>> scan_obj = ScanInputObject(...)  # Configured scan input
-        >>> task = PyshotScan(scan_input=scan_obj)
-        >>> luigi.build([task])
-
-    Note:
-        This class inherits from luigi.Task and follows Luigi's task execution model.
-        The task processes HTTP endpoints discovered by previous scanning phases
-        and generates screenshots with metadata for later import.
-    """
-
-    scan_input = luigi.Parameter()
-
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define the output file target for screenshot metadata.
-
-        Creates a unique metadata file path based on the scan ID and tool name,
-        ensuring that screenshot metadata is properly organized and accessible to
-        downstream tasks in the Luigi workflow.
-
-        Returns:
-            luigi.LocalTarget: A Luigi target representing the metadata file where
-                             screenshot information will be stored
-
-        Side Effects:
-            - Initializes the tool output directory structure if it doesn't exist
-            - Creates directory paths as needed for organized output storage
-
-        Example:
-            >>> task = PyshotScan(scan_input=scan_obj)
-            >>> target = task.output()
-            >>> print(target.path)
-            /path/to/outputs/pyshot/scan_123/screenshots.meta
-
-        Note:
-            The metadata file contains JSON lines with screenshot information
-            including file paths, URLs, and associated endpoint data.
-        """
-
-        scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.id
-
-        # Init directory
-        tool_name = scheduled_scan_obj.current_tool.name
-        dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-
-        # Meta file when complete
-        meta_file = '%s%s%s' % (dir_path, os.path.sep, 'screenshots.meta')
-
-        return luigi.LocalTarget(meta_file)
-
-    def run(self) -> None:
-        """
-        Execute the Pyshot screenshot capture operation.
-
-        This method orchestrates the complete screenshot workflow including:
-        - Processing discovered HTTP endpoints and web paths
-        - Queuing screenshot targets with deduplication
-        - Handling both IP-based and domain-based targets
-        - Concurrent execution of screenshot capture operations
-        - Intelligent filtering for likely web endpoints
-
-        The method processes all HTTP endpoints from previous scan phases,
-        constructs appropriate URLs, and executes screenshot capture against
-        each unique target concurrently for performance.
-
-        Returns:
-            None: Screenshots and metadata are written to the output directory
-
-        Side Effects:
-            - Modifies the global future_map to track screenshot targets
-            - Creates screenshot files in the output directory
-            - Generates metadata file for import processing
-            - Registers tool executors with the scan management system
-
-        Raises:
-            OSError: If output directories cannot be created or accessed
-            Exception: Various exceptions related to screenshot capture or file I/O
-
-        Example:
-            >>> task = PyshotScan(scan_input=scan_obj)
-            >>> task.run()  # Executes all configured screenshot captures
-
-        Note:
-            This method includes intelligent filtering to avoid screenshot attempts
-            on non-web ports and implements concurrent execution for performance.
-            It processes both discovered HTTP endpoints and likely web ports.
-        """
-
-        global future_map
-        # Ensure output folder exists
-        dir_path = os.path.dirname(self.output().path)
-
-        scheduled_scan_obj = self.scan_input
-
-        # Get all URLs with metadata and submit tasks directly
-        url_metadata_map = scheduled_scan_obj.scan_data.get_urls()
-
-        from urllib.parse import urlparse
-        futures = []
-
-        for url, metadata in url_metadata_map.items():
-            # Extract host from URL for pyshot_wrapper
-            parsed_url = urlparse(url)
-            host = parsed_url.hostname
-            port_str = str(parsed_url.port) if parsed_url.port else (
-                '443' if parsed_url.scheme == 'https' else '80')
-            secure = parsed_url.scheme == 'https'
-            query_arg = parsed_url.path + \
-                ('?' + parsed_url.query if parsed_url.query else '')
-
-            # Submit the scan task directly
-            future_inst = scan_utils.executor.submit(
-                pyshot_wrapper, host, port_str, dir_path, secure,
-                metadata["port_id"], query_arg, metadata.get("domain"),
-                metadata.get("http_endpoint_data_id"))
-            futures.append(future_inst)
-
-        scan_proc_inst = data_model.ToolExecutor(futures)
-        scheduled_scan_obj.register_tool_executor(
-            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
-
-        # Wait for the tasks to complete and retrieve results
-        for future in futures:
-            future.result()
-
-
-@inherits(PyshotScan)
-class ImportPyshotOutput(data_model.ImportToolXOutput):
-    """
-    Luigi task for importing and processing Pyshot screenshot results.
-
-    This task handles the post-processing of Pyshot screenshot outputs, parsing
-    metadata files, processing screenshot images, and importing the findings
-    into the database structure with proper relationships and deduplication.
-
-    The class inherits from both PyshotScan (via @inherits decorator) and
-    ImportToolXOutput, providing access to scan parameters and import functionality.
-
-    Processing includes:
-        - Loading screenshot metadata from JSON line files
-        - Hash-based screenshot deduplication
-        - Base64 encoding of screenshot images
-        - Creation of database objects for screenshots, domains, and endpoints
-        - Batch import of processed data with relationship mapping
-
-    Attributes:
-        Inherits all attributes from PyshotScan including scan_input parameter
-
-    Methods:
-        requires: Specifies that PyshotScan must complete before import
-        run: Processes screenshot files and imports results to database
-
-    Example:
-        >>> import_task = ImportPyshotOutput(scan_input=scan_obj)
-        >>> luigi.build([import_task])  # Runs PyshotScan then ImportPyshotOutput
-
-    Note:
-        This task automatically depends on PyshotScan completion and processes
-        all screenshot files and metadata generated during the capture phase.
-        Uses SHA-1 hashing for both screenshot and path deduplication.
-    """
-
-    def requires(self) -> PyshotScan:
-        """
-        Define task dependencies for the import operation.
-
-        Ensures that the PyshotScan task completes successfully before attempting
-        to import and process the screenshot results and metadata.
-
-        Returns:
-            PyshotScan: The screenshot capture task that must complete before import
-
-        Example:
-            >>> task = ImportPyshotOutput(scan_input=scan_obj)
-            >>> deps = task.requires()
-            >>> print(type(deps).__name__)
-            PyshotScan
-        """
-        # Requires PyshotScan Task to be run prior
-        return PyshotScan(scan_input=self.scan_input)
-
-    def run(self) -> None:
-        """
-        Process and import Pyshot screenshot results into the database.
-
-        This method performs comprehensive processing of screenshot files and metadata,
-        including image hashing, Base64 encoding, and database object creation.
-        It handles the complete import workflow from file processing to database
-        insertion with proper relationship mapping.
-
-        The processing workflow includes:
-        - Loading screenshot metadata from JSON line files
-        - Processing screenshot images with hash-based deduplication
-        - Base64 encoding of image data for database storage
-        - Creating domain, path, endpoint, and screenshot database objects
-        - Batch importing with proper relationship mapping
-        - Updating scan scope with imported data
-
-        Returns:
-            None: Results are imported directly into the database via batch operations
-
-        Side Effects:
-            - Creates database records for screenshots, domains, paths, and endpoints
-            - Updates deduplication maps for screenshots and paths
-            - Processes all screenshot files from the preceding PyshotScan task
-            - Writes import results to the tool import file
-
-        Raises:
-            json.JSONDecodeError: If metadata files contain invalid JSON
-            FileNotFoundError: If expected screenshot files are missing
-            IOError: If screenshot files cannot be read or processed
-            Exception: Various exceptions related to image processing or database operations
-
-        Example:
-            >>> task = ImportPyshotOutput(scan_input=scan_obj)
-            >>> task.run()  # Processes and imports all screenshot results
-
-        Note:
-            Uses SHA-1 hashing for both screenshot and web path deduplication.
-            Screenshot images are stored as Base64-encoded strings in the database.
-            The method handles both existing and new HTTP endpoint data objects.
-        """
-
-        meta_file = self.input().path
-        scheduled_scan_obj = self.scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        scan_id = scheduled_scan_obj.scan_id
-        recon_manager = scheduled_scan_obj.scan_thread.recon_manager
-        tool_obj = scheduled_scan_obj.current_tool
-        tool_id = tool_obj.id
-
-        path_hash_map = {}
-        screenshot_hash_map = {}
-        domain_name_id_map = {}
-
-        if os.path.exists(meta_file):
-
-            with open(meta_file, 'r') as file_fd:
-                lines = file_fd.readlines()
-
-            count = 0
-            import_data_arr = []
-            for line in lines:
-                ret_arr = []
-
-                screenshot_meta = json.loads(line)
-                filename = screenshot_meta['file_path']
-                if filename and exists(filename):
-                    url = screenshot_meta['url']
-                    web_path = screenshot_meta['path']
-                    port_id = screenshot_meta['port_id']
-                    status_code = screenshot_meta['status_code']
-                    http_endpoint_data_id = screenshot_meta['endpoint_id']
-
-                    # Hash the image
-                    screenshot_id = None
-                    image_data = b""
-                    hash_alg = hashlib.sha1
-                    with open(filename, "rb") as rf:
-                        image_data = rf.read()
-                        hashobj = hash_alg()
-                        hashobj.update(image_data)
-                        image_hash = hashobj.digest()
-                        image_hash_str = binascii.hexlify(image_hash).decode()
-                        screenshot_bytes_b64 = base64.b64encode(
-                            image_data).decode()
-
-                        if image_hash_str in screenshot_hash_map:
-                            screenshot_obj = screenshot_hash_map[image_hash_str]
-                        else:
-                            screenshot_obj = data_model.Screenshot()
-                            screenshot_obj.collection_tool_instance_id = tool_instance_id
-                            screenshot_obj.screenshot = screenshot_bytes_b64
-                            screenshot_obj.image_hash = image_hash_str
-
-                            # Add to map and the object list
-                            screenshot_hash_map[image_hash_str] = screenshot_obj
-
-                        ret_arr.append(screenshot_obj)
-
-                        screenshot_id = screenshot_obj.id
-
-                    hashobj = hash_alg()
-                    hashobj.update(web_path.encode())
-                    path_hash = hashobj.digest()
-                    hex_str = binascii.hexlify(path_hash).decode()
-                    web_path_hash = hex_str
-
-                    # Domain key exists and is not None
-                    endpoint_domain_id = None
-                    if 'domain' in screenshot_meta and screenshot_meta['domain']:
-                        domain_str = screenshot_meta['domain']
-                        if domain_str in domain_name_id_map:
-                            domain_obj = domain_name_id_map[domain_str]
-                        else:
-                            domain_obj = data_model.Domain()
-                            domain_obj.collection_tool_instance_id = tool_instance_id
-                            domain_obj.name = domain_str
-                            domain_name_id_map[domain_str] = domain_obj
-
-                        # Add domain
-                        ret_arr.append(domain_obj)
-                        # Set endpoint id
-                        endpoint_domain_id = domain_obj.id
-
-                    if web_path_hash in path_hash_map:
-                        path_obj = path_hash_map[web_path_hash]
-                    else:
-                        path_obj = data_model.ListItem()
-                        path_obj.collection_tool_instance_id = tool_instance_id
-                        path_obj.web_path = web_path
-                        path_obj.web_path_hash = web_path_hash
-
-                        # Add to map and the object list
-                        path_hash_map[web_path_hash] = path_obj
-
-                    # Add path object
-                    ret_arr.append(path_obj)
-
-                    web_path_id = path_obj.id
-
-                    # Add http endpoint
-                    http_endpoint_obj = data_model.HttpEndpoint(
-                        parent_id=port_id)
-                    http_endpoint_obj.collection_tool_instance_id = tool_instance_id
-                    http_endpoint_obj.web_path_id = web_path_id
-
-                    # Add the endpoint
-                    ret_arr.append(http_endpoint_obj)
-
-                    # Add http endpoint data
-                    http_endpoint_data_obj = data_model.HttpEndpointData(
-                        parent_id=http_endpoint_obj.id)
-                    http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
-                    http_endpoint_data_obj.domain_id = endpoint_domain_id
-                    http_endpoint_data_obj.status = status_code
-                    http_endpoint_data_obj.screenshot_id = screenshot_id
-
-                    # Set the object id if the object already exists
-                    if http_endpoint_data_id:
-                        http_endpoint_data_obj.id = http_endpoint_data_id
-
-                    # Add the endpoint
-                    ret_arr.append(http_endpoint_data_obj)
-
-                    if len(ret_arr) > 0:
-
-                        record_map = {}
-                        import_arr = []
-                        for obj in ret_arr:
-                            record_map[obj.id] = obj
-                            flat_obj = obj.to_jsonable()
-                            import_arr.append(flat_obj)
-
-                        # Import the ports to the manager
-                        updated_record_map = recon_manager.import_data(
-                            scan_id, tool_id, import_arr)
-
-                        # Update the records
-                        updated_import_arr = data_model.update_scope_array(
-                            record_map, updated_record_map)
-
-                        import_data_arr.extend(updated_import_arr)
-
-                        # Update the scan scope
-                        scheduled_scan_obj.scan_data.update(record_map)
-
-                    count += 1
-
-            # Write imported data to file
-            tool_import_file = self.output().path
-            with open(tool_import_file, 'w') as import_fd:
-                import_fd.write(json.dumps(import_data_arr))
-
-            logging.getLogger(__name__).debug(
-                "Imported %d screenshots to manager." % (count))
-
+def get_output_path(scan_input) -> str:
+    scan_id = scan_input.id
+    tool_name = scan_input.current_tool.name
+    dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return dir_path + os.path.sep + 'screenshots.meta'
+
+
+def execute_scan(scan_input) -> None:
+    output_file_path = get_output_path(scan_input)
+    if os.path.exists(output_file_path):
+        return
+
+    global future_map
+    dir_path = os.path.dirname(output_file_path)
+
+    scheduled_scan_obj = scan_input
+    url_metadata_map = scheduled_scan_obj.scan_data.get_urls()
+
+    from urllib.parse import urlparse
+    futures = []
+
+    for url, metadata in url_metadata_map.items():
+        parsed_url = urlparse(url)
+        host = parsed_url.hostname
+        port_str = str(parsed_url.port) if parsed_url.port else (
+            '443' if parsed_url.scheme == 'https' else '80')
+        secure = parsed_url.scheme == 'https'
+        query_arg = parsed_url.path + \
+            ('?' + parsed_url.query if parsed_url.query else '')
+
+        future_inst = scan_utils.executor.submit(
+            pyshot_wrapper, host, port_str, dir_path, secure,
+            metadata["port_id"], query_arg, metadata.get("domain"),
+            metadata.get("http_endpoint_data_id"))
+        futures.append(future_inst)
+
+    scan_proc_inst = data_model.ToolExecutor(futures)
+    scheduled_scan_obj.register_tool_executor(
+        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+
+    for future in futures:
+        future.result()
+
+
+def parse_pyshot_output(meta_file, tool_instance_id):
+    """Parse a Pyshot .meta file and return a flat list of data-model objects."""
+    ret_arr = []
+    if not os.path.exists(meta_file):
+        return ret_arr
+
+    path_hash_map = {}
+    screenshot_hash_map = {}
+    domain_name_id_map = {}
+    hash_alg = hashlib.sha1
+
+    with open(meta_file, 'r') as file_fd:
+        lines = file_fd.readlines()
+
+    for line in lines:
+        screenshot_meta = json.loads(line)
+        filename = screenshot_meta['file_path']
+        if not (filename and exists(filename)):
+            continue
+
+        web_path = screenshot_meta['path']
+        port_id = screenshot_meta['port_id']
+        status_code = screenshot_meta['status_code']
+        http_endpoint_data_id = screenshot_meta['endpoint_id']
+
+        with open(filename, "rb") as rf:
+            image_data = rf.read()
+        hashobj = hash_alg()
+        hashobj.update(image_data)
+        image_hash_str = binascii.hexlify(hashobj.digest()).decode()
+        screenshot_bytes_b64 = base64.b64encode(image_data).decode()
+
+        if image_hash_str in screenshot_hash_map:
+            screenshot_obj = screenshot_hash_map[image_hash_str]
         else:
+            screenshot_obj = data_model.Screenshot()
+            screenshot_obj.collection_tool_instance_id = tool_instance_id
+            screenshot_obj.screenshot = screenshot_bytes_b64
+            screenshot_obj.image_hash = image_hash_str
+            screenshot_hash_map[image_hash_str] = screenshot_obj
+        ret_arr.append(screenshot_obj)
+        screenshot_id = screenshot_obj.id
 
-            logging.getLogger(__name__).error(
-                "[-] Pyshot meta file does not exist.")
+        hashobj = hash_alg()
+        hashobj.update(web_path.encode())
+        web_path_hash = binascii.hexlify(hashobj.digest()).decode()
+
+        endpoint_domain_id = None
+        if 'domain' in screenshot_meta and screenshot_meta['domain']:
+            domain_str = screenshot_meta['domain']
+            if domain_str in domain_name_id_map:
+                domain_obj = domain_name_id_map[domain_str]
+            else:
+                domain_obj = data_model.Domain()
+                domain_obj.collection_tool_instance_id = tool_instance_id
+                domain_obj.name = domain_str
+                domain_name_id_map[domain_str] = domain_obj
+            ret_arr.append(domain_obj)
+            endpoint_domain_id = domain_obj.id
+
+        if web_path_hash in path_hash_map:
+            path_obj = path_hash_map[web_path_hash]
+        else:
+            path_obj = data_model.ListItem()
+            path_obj.collection_tool_instance_id = tool_instance_id
+            path_obj.web_path = web_path
+            path_obj.web_path_hash = web_path_hash
+            path_hash_map[web_path_hash] = path_obj
+        ret_arr.append(path_obj)
+        web_path_id = path_obj.id
+
+        http_endpoint_obj = data_model.HttpEndpoint(parent_id=port_id)
+        http_endpoint_obj.collection_tool_instance_id = tool_instance_id
+        http_endpoint_obj.web_path_id = web_path_id
+        ret_arr.append(http_endpoint_obj)
+
+        http_endpoint_data_obj = data_model.HttpEndpointData(
+            parent_id=http_endpoint_obj.id)
+        http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
+        http_endpoint_data_obj.domain_id = endpoint_domain_id
+        http_endpoint_data_obj.status = status_code
+        http_endpoint_data_obj.screenshot_id = screenshot_id
+        if http_endpoint_data_id:
+            http_endpoint_data_obj.id = http_endpoint_data_id
+        ret_arr.append(http_endpoint_data_obj)
+
+    return ret_arr
+
+
+def pyshot_scan_func(scan_input) -> bool:
+    try:
+        execute_scan(scan_input)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "pyshot scan failed: %s", e, exc_info=True)
+        return False
+
+
+def pyshot_import(scan_input) -> bool:
+    try:
+        output_path = get_output_path(scan_input)
+        if not os.path.exists(output_path):
+            return True
+        if _import_already_done(scan_input, output_path):
+            return True
+        tool_instance_id = scan_input.current_tool_instance_id
+        ret_arr = parse_pyshot_output(output_path, tool_instance_id)
+        if ret_arr:
+            _import_results(scan_input, ret_arr, output_path)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "pyshot import failed: %s", e, exc_info=True)
+        return False

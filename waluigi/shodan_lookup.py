@@ -37,7 +37,6 @@ import json
 import os
 import shodan
 import netaddr
-import luigi
 import time
 import ipaddress
 import hashlib
@@ -45,11 +44,14 @@ import binascii
 import logging
 from typing import List, Dict, Set, Optional, Any, Union
 
-from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
 from datetime import datetime
 from urllib.parse import urlsplit, urlunsplit
+from waluigi.tool_runner import (
+    import_already_done as _import_already_done,
+    import_results as _import_results,
+)
 
 
 class Shodan(data_model.WaluigiTool):
@@ -99,7 +101,7 @@ class Shodan(data_model.WaluigiTool):
         self.collector_type = data_model.CollectorType.PASSIVE.value
         self.scan_order = 3
         self.args = ""
-        self.import_func = Shodan.import_shodan
+        self.import_func = shodan_import
         self.input_records = [
             data_model.ServerRecordType.HOST, data_model.ServerRecordType.SUBNET]
         self.output_records = [
@@ -113,111 +115,115 @@ class Shodan(data_model.WaluigiTool):
             data_model.ServerRecordType.HOST
         ]
 
-    @staticmethod
-    def import_shodan(scan_input: Any) -> bool:
-        """
-        Import and process Shodan scan results.
 
-        This static method handles the import of Shodan scan results into the
-        data model. It builds and executes an ImportShodanOutput task to process
-        the gathered intelligence data.
+def _prepare_shodan_scope(scheduled_scan_obj) -> str:
+    """Prepare shodan input file; returns path."""
+    scan_id = scheduled_scan_obj.id
+    tool_name = scheduled_scan_obj.current_tool.name
+    dir_path = scan_utils.init_tool_folder(tool_name, 'inputs', scan_id)
+    shodan_ip_file = dir_path + os.path.sep + "shodan_ips_" + scan_id
 
-        Args:
-            scan_input (Any): Scan input object containing scan configuration and context
+    if os.path.isfile(shodan_ip_file):
+        return shodan_ip_file
 
-        Returns:
-            bool: True if import completed successfully, False if import failed
+    scope_obj = scheduled_scan_obj.scan_data
+    target_list = []
+    subnet_map = scope_obj.subnet_map
+    for subnet_id in subnet_map:
+        subnet_obj = subnet_map[subnet_id]
+        subnet_str = "%s/%s" % (subnet_obj.subnet, subnet_obj.mask)
+        target_list.append(subnet_str)
 
-        Example:
-            >>> scan_config = get_scan_input()
-            >>> success = Shodan.import_shodan(scan_config)
-            >>> if success:
-            ...     print("Shodan results imported successfully")
-        """
-        luigi_run_result = luigi.build([ImportShodanOutput(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
+    host_list = scope_obj.get_hosts(
+        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+    for host_obj in host_list:
+        host_str = "%s/32" % (host_obj.ipv4_addr)
+        target_list.append(host_str)
+
+    logging.getLogger(__name__).debug(
+        "[+] Retrieved %d subnets from database" % len(target_list))
+    input_data = {'host_list': target_list}
+    with open(shodan_ip_file, 'w') as shodan_fd:
+        shodan_fd.write(json.dumps(input_data))
+
+    return shodan_ip_file
+
+
+def get_output_path(scan_input) -> str:
+    scan_id = scan_input.id
+    tool_name = scan_input.current_tool.name
+    dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return dir_path + os.path.sep + "shodan_out_" + scan_id
+
+
+def execute_scan(scan_input) -> None:
+    output_file_path = get_output_path(scan_input)
+    if os.path.exists(output_file_path):
+        return
+
+    scheduled_scan_obj = scan_input
+    shodan_ip_file = _prepare_shodan_scope(scheduled_scan_obj)
+
+    with open(shodan_ip_file) as file_fd:
+        input_data = json.loads(file_fd.read())
+
+    shodan_key = scheduled_scan_obj.current_tool_api_key
+    if not shodan_key or len(shodan_key) == 0:
+        logging.getLogger(__name__).error("No shodan API key provided.")
+        raise Exception("No shodan API key provided")
+
+    output_arr = []
+    result = shodan_wrapper(shodan_key, '8.8.8.8', 32)
+    if result is not None:
+        ip_subnets = input_data['host_list']
+        logging.getLogger(__name__).debug(
+            "Consolidating subnets queried by Shodan")
+        if len(ip_subnets) > 50:
+            ip_subnets = reduce_subnets(ip_subnets)
+
+        futures = []
+        for subnet in ip_subnets:
+            subnet = str(subnet)
+            subnet_arr = subnet.split("/")
+            ip = subnet_arr[0].strip()
+            cidr = 32
+            if len(subnet_arr) > 1:
+                cidr = int(subnet_arr[1])
+            ip_network = ipaddress.ip_network(str(ip) + "/" + str(cidr))
+            if ip_network.is_private:
+                continue
+            futures.append(scan_utils.executor.submit(
+                shodan_wrapper, shodan_key=shodan_key, ip=ip, cidr=cidr))
+
+        scan_proc_inst = data_model.ToolExecutor(futures)
+        scheduled_scan_obj.register_tool_executor(
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+
+        for future in futures:
+            result = future.result()
+            output_arr.extend(result)
+
+    output_data = {"data": output_arr}
+    with open(output_file_path, 'w') as f:
+        f.write(json.dumps(output_data))
+
+
+def shodan_import(scan_input) -> bool:
+    try:
+        execute_scan(scan_input)
+        output_path = get_output_path(scan_input)
+        if not os.path.exists(output_path):
+            return True
+        if _import_already_done(scan_input, output_path):
+            return True
+        tool_instance_id = scan_input.current_tool_instance_id
+        ret_arr = parse_shodan_output(output_path, tool_instance_id)
+        _import_results(scan_input, ret_arr, output_path)
         return True
-
-
-class ShodanScope(luigi.ExternalTask):
-    """
-    Luigi task for preparing Shodan scan scope and input data.
-
-    This task prepares the input data for Shodan queries by extracting target
-    networks and hosts from the scan scope. It creates a JSON file containing
-    IP addresses and subnets to be queried through the Shodan API.
-
-    The scope preparation includes:
-    - Extracting subnet information from the scan data
-    - Collecting host IP addresses tagged as SCOPE or LOCAL
-    - Converting hosts to /32 subnet notation for consistency
-    - Creating input file for subsequent Shodan queries
-
-    Attributes:
-        scan_input (luigi.Parameter): Scheduled scan object containing configuration
-
-    Example:
-        >>> scope_task = ShodanScope(scan_input=scheduled_scan)
-        >>> target_file = scope_task.output()
-        >>> print(target_file.path)  # Path to input file with targets
-    """
-
-    scan_input = luigi.Parameter()
-
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define the output target for Shodan scope preparation.
-
-        Creates the input file path for storing Shodan query targets in JSON format.
-        The file contains a list of IP addresses and subnets to be queried.
-
-        Returns:
-            luigi.LocalTarget: Target file containing Shodan query targets
-
-        Example:
-            >>> task = ShodanScope(scan_input=scan_obj)
-            >>> target = task.output()
-            >>> print(target.path)  # "/path/to/inputs/shodan_ips_scan123"
-        """
-
-        scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.id
-
-        # Init directory
-        tool_name = scheduled_scan_obj.current_tool.name
-        dir_path = scan_utils.init_tool_folder(tool_name, 'inputs', scan_id)
-
-        # path to each input file
-        shodan_ip_file = dir_path + os.path.sep + "shodan_ips_" + scan_id
-        if os.path.isfile(shodan_ip_file):
-            return luigi.LocalTarget(shodan_ip_file)
-
-        scope_obj = scheduled_scan_obj.scan_data
-        target_list = []
-        subnet_map = scope_obj.subnet_map
-        for subnet_id in subnet_map:
-            subnet_obj = subnet_map[subnet_id]
-            subnet_str = "%s/%s" % (subnet_obj.subnet, subnet_obj.mask)
-            target_list.append(subnet_str)
-
-        host_list = scope_obj.get_hosts(
-            [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
-
-        for host_obj in host_list:
-            host_str = "%s/32" % (host_obj.ipv4_addr)
-            target_list.append(host_str)
-
-        logging.getLogger(__name__).debug("[+] Retrieved %d subnets from database" %
-                                          len(target_list))
-        imput_data = {'host_list': target_list}
-        json_data = json.dumps(imput_data)
-
-        with open(shodan_ip_file, 'w') as shodan_fd:
-            shodan_fd.write(json_data)
-
-        return luigi.LocalTarget(shodan_ip_file)
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "shodan import failed: %s", e, exc_info=True)
+        return False
 
 
 def shodan_dns_query(api: shodan.Shodan, domain: str) -> List[str]:
@@ -494,179 +500,6 @@ def reduce_subnets(ip_subnets: List[str]) -> List[netaddr.IPNetwork]:
     return ret_list
 
 
-@inherits(ShodanScope)
-class ShodanScan(luigi.Task):
-    """
-    Luigi task for executing Shodan API queries and gathering intelligence.
-
-    This task orchestrates the complete Shodan scanning workflow including:
-    - Reading prepared target lists from ShodanScope
-    - Validating API key connectivity
-    - Optimizing subnet queries for efficiency
-    - Executing concurrent Shodan API queries
-    - Aggregating and storing results
-
-    The task handles large target lists efficiently by:
-    - Consolidating subnets to reduce API calls
-    - Filtering private IP ranges not indexed by Shodan
-    - Using concurrent execution for multiple queries
-    - Implementing proper error handling and rate limiting
-
-    Inherits from:
-        ShodanScope: Inherits scan input parameter and depends on scope preparation
-
-    Example:
-        >>> scan_task = ShodanScan(scan_input=scheduled_scan)
-        >>> output_target = scan_task.output()
-        >>> scan_task.run()  # Execute Shodan intelligence gathering
-    """
-
-    def requires(self) -> ShodanScope:
-        """
-        Define task dependencies - requires ShodanScope to prepare targets first.
-
-        Returns:
-            ShodanScope: The scope preparation task that must complete before scanning
-
-        Example:
-            >>> scan_task = ShodanScan(scan_input=scan_obj)
-            >>> dependency = scan_task.requires()
-            >>> print(type(dependency).__name__)  # "ShodanScope"
-        """
-        # Requires the target scope
-        return ShodanScope(scan_input=self.scan_input)
-
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define the output target for Shodan scan results.
-
-        Creates the output file path for storing Shodan query results in JSON format.
-        The file contains comprehensive intelligence data for all queried targets.
-
-        Returns:
-            luigi.LocalTarget: Target file for storing Shodan scan results
-
-        Example:
-            >>> task = ShodanScan(scan_input=scan_obj)
-            >>> target = task.output()
-            >>> print(target.path)  # "/path/to/outputs/shodan_out_scan123"
-        """
-
-        scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.id
-
-        # Init directory
-        tool_name = scheduled_scan_obj.current_tool.name
-        dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-        out_file = dir_path + os.path.sep + "shodan_out_" + scan_id
-
-        return luigi.LocalTarget(out_file)
-
-    def run(self) -> None:
-        """
-        Execute the Shodan intelligence gathering scan.
-
-        This method performs the complete Shodan scanning workflow:
-        1. Read target lists from the prepared scope file
-        2. Validate API key with a test query
-        3. Optimize subnet lists for efficient querying
-        4. Execute concurrent Shodan API queries
-        5. Aggregate results and save to output file
-
-        The method handles:
-        - API key validation and connectivity testing
-        - Subnet consolidation for large target lists
-        - Private IP filtering (not indexed by Shodan)
-        - Concurrent execution with futures tracking
-        - Error handling and result aggregation
-
-        Returns:
-            None: Results are written to the output file
-
-        Example:
-            >>> task = ShodanScan(scan_input=scan_config)
-            >>> task.run()  # Executes complete Shodan intelligence workflow
-
-        Raises:
-            Exception: If no Shodan API key provided or API key is invalid
-
-        Note:
-            - Performs connectivity test with 8.8.8.8 before main scan
-            - Consolidates subnets if more than 50 targets to reduce API calls
-            - Registers tool executors for process tracking
-            - Filters private IP ranges automatically
-        """
-
-        scheduled_scan_obj = self.scan_input
-
-        # Read shodan input files
-        shodan_input_file = self.input()
-        input_data = None
-        with shodan_input_file.open() as file_fd:
-            input_data = json.loads(file_fd.read())
-
-        # Write the output
-        shodan_key = scheduled_scan_obj.current_tool_api_key
-        if shodan_key and len(shodan_key) > 0:
-
-            output_arr = []
-            # Do a test lookup to make sure our key is good and we have connectivity
-            result = shodan_wrapper(shodan_key, '8.8.8.8', 32)
-            if result is not None:
-
-                ip_subnets = input_data['host_list']
-
-                # Attempt to consolidate subnets to reduce the number of shodan calls
-                logging.getLogger(__name__).debug(
-                    "Consolidating subnets queried by Shodan")
-
-                if len(ip_subnets) > 50:
-                    ip_subnets = reduce_subnets(ip_subnets)
-
-                # Get the shodan key
-                # logging.getLogger(__name__).debug("Retrieving Shodan data")
-
-                futures = []
-                for subnet in ip_subnets:
-
-                    # Get the subnet
-                    subnet = str(subnet)
-                    subnet_arr = subnet.split("/")
-                    ip = subnet_arr[0].strip()
-
-                    cidr = 32
-                    if len(subnet_arr) > 1:
-                        cidr = int(subnet_arr[1])
-
-                    # Skip private IPs
-                    ip_network = ipaddress.ip_network(str(ip)+"/"+str(cidr))
-                    if ip_network.is_private:
-                        continue
-
-                    futures.append(scan_utils.executor.submit(
-                        shodan_wrapper, shodan_key=shodan_key, ip=ip, cidr=cidr))
-
-                # Register futures with scan job
-                scan_proc_inst = data_model.ToolExecutor(futures)
-                scheduled_scan_obj.register_tool_executor(
-                    scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
-
-                # Wait for the tasks to complete and retrieve results
-                for future in futures:
-                    result = future.result()
-                    output_arr.extend(result)
-
-            # Open output file and write json of output
-            outfile = self.output().path
-            output_data = {"data": output_arr}
-            with open(outfile, 'w') as f:
-                f.write(json.dumps(output_data))
-
-        else:
-            logging.getLogger(__name__).error("No shodan API key provided.")
-            raise Exception("No shodan API key provided")
-
-
 def parse_shodan_output(
     output_file: str,
     tool_instance_id: Optional[str] = None,
@@ -896,89 +729,3 @@ def parse_shodan_output(
                     ret_arr.append(http_endpoint_data_obj)
 
     return ret_arr
-
-
-@inherits(ShodanScan)
-class ImportShodanOutput(data_model.ImportToolXOutput):
-    """
-    Luigi task for importing and processing Shodan scan results.
-
-    This task handles the import of Shodan intelligence data into the data model,
-    converting raw Shodan service information into structured Host, Port, Domain,
-    and other data objects. It processes comprehensive service data including
-    banners, certificates, web components, and technology fingerprints.
-
-    The import process includes:
-    - Parsing Shodan JSON service data
-    - Creating Host objects for discovered IP addresses
-    - Creating Port objects for discovered services
-    - Extracting SSL/TLS certificate information
-    - Identifying web technologies and components
-    - Processing HTTP endpoint data and metadata
-    - Establishing proper parent-child relationships
-
-    Inherits from:
-        ShodanScan: Inherits scan input parameter and depends on scan completion
-        ImportToolXOutput: Provides result import functionality
-
-    Example:
-        >>> import_task = ImportShodanOutput(scan_input=scheduled_scan)
-        >>> import_task.run()  # Import and process Shodan intelligence
-    """
-
-    def requires(self) -> ShodanScan:
-        """
-        Define task dependencies - requires ShodanScan to complete first.
-
-        Returns:
-            ShodanScan: The scan task that must complete before import
-
-        Example:
-            >>> import_task = ImportShodanOutput(scan_input=scan_obj)
-            >>> dependency = import_task.requires()
-            >>> print(type(dependency).__name__)  # "ShodanScan"
-        """
-        return ShodanScan(scan_input=self.scan_input)
-
-    def run(self) -> None:
-        """
-        Import and process Shodan scan results into the data model.
-
-        This method performs the complete import workflow:
-        1. Read JSON output from ShodanScan task
-        2. Parse service data for each discovered host
-        3. Create Host objects for IP addresses
-        4. Create Port objects for discovered services
-        5. Extract and process SSL/TLS certificates
-        6. Identify web technologies and components
-        7. Process HTTP endpoint data and metadata
-        8. Import results into the scan data structure
-
-        The method handles complex data extraction including:
-        - Service banners and version information
-        - SSL/TLS certificate details and domain names
-        - Web server and technology fingerprinting
-        - HTTP response data and metadata
-        - Favicon hashes and web paths
-        - Hostname and domain name extraction
-
-        Returns:
-            None: Results are imported into the scan data structure
-
-        Example:
-            >>> import_task = ImportShodanOutput(scan_input=scan_config)
-            >>> import_task.run()  # Process and import Shodan intelligence
-
-        Note:
-            - Creates comprehensive data objects from Shodan service data
-            - Handles IPv4 and IPv6 addresses appropriately
-            - Processes SSL certificates and extracts domain names
-            - Identifies web components and their versions
-            - Preserves tool instance ID for data tracking
-            - Handles URL parsing and path extraction
-        """
-
-        scheduled_scan_obj = self.scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        ret_arr = parse_shodan_output(self.input().path, tool_instance_id)
-        self.import_results(scheduled_scan_obj, ret_arr)

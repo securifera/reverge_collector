@@ -32,17 +32,19 @@ from functools import partial
 import json
 import os
 import netaddr
-import luigi
 import traceback
 import os.path
 import yaml
 import logging
 from typing import List, Dict, Set, Optional, Any, Tuple
 
-from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
+from waluigi.tool_runner import (
+    import_already_done as _import_already_done,
+    import_results as _import_results,
+)
 
 
 class Subfinder(data_model.WaluigiTool):
@@ -97,58 +99,33 @@ class Subfinder(data_model.WaluigiTool):
         self.import_func = Subfinder.subfinder_import
 
     @staticmethod
+    @staticmethod
     def subfinder_lookup(scan_input: Any) -> bool:
-        """
-        Execute Subfinder subdomain discovery scan.
-
-        This static method orchestrates the Subfinder scanning process using Luigi
-        task management. It builds and executes a SubfinderScan task with the
-        provided scan input configuration.
-
-        Args:
-            scan_input (Any): Scan input object containing scan configuration and context
-
-        Returns:
-            bool: True if scan completed successfully, False if scan failed
-
-        Example:
-            >>> scan_config = get_scan_input()
-            >>> success = Subfinder.subfinder_lookup(scan_config)
-            >>> if success:
-            ...     print("Subfinder scan completed")
-        """
-        luigi_run_result = luigi.build([SubfinderScan(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
+        try:
+            execute_scan(scan_input)
+            return True
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                "Subfinder scan failed: %s", e, exc_info=True)
             return False
-        return True
 
     @staticmethod
     def subfinder_import(scan_input: Any) -> bool:
-        """
-        Import and process Subfinder scan results.
-
-        This static method handles the import of Subfinder scan results into the
-        data model. It builds and executes a SubfinderImport task to process
-        the discovered subdomains and their associated IP addresses.
-
-        Args:
-            scan_input (Any): Scan input object containing scan configuration and context
-
-        Returns:
-            bool: True if import completed successfully, False if import failed
-
-        Example:
-            >>> scan_config = get_scan_input()
-            >>> success = Subfinder.subfinder_import(scan_config)
-            >>> if success:
-            ...     print("Subfinder results imported")
-        """
-        luigi_run_result = luigi.build([SubfinderImport(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
+        try:
+            output_path = get_output_path(scan_input)
+            if not os.path.exists(output_path):
+                return True
+            if _import_already_done(scan_input, output_path):
+                return True
+            scheduled_scan_obj = scan_input
+            tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+            ret_arr = parse_subfinder_output(output_path, tool_instance_id)
+            _import_results(scan_input, ret_arr, output_path)
+            return True
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                "Subfinder import failed: %s", e, exc_info=True)
             return False
-        return True
 
 
 def subfinder_wrapper(scheduled_scan_obj: Any, scan_output_file_path: str,
@@ -313,181 +290,106 @@ def update_config_file(collection_tools: Optional[List[Any]], my_env: Dict[str, 
         yaml_file.write(yaml.dump(data, default_flow_style=False))
 
 
-class SubfinderScan(luigi.Task):
-    """
-    Luigi task for executing Subfinder subdomain discovery scans.
+def get_output_path(scan_input: Any) -> str:
+    scan_id = scan_input.id
+    tool_name = scan_input.current_tool.name
+    dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return f"{dir_path}{os.path.sep}subfinder_outputs_{scan_id}.json"
 
-    This task orchestrates the complete Subfinder scanning workflow including:
-    - Input preparation with domain lists
-    - API key configuration management
-    - Concurrent Subfinder execution for multiple domains
-    - DNS resolution for discovered and input domains
-    - Results aggregation and output file generation
 
-    The task handles multiple domains concurrently and integrates with various
-    API providers (Chaos, Shodan, SecurityTrails) for enhanced results.
+def execute_scan(scan_input: Any) -> None:
+    meta_file_path = get_output_path(scan_input)
+    if os.path.exists(meta_file_path):
+        return
 
-    Attributes:
-        scan_input (luigi.Parameter): Scheduled scan object containing configuration
+    scheduled_scan_obj = scan_input
+    dns_scan_obj = get_subfinder_input(scheduled_scan_obj)
 
-    Example:
-        >>> task = SubfinderScan(scan_input=scheduled_scan)
-        >>> output_target = task.output()
-        >>> task.run()  # Execute subdomain discovery
-    """
+    tool_args = scheduled_scan_obj.current_tool.args
+    if tool_args:
+        tool_args = tool_args.split(" ")
 
-    scan_input = luigi.Parameter()
+    dir_path = os.path.dirname(meta_file_path)
 
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define the output target for Subfinder scan results.
+    # Write out meta data file
+    ret_list = []
 
-        Creates the output file path for storing Subfinder scan results in JSON format.
-        The file is stored in the tool's output directory within the scan workspace.
+    subfinder_domain_list = dns_scan_obj['input_path']
 
-        Returns:
-            luigi.LocalTarget: Target file for storing subdomain discovery results
+    # Add env variables for HOME
+    my_env = os.environ.copy()
 
-        Example:
-            >>> task = SubfinderScan(scan_input=scan_obj)
-            >>> target = task.output()
-            >>> print(target.path)  # "/path/to/outputs/subfinder_outputs_scan123"
-        """
+    use_shell = False
+    if os.name != 'nt':
+        home_dir = os.path.expanduser('~')
+        my_env["HOME"] = home_dir
 
-        scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.id
+    # Set the API keys
+    update_config_file(
+        list(scheduled_scan_obj.collection_tool_map.values()), my_env)
 
-        # Init directory
-        tool_name = scheduled_scan_obj.current_tool.name
-        dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    futures = []
 
-        # path to input file
-        dns_outputs_file = f"{dir_path}{os.path.sep}subfinder_outputs_{scan_id}.json"
-        return luigi.LocalTarget(dns_outputs_file)
+    # Add the domains from the wildcards
+    with open(subfinder_domain_list, 'r') as file_fd:
+        sub_lines = file_fd.readlines()
 
-    def run(self) -> None:
-        """
-        Execute the Subfinder subdomain discovery scan.
+    # Add the lines
+    domain_set = set()
+    counter = 0
+    if len(sub_lines) > 0:
+        for line in sub_lines:
+            domain_str = line.strip()
+            if len(domain_str) > 0 and domain_str not in domain_set:
 
-        This method performs the complete Subfinder scanning workflow:
-        1. Prepare input domains from scan scope
-        2. Configure API keys for enhanced results
-        3. Execute Subfinder for each domain concurrently
-        4. Perform DNS resolution for discovered subdomains
-        5. Aggregate results and save to output file
+                # Add to the set
+                domain_set.add(domain_str)
+                # Create unique output file path
+                scan_output_file_path = dir_path + os.path.sep + \
+                    "subfinder_results_" + str(counter) + ".json"
 
-        The method handles:
-        - Environment variable setup for different operating systems
-        - API key configuration management
-        - Concurrent execution with futures tracking
-        - Error handling and resource cleanup
-        - DNS resolution for parent domains
+                command = []
+                command_arr = [
+                    "subfinder",
+                    "-json",
+                    "-d",
+                    domain_str,
+                    "-o",
+                    scan_output_file_path,
+                    "-active",
+                    "-ip"
+                ]
 
-        Returns:
-            None: Results are written to the output file
+                command.extend(command_arr)
 
-        Example:
-            >>> task = SubfinderScan(scan_input=scan_config)
-            >>> task.run()  # Executes complete subdomain discovery workflow
+                # Add script args
+                if tool_args and len(tool_args) > 0:
+                    command.extend(tool_args)
 
-        Note:
-            - Creates unique output files for each domain scan
-            - Registers tool executors for process tracking
-            - Cleans up API keys after scanning
-            - Performs additional DNS resolution for input domains
-        """
+                futures.append(scan_utils.executor.submit(
+                    subfinder_wrapper, scheduled_scan_obj, scan_output_file_path, command, use_shell, my_env))
 
-        scheduled_scan_obj = self.scan_input
-        dns_scan_obj = get_subfinder_input(scheduled_scan_obj)
+                counter += 1
 
-        tool_args = scheduled_scan_obj.current_tool.args
-        if tool_args:
-            tool_args = tool_args.split(" ")
+        # Register futures
+        scan_proc_inst = data_model.ToolExecutor(futures)
+        scheduled_scan_obj.register_tool_executor(
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
-        # Ensure output folder exists
-        meta_file_path = self.output().path
-        dir_path = os.path.dirname(meta_file_path)
+        for future in futures:
+            temp_list = future.result()
+            ret_list.extend(temp_list)
 
-        # Write out meta data file
-        ret_list = []
+    # Reset the API keys
+    update_config_file(None, my_env)
 
-        subfinder_domain_list = dns_scan_obj['input_path']
-        # api_keys = dns_scan_obj['api_keys']
+    # Resolve the parent domains too
+    if len(domain_set) > 0:
+        ret_list.extend(scan_utils.dns_wrapper(domain_set))
 
-        # Add env variables for HOME
-        my_env = os.environ.copy()
-
-        use_shell = False
-        if os.name != 'nt':
-            home_dir = os.path.expanduser('~')
-            my_env["HOME"] = home_dir
-
-        # Set the API keys
-        update_config_file(
-            list(scheduled_scan_obj.collection_tool_map.values()), my_env)
-
-        futures = []
-
-        # Add the domains from the wildcards
-        with open(subfinder_domain_list, 'r') as file_fd:
-            sub_lines = file_fd.readlines()
-
-        # Add the lines
-        domain_set = set()
-        counter = 0
-        if len(sub_lines) > 0:
-            for line in sub_lines:
-                domain_str = line.strip()
-                if len(domain_str) > 0 and domain_str not in domain_set:
-
-                    # Add to the set
-                    domain_set.add(domain_str)
-                    # Create unique output file path
-                    scan_output_file_path = dir_path + os.path.sep + \
-                        "subfinder_results_" + str(counter) + ".json"
-
-                    command = []
-                    command_arr = [
-                        "subfinder",
-                        "-json",
-                        "-d",
-                        domain_str,
-                        "-o",
-                        scan_output_file_path,
-                        "-active",
-                        "-ip"
-                    ]
-
-                    command.extend(command_arr)
-
-                    # Add script args
-                    if tool_args and len(tool_args) > 0:
-                        command.extend(tool_args)
-
-                    futures.append(scan_utils.executor.submit(
-                        subfinder_wrapper, scheduled_scan_obj, scan_output_file_path, command, use_shell, my_env))
-
-                    counter += 1
-
-            # Register futures
-            scan_proc_inst = data_model.ToolExecutor(futures)
-            scheduled_scan_obj.register_tool_executor(
-                scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
-
-            for future in futures:
-                temp_list = future.result()
-                ret_list.extend(temp_list)
-
-        # Reset the API keys
-        update_config_file(None, my_env)
-
-        # Resolve the parent domains too
-        if len(domain_set) > 0:
-            ret_list.extend(scan_utils.dns_wrapper(domain_set))
-
-        # Write the output file
-        with open(meta_file_path, 'w') as output_fd:
-            output_fd.write(json.dumps({'domain_list': ret_list}))
+    # Write the output file
+    with open(meta_file_path, 'w') as output_fd:
+        output_fd.write(json.dumps({'domain_list': ret_list}))
 
 
 def parse_subfinder_output(
@@ -544,83 +446,3 @@ def parse_subfinder_output(
                     obj_map[domain_obj.id] = domain_obj
 
     return list(obj_map.values())
-
-
-@inherits(SubfinderScan)
-class SubfinderImport(data_model.ImportToolXOutput):
-    """
-    Luigi task for importing and processing Subfinder scan results.
-
-    This task handles the import of Subfinder scan results into the data model,
-    converting discovered domains and IP addresses into structured Host and Domain
-    objects. It processes the JSON output from SubfinderScan and creates appropriate
-    data model objects.
-
-    The import process includes:
-    - Reading and parsing Subfinder JSON output
-    - Converting domain-to-IP mappings to IP-to-domain mappings
-    - Creating Host objects for discovered IP addresses
-    - Creating Domain objects for discovered subdomains
-    - Establishing parent-child relationships between hosts and domains
-
-    Inherits from:
-        SubfinderScan: Inherits scan input parameter
-        ImportToolXOutput: Provides result import functionality
-
-    Example:
-        >>> import_task = SubfinderImport(scan_input=scheduled_scan)
-        >>> import_task.run()  # Import and process scan results
-    """
-
-    def requires(self) -> SubfinderScan:
-        """
-        Define task dependencies - requires SubfinderScan to complete first.
-
-        Returns:
-            SubfinderScan: The scan task that must complete before import
-
-        Example:
-            >>> import_task = SubfinderImport(scan_input=scan_obj)
-            >>> dependency = import_task.requires()
-            >>> print(type(dependency).__name__)  # "SubfinderScan"
-        """
-        # Requires subfinderScan Task to be run prior
-        return SubfinderScan(scan_input=self.scan_input)
-
-    def run(self) -> None:
-        """
-        Import and process Subfinder scan results into the data model.
-
-        This method performs the complete import workflow:
-        1. Read JSON output from SubfinderScan task
-        2. Parse domain and IP address mappings
-        3. Create Host objects for each unique IP address
-        4. Create Domain objects for each discovered subdomain
-        5. Establish proper parent-child relationships
-        6. Import results into the scan data structure
-
-        The method handles:
-        - JSON parsing and error handling
-        - IP address validation and object creation
-        - IPv4 and IPv6 address support
-        - Domain object creation with proper relationships
-        - Tool instance ID tracking for data lineage
-
-        Returns:
-            None: Results are imported into the scan data structure
-
-        Example:
-            >>> import_task = SubfinderImport(scan_input=scan_config)
-            >>> import_task.run()  # Process and import discovered subdomains
-
-        Note:
-            - Converts domain-to-IP mappings to IP-to-domain for efficiency
-            - Creates one Host object per unique IP address
-            - Associates multiple Domain objects with each Host
-            - Preserves tool instance ID for data tracking
-        """
-
-        scheduled_scan_obj = self.scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        ret_arr = parse_subfinder_output(self.input().path, tool_instance_id)
-        self.import_results(scheduled_scan_obj, ret_arr)

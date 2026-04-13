@@ -26,14 +26,16 @@ import os
 import re
 from typing import Dict, Any, List, Set, Optional, Union
 import netaddr
-import luigi
 import traceback
 import logging
 
-from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
+from waluigi.tool_runner import (
+    import_already_done as _import_already_done,
+    import_results as _import_results,
+)
 
 netexec_protocol_map = {'21': 'ftp', '22': 'ssh', '111': 'nfs', '135': 'wmi', '389': 'ldap', '445': 'smb',
                         '3306': 'mysql', '3389': 'rdp', '5900': 'vnc', '5985': 'winrm'}
@@ -86,8 +88,8 @@ class Netexec(data_model.WaluigiTool):
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 6
         self.args: str = ""
-        self.scan_func = Netexec.netexec_scan_func
-        self.import_func = Netexec.netexec_import
+        self.scan_func = netexec_scan_func
+        self.import_func = netexec_import
         self.modules_func = Netexec.netexec_modules
         self.input_records = [
             data_model.ServerRecordType.SUBNET, data_model.ServerRecordType.HOST, data_model.ServerRecordType.PORT]
@@ -238,366 +240,199 @@ class Netexec(data_model.WaluigiTool):
 
         return modules
 
-    @staticmethod
-    def netexec_scan_func(scan_input: data_model.ScheduledScan) -> bool:
-        """
-        Execute Netexec network scan.
 
-        Initiates a Netexec scan using Luigi task orchestration. The scan targets
-        are processed from the scheduled scan input, with intelligent optimization
-        based on previous masscan results when available.
-
-        Args:
-            scan_input (data_model.ScheduledScan): Scheduled scan configuration
-                containing target information and scan parameters
-
-        Returns:
-            bool: True if scan completed successfully, False otherwise
-
-        Example:
-            >>> scan_input = ScheduledScan(...)
-            >>> success = Netexec.netexec_scan_func(scan_input)
-            >>> print(success)
-            True
-        """
-        luigi_run_result = luigi.build([NetexecScan(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
-
-    @staticmethod
-    def netexec_import(scan_input: data_model.ScheduledScan) -> bool:
-        """
-        Import and process Netexec scan results.
-
-        Processes the XML output from completed Netexec scans, parsing detailed
-        host information, open ports, services, SSL certificates, and script
-        results into the data model.
-
-        Args:
-            scan_input (data_model.ScheduledScan): Scheduled scan configuration
-                containing scan results to import
-
-        Returns:
-            bool: True if import completed successfully, False otherwise
-
-        Example:
-            >>> scan_input = ScheduledScan(...)
-            >>> success = Netexec.netexec_import(scan_input)
-            >>> print(success)
-            True
-        """
-        luigi_run_result = luigi.build([ImportNetexecOutput(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
+def get_output_path(scan_input) -> str:
+    scan_id: str = scan_input.id
+    mod_str: str = ''
+    if scan_input.scan_data.module_id:
+        mod_str = "_" + str(scan_input.scan_data.module_id)
+    tool_name: str = scan_input.current_tool.name
+    dir_path: str = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return dir_path + os.path.sep + "netexec_scan_" + scan_id + mod_str + ".meta"
 
 
-class NetexecScan(luigi.Task):
-    """
-    Luigi task for executing Netexec network scans.
+def execute_scan(scan_input) -> None:
+    meta_file_path: str = get_output_path(scan_input)
+    if os.path.exists(meta_file_path):
+        return
 
-    This task orchestrates the execution of Netexec scans against target networks,
-    handling input preparation, command execution, and output collection. The
-    task supports both subnet-based scanning and targeted port scanning with
-    intelligent optimization based on previous masscan results.
+    scheduled_scan_obj = scan_input
+    dir_path: str = os.path.dirname(meta_file_path)
+    scope_obj = scheduled_scan_obj.scan_data
 
-    The scan process includes:
-    - Target preparation (subnets, IPs, domains)
-    - Port list optimization based on previous scans
-    - Command construction with appropriate arguments
-    - Parallel execution of scan jobs
-    - XML output collection for import processing
+    netexec_scan_data: Optional[Dict[str, Any]] = None
+    netexec_scan_args: Optional[List[str]] = None
+    if scheduled_scan_obj.current_tool.args:
+        netexec_scan_args = scheduled_scan_obj.current_tool.args.split(" ")
 
-    Attributes:
-        scan_input (luigi.Parameter): Scheduled scan configuration parameter
+    port_scan_map: Dict[str, Dict[str, Any]] = {}
 
-    Example:
-        >>> scan_task = NetexecScan(scan_input=scheduled_scan)
-        >>> scan_task.run()
-        # Executes Netexec scan and saves XML results
-    """
+    target_map = scope_obj.host_port_obj_map
+    port_num_list: List[str] = scope_obj.get_port_number_list_from_scope()
 
-    scan_input: luigi.Parameter = luigi.Parameter()
+    valid_port_list: List[str] = [
+        p for p in port_num_list if p in netexec_protocol_map]
 
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define output file target for scan metadata.
+    subnet_map: Dict[int, Any] = scope_obj.subnet_map
+    if len(target_map) > 0:
+        for target_key in target_map:
+            target_obj_dict = target_map[target_key]
+            port_obj = target_obj_dict['port_obj']
+            port_str = port_obj.port
 
-        Creates the output file path where scan metadata will be stored,
-        incorporating scan ID and optional module ID for uniqueness.
-
-        Returns:
-            luigi.LocalTarget: Output file target for scan metadata
-
-        Example:
-            >>> task = NetexecScan(scan_input=scan)
-            >>> target = task.output()
-            >>> print(target.path)
-            '/path/to/outputs/netexec_scan_scan123.meta'
-        """
-        scheduled_scan_obj = self.scan_input
-        scan_id: str = scheduled_scan_obj.id
-
-        mod_str: str = ''
-        if scheduled_scan_obj.scan_data.module_id:
-            module_id: str = str(scheduled_scan_obj.scan_data.module_id)
-            mod_str = "_" + module_id
-
-        # Init directory
-        tool_name: str = scheduled_scan_obj.current_tool.name
-        dir_path: str = scan_utils.init_tool_folder(
-            tool_name, 'outputs', scan_id)
-        meta_file_path: str = dir_path + os.path.sep + \
-            "netexec_scan_" + scan_id + mod_str + ".meta"
-
-        return luigi.LocalTarget(meta_file_path)
-
-    def run(self) -> None:
-        """
-        Execute the Netexec network scan.
-
-        Processes target networks and ports, creates optimized scan jobs, and
-        executes Netexec with appropriate arguments. The method handles different
-        scanning scenarios:
-
-        1. Post-masscan optimization: Scans only discovered ports on specific IPs
-        2. Subnet scanning: Comprehensive scans across network ranges
-        3. Targeted scanning: Specific host-port combinations
-        4. Full scope scanning: All hosts and ports in scope
-
-        The method:
-        - Analyzes previous scan results for optimization
-        - Prepares target lists and port specifications
-        - Constructs Netexec command arguments
-        - Executes parallel scan jobs
-        - Collects output files for import
-
-        Raises:
-            Exception: If scan execution fails or output cannot be written
-
-        Example:
-            >>> task = NetexecScan(scan_input=scheduled_scan)
-            >>> task.run()
-            # Executes optimized Netexec scans and writes metadata
-        """
-        scheduled_scan_obj = self.scan_input
-
-        # Ensure output folder exists
-        meta_file_path: str = self.output().path
-        dir_path: str = os.path.dirname(meta_file_path)
-
-        # Load input file
-        scope_obj = scheduled_scan_obj.scan_data
-
-        netexec_scan_data: Optional[Dict[str, Any]] = None
-        netexec_scan_args: Optional[List[str]] = None
-        if scheduled_scan_obj.current_tool.args:
-            netexec_scan_args = scheduled_scan_obj.current_tool.args.split(" ")
-
-        # Map to organize scans by port - only include ports in protocol map
-        port_scan_map: Dict[str, Dict[str, Any]] = {}
-
-        # Use original scope for comprehensive scanning
-        target_map = scope_obj.host_port_obj_map
-        port_num_list: List[str] = scope_obj.get_port_number_list_from_scope()
-
-        # Filter port list to only include ports with defined protocols
-        valid_port_list: List[str] = [
-            p for p in port_num_list if p in netexec_protocol_map]
-
-        # Create scan for each subnet with supported ports
-        subnet_map: Dict[int, Any] = scope_obj.subnet_map
-        if len(target_map) > 0:
-            # Process individual targets organized by port
-            for target_key in target_map:
-                target_obj_dict = target_map[target_key]
-                port_obj = target_obj_dict['port_obj']
-                port_str = port_obj.port
-
-                # Skip ports not in protocol map
-                if port_str not in netexec_protocol_map:
-                    continue
-
-                host_obj = target_obj_dict['host_obj']
-                ip_addr = host_obj.ipv4_addr
-
-                # Get or create scan object for this port
-                if port_str not in port_scan_map:
-                    port_scan_map[port_str] = {
-                        'protocol': netexec_protocol_map[port_str],
-                        'tool_args': netexec_scan_args,
-                        'ip_set': set()
-                    }
-
-                ip_set: Set[str] = port_scan_map[port_str]['ip_set']
-
-                # If credential id exists, add to scan metadata
-                if host_obj.credential and host_obj.credential.get('credential_id'):
-                    port_scan_map[port_str]['credential_id'] = host_obj.credential.get(
-                        'credential_id')
-                elif port_obj.credential and port_obj.credential.get('credential_id'):
-                    port_scan_map[port_str]['credential_id'] = port_obj.credential.get(
-                        'credential_id')
-
-                # Add IP
-                ip_set.add(ip_addr)
-
-        else:
-            # Full scope scanning when no specific targets - organize by supported ports
-            if len(valid_port_list) > 0:
-                target_set: Set[str] = set()
-
-                # Collect all targets (subnets, hosts, domains)
-                for subnet_id in subnet_map:
-                    subnet_obj = subnet_map[subnet_id]
-                    subnet_str: str = "%s/%s" % (subnet_obj.subnet,
-                                                 subnet_obj.mask)
-                    target_set.add(subnet_str)
-
-                # Get all hosts in scope
-                host_list = scope_obj.get_hosts(
-                    [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
-
-                for host_obj in host_list:
-                    ip_addr = host_obj.ipv4_addr
-                    target_set.add(ip_addr)
-
-                # Create a scan object for each supported port
-                for port_str in valid_port_list:
-                    port_scan_map[port_str] = {
-                        'protocol': netexec_protocol_map[port_str],
-                        'tool_args': netexec_scan_args,
-                        'ip_set': target_set.copy()
-                    }
-
-        # Output structure for scan jobs
-        netexec_scan_cmd_list: List[Dict[str, Any]] = []
-        netexec_scan_data = {}
-
-        # Create and execute netexec commands - one per port
-        counter: int = 0
-        futures: List[Any] = []
-
-        if len(port_scan_map) == 0:
-            logging.getLogger(__name__).warning(
-                "No valid ports found for Netexec scan for scan ID %s" % scheduled_scan_obj.id)
-
-        # logging.getLogger(__name__).debug(
-        #    "Netexec scan port map: %s" % port_scan_map)
-        for port_str in sorted(port_scan_map.keys()):
-            port_obj = port_scan_map[port_str]
-            netexec_scan_inst: Dict[str, Any] = {}
-            script_args: Optional[List[str]] = port_obj.get('tool_args')
-            protocol: str = port_obj.get('protocol')
-            port_id: str = port_obj.get('port_id')
-            host_id: str = port_obj.get('host_id')
-            credential_id: str = port_obj.get('credential_id')
-
-            ip_list_path: str = dir_path + os.path.sep + \
-                "netexec_in_" + str(counter)
-
-            # Write IPs to input file
-            ip_set: Set[str] = port_obj['ip_set']
-            if len(ip_set) == 0:
+            if port_str not in netexec_protocol_map:
                 continue
 
-            with open(ip_list_path, 'w') as in_file_fd:
-                for ip in ip_set:
-                    in_file_fd.write(ip + "\n")
+            host_obj = target_obj_dict['host_obj']
+            ip_addr = host_obj.ipv4_addr
 
-            # Prepare output file
-            netexec_output_file: str = dir_path + os.path.sep + \
-                "netexec_out_" + str(counter)
+            if port_str not in port_scan_map:
+                port_scan_map[port_str] = {
+                    'protocol': netexec_protocol_map[port_str],
+                    'tool_args': netexec_scan_args,
+                    'ip_set': set()
+                }
 
-            # Build command arguments
-            command: List[str] = []
-            if os.name != 'nt':
-                command.append("sudo")
+            ip_set: Set[str] = port_scan_map[port_str]['ip_set']
 
-            netexec_path = os.path.expanduser('~/.local/bin/netexec')
-            command.append(netexec_path)
-            command.append("-j")
+            if host_obj.credential and host_obj.credential.get('credential_id'):
+                port_scan_map[port_str]['credential_id'] = host_obj.credential.get(
+                    'credential_id')
+            elif port_obj.credential and port_obj.credential.get('credential_id'):
+                port_scan_map[port_str]['credential_id'] = port_obj.credential.get(
+                    'credential_id')
 
-            # Add script arguments
-            command_custom_args = []
-            if script_args and len(script_args) > 0:
-                protocol_arg = script_args[0]
-                command_custom_args = script_args[1:]
-                if protocol_arg != protocol:
-                    logging.getLogger(__name__).warning(
-                        "Netexec scan protocol mismatch: expected %s, got %s" % (protocol, protocol_arg))
-                    continue
+            ip_set.add(ip_addr)
 
-            command.append(protocol)
+    else:
+        if len(valid_port_list) > 0:
+            target_set: Set[str] = set()
 
-            # Add the target list
-            command.append(ip_list_path)
+            for subnet_id in subnet_map:
+                subnet_obj = subnet_map[subnet_id]
+                subnet_str: str = "%s/%s" % (subnet_obj.subnet,
+                                             subnet_obj.mask)
+                target_set.add(subnet_str)
 
-            # Add credentials
-            if credential_id and credential_id in scope_obj.credential_map:
-                credential = scope_obj.credential_map[credential_id]
-                # Add username
-                command.append("-u")
-                command.append(credential.username)
-                # Add password
-                command.append("-p")
-                command.append(credential.password)
+            host_list = scope_obj.get_hosts(
+                [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
 
-            # Add custom args
-            command.extend(command_custom_args)
+            for host_obj in host_list:
+                ip_addr = host_obj.ipv4_addr
+                target_set.add(ip_addr)
 
-            # Store scan metadata
-            netexec_scan_inst['netexec_command'] = command
-            netexec_scan_inst['output_file'] = netexec_output_file
-            netexec_scan_inst['port'] = port_str
-            netexec_scan_inst['protocol'] = protocol
-            netexec_scan_inst['port_id'] = port_id
-            netexec_scan_inst['host_id'] = host_id
-            netexec_scan_cmd_list.append(netexec_scan_inst)
+            for port_str in valid_port_list:
+                port_scan_map[port_str] = {
+                    'protocol': netexec_protocol_map[port_str],
+                    'tool_args': netexec_scan_args,
+                    'ip_set': target_set.copy()
+                }
 
-            # Execute scan with process tracking
-            callback_with_tool_id = partial(
-                scheduled_scan_obj.register_tool_executor,
-                scheduled_scan_obj.current_tool_instance_id)
+    netexec_scan_cmd_list: List[Dict[str, Any]] = []
+    netexec_scan_data = {}
 
-            futures.append(scan_utils.executor.submit(
-                process_wrapper,
-                cmd_args=command,
-                pid_callback=callback_with_tool_id, stdout_file=netexec_output_file))
-            counter += 1
+    counter: int = 0
+    futures: List[Any] = []
 
-        # Register futures for process tracking
-        if len(futures) > 0:
-            scan_proc_inst = data_model.ToolExecutor(futures)
-            scheduled_scan_obj.register_tool_executor(
-                scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+    if len(port_scan_map) == 0:
+        logging.getLogger(__name__).warning(
+            "No valid ports found for Netexec scan for scan ID %s" % scheduled_scan_obj.id)
 
-            # Wait for all scans to complete
-            for future in futures:
-                ret_dict = future.result()
-                if ret_dict and 'exit_code' in ret_dict:
-                    exit_code = ret_dict['exit_code']
-                    logging.getLogger(__name__).warning(
-                        "Exit code %s" % (exit_code))
-                    if exit_code != 0:
-                        err_msg = ''
-                        if 'stderr' in ret_dict and ret_dict['stderr']:
-                            err_msg = ret_dict['stderr']
-                        logging.getLogger(__name__).error(
-                            "Netexec scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
-                        raise RuntimeError("Netexec scan for scan ID %s exited with code %d: %s" % (
-                            scheduled_scan_obj.id, exit_code, err_msg))
+    for port_str in sorted(port_scan_map.keys()):
+        port_obj = port_scan_map[port_str]
+        netexec_scan_inst: Dict[str, Any] = {}
+        script_args: Optional[List[str]] = port_obj.get('tool_args')
+        protocol: str = port_obj.get('protocol')
+        port_id: str = port_obj.get('port_id')
+        host_id: str = port_obj.get('host_id')
+        credential_id: str = port_obj.get('credential_id')
 
-        # Store scan metadata
-        netexec_scan_data['netexec_scan_list'] = netexec_scan_cmd_list
+        ip_list_path: str = dir_path + os.path.sep + \
+            "netexec_in_" + str(counter)
 
-        # Write metadata file
-        if netexec_scan_data:
-            with open(meta_file_path, 'w') as meta_file_fd:
-                meta_file_fd.write(json.dumps(netexec_scan_data))
+        ip_set: Set[str] = port_obj['ip_set']
+        if len(ip_set) == 0:
+            continue
+
+        with open(ip_list_path, 'w') as in_file_fd:
+            for ip in ip_set:
+                in_file_fd.write(ip + "\n")
+
+        netexec_output_file: str = dir_path + os.path.sep + \
+            "netexec_out_" + str(counter)
+
+        command: List[str] = []
+        if os.name != 'nt':
+            command.append("sudo")
+
+        netexec_path = os.path.expanduser('~/.local/bin/netexec')
+        command.append(netexec_path)
+        command.append("-j")
+
+        command_custom_args = []
+        if script_args and len(script_args) > 0:
+            protocol_arg = script_args[0]
+            command_custom_args = script_args[1:]
+            if protocol_arg != protocol:
+                logging.getLogger(__name__).warning(
+                    "Netexec scan protocol mismatch: expected %s, got %s" % (protocol, protocol_arg))
+                continue
+
+        command.append(protocol)
+        command.append(ip_list_path)
+
+        if credential_id and credential_id in scope_obj.credential_map:
+            credential = scope_obj.credential_map[credential_id]
+            command.append("-u")
+            command.append(credential.username)
+            command.append("-p")
+            command.append(credential.password)
+
+        command.extend(command_custom_args)
+
+        netexec_scan_inst['netexec_command'] = command
+        netexec_scan_inst['output_file'] = netexec_output_file
+        netexec_scan_inst['port'] = port_str
+        netexec_scan_inst['protocol'] = protocol
+        netexec_scan_inst['port_id'] = port_id
+        netexec_scan_inst['host_id'] = host_id
+        netexec_scan_cmd_list.append(netexec_scan_inst)
+
+        callback_with_tool_id = partial(
+            scheduled_scan_obj.register_tool_executor,
+            scheduled_scan_obj.current_tool_instance_id)
+
+        futures.append(scan_utils.executor.submit(
+            process_wrapper,
+            cmd_args=command,
+            pid_callback=callback_with_tool_id, stdout_file=netexec_output_file))
+        counter += 1
+
+    if len(futures) > 0:
+        scan_proc_inst = data_model.ToolExecutor(futures)
+        scheduled_scan_obj.register_tool_executor(
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+
+        for future in futures:
+            ret_dict = future.result()
+            if ret_dict and 'exit_code' in ret_dict:
+                exit_code = ret_dict['exit_code']
+                logging.getLogger(__name__).warning(
+                    "Exit code %s" % (exit_code))
+                if exit_code != 0:
+                    err_msg = ''
+                    if 'stderr' in ret_dict and ret_dict['stderr']:
+                        err_msg = ret_dict['stderr']
+                    logging.getLogger(__name__).error(
+                        "Netexec scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+                    raise RuntimeError("Netexec scan for scan ID %s exited with code %d: %s" % (
+                        scheduled_scan_obj.id, exit_code, err_msg))
+
+    netexec_scan_data['netexec_scan_list'] = netexec_scan_cmd_list
+
+    if netexec_scan_data:
+        with open(meta_file_path, 'w') as meta_file_fd:
+            meta_file_fd.write(json.dumps(netexec_scan_data))
 
 
 def parse_netexec_output(output_file, tool_instance_id, tool_id):
@@ -908,133 +743,30 @@ def parse_netexec_output(output_file, tool_instance_id, tool_id):
     return ret_arr
 
 
-@inherits(NetexecScan)
-class ImportNetexecOutput(data_model.ImportToolXOutput):
-    """
-    Luigi task for importing and processing Netexec scan results.
+def netexec_scan_func(scan_input) -> bool:
+    try:
+        execute_scan(scan_input)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "netexec scan failed: %s", e, exc_info=True)
+        return False
 
-    This task handles the complete import and processing of Netexec text output files,
-    parsing network reconnaissance information and integrating it into the Waluigi framework's
-    data model. It processes host discovery, port scanning, and service enumeration results
-    from Netexec reconnaissance activities.
 
-    The import process includes:
-        - Reading and parsing line-by-line Netexec output format
-        - Extracting protocol, IP address, port, and hostname fields
-        - Processing variable-length script output payloads
-        - Processing host information and network addresses
-        - Extracting service details and module outputs
-        - Creating data model objects (Host, Port, Domain, Module, ModuleOutput)
-        - Handling protocol-based module mapping
-
-    Key Features:
-        - Robust text parsing with line-by-line error handling and recovery
-        - Complete host and port information extraction from parsed data
-        - IPv4 and IPv6 address handling
-        - Domain extraction from hostname reconnaissance data
-        - Service reconnaissance result processing and module correlation
-        - Protocol-based module organization and tracking
-        - Comprehensive logging and error reporting
-
-    Attributes:
-        Inherits all attributes from NetexecScan and ImportToolXOutput
-
-    Methods:
-        requires: Specifies dependency on completed NetexecScan task
-        run: Main processing method for importing scan results
-
-    Example:
-        >>> # Task is executed as part of the Luigi workflow
-        >>> import_task = ImportNetexecOutput(scan_input=scan_obj)
-        >>> luigi.build([import_task], local_scheduler=True)
-
-    Note:
-        This task creates comprehensive data model objects including hosts,
-        ports, domains, modules, and module outputs with proper parent-child
-        relationships and tracking information.
-    """
-
-    def requires(self) -> NetexecScan:
-        """
-        Specify task dependencies for the import operation.
-
-        Returns:
-            NetexecScan: The Netexec scan task that must complete before
-                this import task can execute, providing XML output files.
-        """
-        return NetexecScan(scan_input=self.scan_input)
-
-    def run(self) -> None:
-        """
-        Import and process Netexec scan results into the framework's data model.
-
-        This method performs comprehensive processing of Netexec text output files,
-        extracting detailed reconnaissance information and creating appropriate data
-        model objects. The process handles multiple text output files from parallel
-        scan executions (one per protocol/port combination) and correlates results
-        with existing scan data.
-
-        The import workflow includes:
-            1. Reading scan metadata from the meta file containing output file paths
-            2. Processing each JSON output file from parallel scans
-            3. FIRST PASS - Consolidation: Parse all JSON lines and consolidate by (host, port, hostname, protocol, module_name)
-            4. Preprocessing: Filter redundant info/display messages that lack actionable data
-            5. Aggregate all messages for the same module/host/port combination
-            6. SECOND PASS - Object Creation: Build data model objects from consolidated data
-            7. Creating Host objects for discovered IP addresses (one per unique IP)
-            8. Creating Port objects with parent-child relationships to hosts (one per unique port)
-            9. Creating Domain objects from hostname reconnaissance data
-            10. Creating CollectionModule objects for each protocol/service or module (e.g., NANODUMP)
-            11. Creating CollectionModuleOutput objects with consolidated reconnaissance payloads
-            12. Importing all results into the framework database
-
-        Data Processing Details:
-            - Consolidation: All JSON lines grouped by (host, port, hostname, protocol, module_name)
-            - Messages: Multiple messages for the same module are concatenated with newlines
-            - Host Objects: Created for each discovered IP address (IPv4/IPv6)
-            - Port Objects: Generated for each scanned port with protocol information (one per unique port)
-            - Domain Objects: Extracted from reconnaissance hostnames
-            - Collection Module Objects: One per service protocol (ftp, ssh, smb, etc.) or module_name when present
-            - Module Output Objects: Raw reconnaissance output payloads linked to ports and modules
-
-        JSON Line Format Parsing:
-            Each output line is a complete JSON object containing:
-            - protocol: Service protocol (e.g., "SMB", "SSH", "FTP")
-            - host: Target IP address (IPv4 or IPv6)
-            - port: Target port number (integer)
-            - hostname: Discovered hostname
-            - message: Reconnaissance output payload
-            - module_name: Optional module name for the reconnaissance result (e.g., "NANODUMP")
-            - type: Message type (display, success, highlight)
-            - level: Message level (INFO, SUCCESS, HIGHLIGHT)
-            - timestamp: ISO timestamp of the message
-
-        Preprocessing Logic:
-            - Skips redundant generic info/display messages without actionable data
-            - Filters out status updates unrelated to credentials, files, or system discovery
-            - Retains messages containing structured data (parenthetical values) or action keywords
-            - Uses module_name field when present to create specific module instances
-
-        Error Handling:
-            - Graceful handling of malformed JSON and missing required fields
-            - Comprehensive logging of parsing errors
-            - Continuation of processing despite individual line failures
-            - Try-catch wrapping for file I/O operations
-
-        Example:
-            >>> import_task = ImportNetexecOutput(scan_input=scan_obj)
-            >>> import_task.run()  # Processes all text output files and imports results
-
-        Note:
-            The method handles protocol-specific scanning results, creating
-            module instances per protocol and linking all outputs to the
-            appropriate port and host objects.
-        """
-
-        scheduled_scan_obj = self.scan_input
-        ret_arr = parse_netexec_output(
-            self.input().path,
-            scheduled_scan_obj.current_tool_instance_id,
-            scheduled_scan_obj.current_tool.id,
-        )
-        self.import_results(scheduled_scan_obj, ret_arr)
+def netexec_import(scan_input) -> bool:
+    try:
+        output_path = get_output_path(scan_input)
+        if not os.path.exists(output_path):
+            return True
+        if _import_already_done(scan_input, output_path):
+            return True
+        tool_instance_id = scan_input.current_tool_instance_id
+        tool_id = scan_input.current_tool.id
+        ret_arr = parse_netexec_output(output_path, tool_instance_id, tool_id)
+        if ret_arr:
+            _import_results(scan_input, ret_arr, output_path)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "netexec import failed: %s", e, exc_info=True)
+        return False

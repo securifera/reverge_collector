@@ -29,14 +29,16 @@ import time
 import uuid as uuid_lib
 from typing import Dict, Any, List, Set, Optional, Union
 import netaddr
-import luigi
 import requests
 import traceback
 import logging
 
-from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
+from waluigi.tool_runner import (
+    import_already_done as _import_already_done,
+    import_results as _import_results,
+)
 
 
 def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: str,
@@ -283,8 +285,8 @@ class Metasploit(data_model.WaluigiTool):
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 6
         self.args: str = ""
-        self.scan_func = Metasploit.metasploit_scan_func
-        self.import_func = Metasploit.metasploit_import
+        self.scan_func = metasploit_scan_func
+        self.import_func = metasploit_import
         self.modules_func = Metasploit.metasploit_modules
         self.input_records = [
             data_model.ServerRecordType.SUBNET, data_model.ServerRecordType.HOST, data_model.ServerRecordType.PORT]
@@ -537,391 +539,218 @@ class Metasploit(data_model.WaluigiTool):
                    len(modules))
         return modules
 
-    @staticmethod
-    def metasploit_scan_func(scan_input: data_model.ScheduledScan) -> bool:
-        """
-        Execute Metasploit network scan via msfrpc daemon.
 
-        Initiates a Metasploit scan using Luigi task orchestration. The scan targets
-        are processed from the scheduled scan input and executed via the msfrpc daemon
-        interface with intelligent optimization based on previous discovery results.
-
-        Args:
-            scan_input (data_model.ScheduledScan): Scheduled scan configuration
-                containing target information and scan parameters
-
-        Returns:
-            bool: True if scan completed successfully, False otherwise
-
-        Example:
-            >>> scan_input = ScheduledScan(...)
-            >>> success = Metasploit.metasploit_scan_func(scan_input)
-            >>> print(success)
-            True
-        """
-        luigi_run_result = luigi.build([MetasploitScan(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
-
-    @staticmethod
-    def metasploit_import(scan_input: data_model.ScheduledScan) -> bool:
-        """
-        Import and process Metasploit scan results.
-
-        Processes the output from completed Metasploit scans executed via msfrpc daemon,
-        parsing detailed host information, exploitation results, and module outputs
-        into the data model.
-
-        Args:
-            scan_input (data_model.ScheduledScan): Scheduled scan configuration
-                containing scan results to import
-
-        Returns:
-            bool: True if import completed successfully, False otherwise
-
-        Example:
-            >>> scan_input = ScheduledScan(...)
-            >>> success = Metasploit.metasploit_import(scan_input)
-            >>> print(success)
-            True
-        """
-        luigi_run_result = luigi.build([ImportMetasploitOutput(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
+def get_output_path(scan_input) -> str:
+    scheduled_scan_obj = scan_input
+    scan_id: str = scheduled_scan_obj.id
+    mod_str: str = ''
+    if scheduled_scan_obj.scan_data.module_id:
+        module_id: str = str(scheduled_scan_obj.scan_data.module_id)
+        mod_str = "_" + module_id
+    tool_name: str = scheduled_scan_obj.current_tool.name
+    dir_path: str = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return dir_path + os.path.sep + "metasploit_scan_" + scan_id + mod_str + ".meta"
 
 
-class MetasploitScan(luigi.Task):
-    """
-    Luigi task for executing Metasploit network scans.
+def execute_scan(scan_input) -> None:
+    output_file_path = get_output_path(scan_input)
+    if os.path.exists(output_file_path):
+        return
 
-    This task orchestrates the execution of Metasploit scans against target networks,
-    handling input preparation, command execution, and output collection. The
-    task supports both subnet-based scanning and targeted port scanning with
-    intelligent optimization based on previous masscan results.
+    scheduled_scan_obj = scan_input
+    meta_file_path: str = output_file_path
+    dir_path: str = os.path.dirname(meta_file_path)
+    scope_obj = scheduled_scan_obj.scan_data
 
-    The scan process includes:
-    - Target preparation (subnets, IPs, domains)
-    - Port list optimization based on previous scans
-    - Command construction with appropriate arguments
-    - Parallel execution of scan jobs
-    - XML output collection for import processing
+    module_path: Optional[str] = None
+    additional_options: Dict[str, str] = {}
+    if scheduled_scan_obj.current_tool.args:
+        for token in scheduled_scan_obj.current_tool.args.split():
+            if '=' in token:
+                key, _, val = token.partition('=')
+                additional_options[key.strip()] = val.strip()
+            elif '/' in token and module_path is None:
+                module_path = token.strip()
 
-    Attributes:
-        scan_input (luigi.Parameter): Scheduled scan configuration parameter
+    if not module_path:
+        logging.getLogger(__name__).warning(
+            "No Metasploit module path found in tool args for scan ID %s" % scheduled_scan_obj.id)
+        metasploit_scan_data: Dict[str, Any] = {'metasploit_scan_list': []}
+        with open(meta_file_path, 'w') as meta_file_fd:
+            meta_file_fd.write(json.dumps(metasploit_scan_data))
+        return
 
-    """
+    port_scan_map: Dict[str, Dict[str, Any]] = {}
 
-    scan_input: luigi.Parameter = luigi.Parameter()
+    target_map = scope_obj.host_port_obj_map
+    port_num_list: List[str] = scope_obj.get_port_number_list_from_scope()
+    subnet_map: Dict[int, Any] = scope_obj.subnet_map
 
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define output file target for scan metadata.
+    if len(target_map) > 0:
+        for target_key in target_map:
+            target_obj_dict = target_map[target_key]
+            port_obj = target_obj_dict['port_obj']
+            port_str = port_obj.port
 
-        Creates the output file path where scan metadata will be stored,
-        incorporating scan ID and optional module ID for uniqueness.
+            host_obj = target_obj_dict['host_obj']
+            ip_addr = host_obj.ipv4_addr
 
-        Returns:
-            luigi.LocalTarget: Output file target for scan metadata
+            if port_str not in port_scan_map:
+                port_scan_map[port_str] = {
+                    'protocol': module_path,
+                    'ip_set': set()
+                }
 
-        Example:
-            >>> task = MetasploitScan(scan_input=scan)
-            >>> target = task.output()
-            >>> print(target.path)
-            '/path/to/outputs/metasploit_scan_scan123.meta'
-        """
-        scheduled_scan_obj = self.scan_input
-        scan_id: str = scheduled_scan_obj.id
+            ip_set: Set[str] = port_scan_map[port_str]['ip_set']
+            ip_set.add(ip_addr)
 
-        mod_str: str = ''
-        if scheduled_scan_obj.scan_data.module_id:
-            module_id: str = str(scheduled_scan_obj.scan_data.module_id)
-            mod_str = "_" + module_id
+            target_arr = target_key.split(":")
+            extra = target_arr[0]
+            if extra != ip_addr and ('.' in extra):
+                ip_set.add(extra)
 
-        # Init directory
-        tool_name: str = scheduled_scan_obj.current_tool.name
-        dir_path: str = scan_utils.init_tool_folder(
-            tool_name, 'outputs', scan_id)
-        meta_file_path: str = dir_path + os.path.sep + \
-            "metasploit_scan_" + scan_id + mod_str + ".meta"
+    else:
+        if len(port_num_list) > 0:
+            target_set: Set[str] = set()
 
-        return luigi.LocalTarget(meta_file_path)
+            for subnet_id in subnet_map:
+                subnet_obj = subnet_map[subnet_id]
+                target_set.add("%s/%s" % (subnet_obj.subnet, subnet_obj.mask))
 
-    def run(self) -> None:
-        """
-        Execute the Metasploit network scan via msfrpc daemon.
+            host_list = scope_obj.get_hosts(
+                [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+            for host_obj in host_list:
+                target_set.add(host_obj.ipv4_addr)
 
-        Processes target networks and ports, creates optimized scan jobs, and
-        executes Metasploit modules via msfrpc daemon with appropriate arguments.
-        The method handles different scanning scenarios:
+            for port_str in port_num_list:
+                port_scan_map[port_str] = {
+                    'protocol': module_path,
+                    'ip_set': target_set.copy()
+                }
 
-        1. Post-discovery optimization: Executes modules on discovered services
-        2. Subnet scanning: Comprehensive scans across network ranges
-        3. Targeted scanning: Specific host-port combinations
-        4. Full scope scanning: All hosts and ports in scope
+    metasploit_scan_cmd_list: List[Dict[str, Any]] = []
+    metasploit_scan_data = {}
 
-        The method:
-        - Analyzes previous scan results for optimization
-        - Prepares target lists and port specifications
-        - Constructs Metasploit module arguments
-        - Executes parallel scan jobs via msfrpc
-        - Collects output files for import
+    msf_host: str = os.environ.get("MSF_JSON_RPC_HOST", "127.0.0.1")
+    msf_port: int = int(os.environ.get("MSF_JSON_RPC_PORT", "8081"))
+    bearer_token: str = os.environ.get("MSF_JSON_RPC_TOKEN", "")
+    use_ssl: bool = os.environ.get(
+        "MSF_JSON_RPC_SSL", "").lower() in ("1", "true", "yes")
 
-        Raises:
-            Exception: If scan execution fails or output cannot be written
+    counter: int = 0
+    futures: List[Any] = []
 
-        Example:
-            >>> task = MetasploitScan(scan_input=scheduled_scan)
-            >>> task.run()
-            # Executes optimized Metasploit scans via msfrpc and writes metadata
-        """
-        scheduled_scan_obj = self.scan_input
+    if len(port_scan_map) == 0:
+        logging.getLogger(__name__).warning(
+            "No scan targets found for Metasploit scan ID %s" % scheduled_scan_obj.id)
 
-        # Ensure output folder exists
-        meta_file_path: str = self.output().path
-        dir_path: str = os.path.dirname(meta_file_path)
+    for port_str in sorted(port_scan_map.keys()):
+        port_obj = port_scan_map[port_str]
+        metasploit_scan_inst: Dict[str, Any] = {}
+        module_path_for_port: str = port_obj['protocol']
 
-        # Load input file
-        scope_obj = scheduled_scan_obj.scan_data
+        metasploit_output_file: str = dir_path + os.path.sep + \
+            "metasploit_out_" + str(counter)
 
-        # Parse module path and base datastore options from tool args.
-        # The module path is the first slash-containing, non-KEY=VALUE token.
-        # All remaining KEY=VALUE tokens become extra datastore options.
-        module_path: Optional[str] = None
-        additional_options: Dict[str, str] = {}
-        if scheduled_scan_obj.current_tool.args:
-            for token in scheduled_scan_obj.current_tool.args.split():
-                if '=' in token:
-                    key, _, val = token.partition('=')
-                    additional_options[key.strip()] = val.strip()
-                elif '/' in token and module_path is None:
-                    module_path = token.strip()
-
-        if not module_path:
-            logging.getLogger(__name__).warning(
-                "No Metasploit module path found in tool args for scan ID %s" % scheduled_scan_obj.id)
-            metasploit_scan_data: Dict[str, Any] = {'metasploit_scan_list': []}
-            with open(meta_file_path, 'w') as meta_file_fd:
-                meta_file_fd.write(json.dumps(metasploit_scan_data))
-            return
-
-        # Map to organize scans by port
-        port_scan_map: Dict[str, Dict[str, Any]] = {}
-
-        target_map = scope_obj.host_port_obj_map
-        port_num_list: List[str] = scope_obj.get_port_number_list_from_scope()
-        subnet_map: Dict[int, Any] = scope_obj.subnet_map
-
-        if len(target_map) > 0:
-            # Process individual targets organized by port
-            for target_key in target_map:
-                target_obj_dict = target_map[target_key]
-                port_obj = target_obj_dict['port_obj']
-                port_str = port_obj.port
-
-                host_obj = target_obj_dict['host_obj']
-                ip_addr = host_obj.ipv4_addr
-
-                if port_str not in port_scan_map:
-                    port_scan_map[port_str] = {
-                        'protocol': module_path,
-                        'ip_set': set()
-                    }
-
-                ip_set: Set[str] = port_scan_map[port_str]['ip_set']
-                ip_set.add(ip_addr)
-
-                target_arr = target_key.split(":")
-                extra = target_arr[0]
-                # Only add the extra token if it's a routable FQDN (contains a dot)
-                # or a valid IP — bare NetBIOS/mDNS names like "ubuntu" won't resolve
-                # via Metasploit's RHOSTS resolver and produce empty results.
-                if extra != ip_addr and ('.' in extra):
-                    ip_set.add(extra)
-
-        else:
-            # Full scope scanning when no specific targets
-            if len(port_num_list) > 0:
-                target_set: Set[str] = set()
-
-                for subnet_id in subnet_map:
-                    subnet_obj = subnet_map[subnet_id]
-                    target_set.add("%s/%s" %
-                                   (subnet_obj.subnet, subnet_obj.mask))
-
-                host_list = scope_obj.get_hosts(
-                    [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
-                for host_obj in host_list:
-                    target_set.add(host_obj.ipv4_addr)
-
-                for port_str in port_num_list:
-                    port_scan_map[port_str] = {
-                        'protocol': module_path,
-                        'ip_set': target_set.copy()
-                    }
-
-        # Output structure for scan jobs
-        metasploit_scan_cmd_list: List[Dict[str, Any]] = []
-        metasploit_scan_data = {}
-
-        # JSON RPC connection config — may be customised via environment variables
-        msf_host: str = os.environ.get("MSF_JSON_RPC_HOST", "127.0.0.1")
-        msf_port: int = int(os.environ.get("MSF_JSON_RPC_PORT", "8081"))
-        bearer_token: str = os.environ.get("MSF_JSON_RPC_TOKEN", "")
-        use_ssl: bool = os.environ.get(
-            "MSF_JSON_RPC_SSL", "").lower() in ("1", "true", "yes")
-
-        # Create and execute metasploit commands — one per port
-        counter: int = 0
-        futures: List[Any] = []
-
-        if len(port_scan_map) == 0:
-            logging.getLogger(__name__).warning(
-                "No scan targets found for Metasploit scan ID %s" % scheduled_scan_obj.id)
-
-        for port_str in sorted(port_scan_map.keys()):
-            port_obj = port_scan_map[port_str]
-            metasploit_scan_inst: Dict[str, Any] = {}
-            module_path_for_port: str = port_obj['protocol']
-
-            # Prepare output file
-            metasploit_output_file: str = dir_path + os.path.sep + \
-                "metasploit_out_" + str(counter)
-
-            # Write IPs to a sidecar file for reference / debugging
-            ip_list_path: str = dir_path + os.path.sep + \
-                "metasploit_in_" + str(counter)
-            ip_set: Set[str] = port_obj['ip_set']
-            if len(ip_set) == 0:
-                counter += 1
-                continue
-
-            ip_list = list(ip_set)
-            with open(ip_list_path, 'w') as in_file_fd:
-                for ip in ip_list:
-                    in_file_fd.write(ip + "\n")
-
-            # Build per-port options: RPORT comes from the current port number
-            port_options: Dict[str, str] = dict(additional_options)
-            port_options['RPORT'] = port_str
-
-            # Store scan metadata (protocol key is consumed by ImportMetasploitOutput)
-            metasploit_scan_inst['output_file'] = metasploit_output_file
-            metasploit_scan_inst['protocol'] = module_path_for_port
-            metasploit_scan_inst['port'] = port_str
-            metasploit_scan_inst['ip_list'] = ip_list_path
-            metasploit_scan_cmd_list.append(metasploit_scan_inst)
-
-            # Submit to the thread-pool; execute_msfrpc_commands blocks until complete
-            futures.append(scan_utils.executor.submit(
-                execute_msfrpc_commands,
-                ip_list=ip_list,
-                module_path=module_path_for_port,
-                output_file=metasploit_output_file,
-                additional_options=port_options,
-                bearer_token=bearer_token,
-                msf_host=msf_host,
-                msf_port=msf_port,
-                use_ssl=use_ssl,
-            ))
+        ip_list_path: str = dir_path + os.path.sep + \
+            "metasploit_in_" + str(counter)
+        ip_set_val: Set[str] = port_obj['ip_set']
+        if len(ip_set_val) == 0:
             counter += 1
+            continue
 
-        # Register futures for process tracking and wait for all scans to complete
-        if len(futures) > 0:
-            scan_proc_inst = data_model.ToolExecutor(futures)
-            scheduled_scan_obj.register_tool_executor(
-                scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+        ip_list = list(ip_set_val)
+        with open(ip_list_path, 'w') as in_file_fd:
+            for ip in ip_list:
+                in_file_fd.write(ip + "\n")
 
-            for future in futures:
-                future.result()
+        port_options: Dict[str, str] = dict(additional_options)
+        port_options['RPORT'] = port_str
 
-        # Store scan metadata
-        metasploit_scan_data['metasploit_scan_list'] = metasploit_scan_cmd_list
+        metasploit_scan_inst['output_file'] = metasploit_output_file
+        metasploit_scan_inst['protocol'] = module_path_for_port
+        metasploit_scan_inst['port'] = port_str
+        metasploit_scan_inst['ip_list'] = ip_list_path
+        metasploit_scan_cmd_list.append(metasploit_scan_inst)
 
-        # Write metadata file
-        if metasploit_scan_data:
-            with open(meta_file_path, 'w') as meta_file_fd:
-                meta_file_fd.write(json.dumps(metasploit_scan_data))
+        futures.append(scan_utils.executor.submit(
+            execute_msfrpc_commands,
+            ip_list=ip_list,
+            module_path=module_path_for_port,
+            output_file=metasploit_output_file,
+            additional_options=port_options,
+            bearer_token=bearer_token,
+            msf_host=msf_host,
+            msf_port=msf_port,
+            use_ssl=use_ssl,
+        ))
+        counter += 1
 
+    if len(futures) > 0:
+        scan_proc_inst = data_model.ToolExecutor(futures)
+        scheduled_scan_obj.register_tool_executor(
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
-@inherits(MetasploitScan)
-class ImportMetasploitOutput(data_model.ImportToolXOutput):
-    """
-    Luigi task for importing and processing Metasploit scan results from msfrpc daemon.
+        for future in futures:
+            future.result()
 
-    This task handles the complete import and processing of Metasploit output files executed
-    via msfrpc daemon, parsing exploitation and post-exploitation information and integrating
-    it into the Waluigi framework's data model. It processes host discovery, service enumeration,
-    and exploitation results from Metasploit modules.
+    metasploit_scan_data['metasploit_scan_list'] = metasploit_scan_cmd_list
 
-    """
-
-    def requires(self) -> MetasploitScan:
-        """
-        Specify task dependencies for the import operation.
-
-        Returns:
-            MetasploitScan: The Metasploit scan task that must complete before
-                this import task can execute, providing output files.
-        """
-        return MetasploitScan(scan_input=self.scan_input)
-
-    def run(self) -> None:
-        """
-        Import and process Metasploit scan results from msfrpc daemon into the framework's data model.
+    if metasploit_scan_data:
+        with open(meta_file_path, 'w') as meta_file_fd:
+            meta_file_fd.write(json.dumps(metasploit_scan_data))
 
 
-        """
+def metasploit_scan_func(scan_input) -> bool:
+    try:
+        execute_scan(scan_input)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "metasploit scan failed: %s", e, exc_info=True)
+        return False
 
-        scheduled_scan_obj = self.scan_input
+
+def metasploit_import(scan_input) -> bool:
+    try:
+        output_path = get_output_path(scan_input)
+        if not os.path.exists(output_path):
+            return True
+        if _import_already_done(scan_input, output_path):
+            return True
+
+        scheduled_scan_obj = scan_input
         tool_instance_id = scheduled_scan_obj.current_tool_instance_id
         scope_obj = scheduled_scan_obj.scan_data
         tool_obj = scheduled_scan_obj.current_tool
         tool_id = tool_obj.id
 
-        # Initialize result array for data model objects
         ret_arr: List[Any] = []
         module_id_map: Dict[str, str] = {}
 
-        # Read scan metadata file containing output file paths
-        meta_file = self.input().path
+        meta_file = output_path
         if os.path.exists(meta_file):
 
             with open(meta_file) as file_fd:
                 json_input = file_fd.read()
 
-            # Process scan metadata and output files
             if len(json_input) > 0:
                 metasploit_scan_obj = json.loads(json_input)
                 metasploit_json_arr = metasploit_scan_obj['metasploit_scan_list']
 
-                # Process each parallel scan output file
                 for metasploit_scan_entry in metasploit_json_arr:
 
-                    # Parse Metasploit output file with error handling
                     metasploit_out = metasploit_scan_entry['output_file']
                     protocol = metasploit_scan_entry['protocol']
                     if os.path.exists(metasploit_out) and os.path.getsize(metasploit_out) > 0:
 
                         try:
-                            # Output file contains raw console text written by
-                            # execute_msfrpc_commands (console API approach).
-
                             with open(metasploit_out, 'r') as output_file:
                                 all_output = output_file.read()
 
                             logging.getLogger(__name__).debug(
                                 "Scan Output: \n%s" % all_output)
 
-                            # Phase 1: Group output lines by IP address.
-                            # [prefix] lines that contain an IP set the current context;
-                            # non-prefixed lines (table data, continuation) are attributed
-                            # to the last seen IP so multi-line blocks stay together.
-                            # Expected prefixed format: [prefix] IP:PORT - Message
-                            #                       or: [prefix] IP - Message
                             ip_lines_map: Dict[str, List[str]] = {}
                             ip_port_map_local: Dict[str, str] = {}
                             current_ip: Optional[str] = None
@@ -931,7 +760,6 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                                 if stripped.startswith('[*]') or stripped.startswith('[+]') or \
                                         stripped.startswith('[-]') or stripped.startswith('[!]'):
                                     content = stripped[3:].strip()
-                                    # Pattern 1: IP:PORT - Message
                                     ip_match = re.match(
                                         r'^(\d+\.\d+\.\d+\.\d+):(\d+)\s+-\s+', content)
                                     if ip_match:
@@ -943,7 +771,6 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                                             ip_port_map_local[ip] = port
                                         ip_lines_map[ip].append(stripped)
                                     else:
-                                        # Pattern 2: IP - Message
                                         ip_match = re.match(
                                             r'^(\d+\.\d+\.\d+\.\d+)\s+-\s+', content)
                                         if ip_match:
@@ -954,14 +781,9 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                                                 ip_port_map_local[ip] = str(
                                                     metasploit_scan_entry.get('port', '0'))
                                             ip_lines_map[ip].append(stripped)
-                                        # else: global status line (e.g. "Scanned X of Y hosts")
-                                        # — do not change current_ip context
                                 elif stripped and current_ip is not None:
-                                    # Non-prefixed content (table rows, continuation lines)
-                                    # belongs to the last IP we saw
                                     ip_lines_map[current_ip].append(stripped)
 
-                            # Create/retrieve the CollectionModule object once per module path
                             module_key = protocol
                             if module_key not in module_id_map:
                                 module_obj = data_model.CollectionModule(
@@ -972,14 +794,11 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                                 module_id_map[module_key] = module_obj.id
                             temp_module_id = module_id_map[module_key]
 
-                            # Track created objects to avoid duplicates
                             host_id_map: Dict[str, str] = {}
                             port_id_map: Dict[tuple, str] = {}
                             domain_id_map: Dict[str, str] = {}
                             host_os_map: Dict[str, tuple] = {}
 
-                            # Phase 2: Build one data model entry per IP from its
-                            # grouped lines.
                             for ip_address, ip_lines in ip_lines_map.items():
                                 port_str = ip_port_map_local.get(
                                     ip_address,
@@ -987,12 +806,8 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                                 hostname = ip_address
                                 server_os = None
 
-                                # Scan the IP's lines for OS information.
-                                # Priority: "Host is running" message > os.product table key
-                                # > os.family table key.
                                 for ln in ip_lines:
                                     if ln.startswith('['):
-                                        # Check prefixed lines for "Host is running"
                                         msg = ln[3:].strip()
                                         os_match = re.search(
                                             r'Host is running (.+?)(?:\s+\(build:|\s*$)', msg)
@@ -1001,8 +816,6 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                                                 1).strip()
                                             break
                                     else:
-                                        # Parse table rows: "os.product   Linux"
-                                        # Table columns are separated by 2+ spaces.
                                         tbl = re.match(
                                             r'^(os\.\w+)\s{2,}(\S[^\s]*)$', ln)
                                         if tbl:
@@ -1013,7 +826,6 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                                             elif key == 'os.family' and not server_os:
                                                 server_os = value
 
-                                # Resolve host_id / port_id from scope if available
                                 host_id: Optional[str] = None
                                 port_id: Optional[str] = None
                                 host_key = "%s:%s" % (ip_address, port_str)
@@ -1024,7 +836,6 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                                 elif ip_address in scope_obj.host_ip_id_map:
                                     host_id = scope_obj.host_ip_id_map[ip_address]
 
-                                # Create or retrieve Host object
                                 if ip_address not in host_id_map:
                                     ip_object = netaddr.IPAddress(ip_address)
                                     host_obj = data_model.Host(id=host_id)
@@ -1039,7 +850,6 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                                 else:
                                     host_id = host_id_map[ip_address]
 
-                                # Create or retrieve Port object
                                 port_key = (host_id, port_str)
                                 if port_key not in port_id_map:
                                     port_obj = data_model.Port(
@@ -1053,7 +863,6 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                                 else:
                                     port_id = port_id_map[port_key]
 
-                                # Store per-IP output with the resolved port_id
                                 ip_output_obj = data_model.CollectionModuleOutput(
                                     parent_id=temp_module_id)
                                 ip_output_obj.collection_tool_instance_id = tool_instance_id
@@ -1061,12 +870,10 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                                 ip_output_obj.port_id = port_id
                                 ret_arr.append(ip_output_obj)
 
-                                # Handle OperatingSystem object
                                 if server_os:
                                     os_name = server_os
                                     os_version = ''
                                     parts = server_os.strip().split()
-                                    # Last token may be a version (numeric or dotted, e.g. "10.2")
                                     if len(parts) > 1 and re.match(r'^\d+(\.\d+)*$', parts[-1]):
                                         os_version = parts[-1]
                                         os_name = ' '.join(parts[:-1])
@@ -1092,7 +899,6 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                                         host_os_map[host_id] = (
                                             os_name, os_obj)
 
-                                # Create or retrieve Domain object
                                 if ip_address != hostname:
                                     if hostname not in domain_id_map:
                                         domain_obj = data_model.Domain(
@@ -1110,5 +916,10 @@ class ImportMetasploitOutput(data_model.ImportToolXOutput):
                                 "Error processing metasploit output file %s: %s" % (metasploit_out, str(e)))
                             traceback.print_exc()
 
-        # Import, Update, & Save
-        self.import_results(scheduled_scan_obj, ret_arr)
+        if ret_arr:
+            _import_results(scan_input, ret_arr, output_path)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "metasploit import failed: %s", e, exc_info=True)
+        return False

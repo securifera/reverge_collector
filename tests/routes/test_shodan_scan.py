@@ -2,7 +2,7 @@ import base64
 import os
 import shutil
 import uuid
-from waluigi.data_model import ImportToolXOutput, ScheduledScan, ScanData
+from waluigi.data_model import ScheduledScan, ScanData
 from waluigi.recon_manager import ReconManager, ScheduledScanThread
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -69,7 +69,7 @@ class TestShodanScan:
 
             with patch('waluigi.shodan_lookup.shodan_wrapper', return_value=shodan_data):
 
-                with patch.object(ImportToolXOutput, 'import_results', return_value=None):
+                with patch.object(ReconManager, 'import_data', return_value={}):
 
                     result = recon_manager.import_func(scheduled_scan_obj)
                     assert result == True

@@ -21,7 +21,6 @@ import hashlib
 import threading
 import uuid
 import netaddr
-import luigi
 import os
 import json
 import importlib
@@ -509,7 +508,7 @@ class ScheduledScan():
                     thread_future_array)
             tool_executor_map_main.proc_pids.update(proc_pids)
 
-    def kill_scan_processes(self, tool_id_list: List[str] = []) -> None:
+    def kill_scan_processes(self, tool_id_list: Optional[List[str]] = None) -> None:
         """
         Terminate scan processes and cancel running threads.
 
@@ -581,20 +580,6 @@ class ScheduledScan():
                 os.remove(collection_tool_inst.collection_tool.wordlist_path)
 
     def __hash__(self) -> int:
-        """
-        Return hash value for Luigi task compatibility.
-
-        Luigi requires hashable input parameters for task deduplication.
-        Since this object contains complex data structures that aren't
-        naturally hashable, we return a constant value.
-
-        Returns:
-            int: Constant hash value (0) for Luigi compatibility
-
-        Note:
-            This is necessary because Luigi hashes input parameters and
-            dictionaries won't work as task parameters
-        """
         return 0
 
 
@@ -852,7 +837,7 @@ class WaluigiTool:
         return ret_dict
 
 
-class ImportToolXOutput(luigi.Task):
+class ImportToolXOutput:
     """
     Luigi Task for importing and processing security scanning tool output.
 
@@ -869,21 +854,16 @@ class ImportToolXOutput(luigi.Task):
         >>> is_complete = import_task.complete()
     """
 
-    def output(self) -> luigi.LocalTarget:
+    def output(self) -> str:
         """
-        Define the output target for the imported tool results.
-
-        Creates a LocalTarget pointing to the processed import file that will contain
-        the JSON-formatted scan results ready for database import.
+        Return the path of the import-done marker file (``tool_import_json``).
 
         Returns:
-            luigi.LocalTarget: Target file for the imported and processed results
+            str: Absolute path to the ``tool_import_json`` marker file
         """
         tool_output_file = self.input().path
         dir_path = os.path.dirname(tool_output_file)
-        out_file = dir_path + os.path.sep + "tool_import_json"
-
-        return luigi.LocalTarget(out_file)
+        return dir_path + os.path.sep + "tool_import_json"
 
     def complete(self) -> bool:
         """
@@ -900,11 +880,11 @@ class ImportToolXOutput(luigi.Task):
             This method has the side effect of updating the scan scope when complete
         """
         # Custom completion check: Verify the scan objects exist and update the scope
-        output = self.output()
-        if output.exists():
+        out_file = self.output()
+        if os.path.exists(out_file):
 
             import_arr = []
-            with open(output.path, 'r') as import_fd:
+            with open(out_file, 'r') as import_fd:
                 for line in import_fd:
                     line = line.strip()
                     if not line:
@@ -972,7 +952,7 @@ class ImportToolXOutput(luigi.Task):
             # logging.getLogger(__name__).debug("Updated scope")
 
             # Write imported data to file
-            tool_import_file = self.output().path
+            tool_import_file = self.output()
             with open(tool_import_file, 'w') as import_fd:
                 import_fd.write(json.dumps(updated_import_arr))
 

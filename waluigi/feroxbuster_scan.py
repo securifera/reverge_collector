@@ -48,18 +48,20 @@ import json
 import os
 from typing import Dict, Any, Set, Optional, List, Union
 import netaddr
-import luigi
 import traceback
 import random
 import hashlib
 import binascii
 import logging
 
-from luigi.util import inherits
 from waluigi import scan_utils
 from urllib.parse import urlparse
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
+from waluigi.tool_runner import (
+    import_already_done as _import_already_done,
+    import_results as _import_results,
+)
 
 # Global URL tracking set to prevent duplicate scanning
 url_set: Set[str] = set()
@@ -159,258 +161,149 @@ class Feroxbuster(data_model.WaluigiTool):
             Uses Luigi's local scheduler for task execution and provides detailed
             summary information for debugging and monitoring purposes.
         """
-        luigi_run_result = luigi.build([FeroxScan(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
+    @staticmethod
+    def feroxbuster_scan_func(scan_input: Any) -> bool:
+        try:
+            execute_scan(scan_input)
+            return True
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                "Feroxbuster scan failed: %s", e, exc_info=True)
             return False
-        return True
 
     @staticmethod
     def feroxbuster_import(scan_input: Any) -> bool:
-        """
-        Import and process Feroxbuster scan results.
-
-        This static method handles the import phase of the scanning workflow,
-        processing Feroxbuster output files and importing discovered findings
-        into the database structure.
-
-        Args:
-            scan_input (Any): The scan input object containing configuration
-                            and metadata for the import operation
-
-        Returns:
-            bool: True if the import completed successfully, False otherwise
-
-        Example:
-            >>> # After successful scan execution
-            >>> imported = Feroxbuster.feroxbuster_import(scan_obj)
-            >>> print(f"Import successful: {imported}")
-
-        Note:
-            This method depends on the successful completion of the scan phase
-            and processes all generated output files for database import.
-        """
-        luigi_run_result = luigi.build([ImportFeroxOutput(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
+        try:
+            output_path = get_output_path(scan_input)
+            if not os.path.exists(output_path):
+                return True
+            if _import_already_done(scan_input, output_path):
+                return True
+            scheduled_scan_obj = scan_input
+            tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+            ret_arr = parse_feroxbuster_output(output_path, tool_instance_id)
+            _import_results(scan_input, ret_arr, output_path)
+            return True
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                "Feroxbuster import failed: %s", e, exc_info=True)
             return False
-        return True
 
 
-class FeroxScan(luigi.Task):
-    """
-    Luigi task for executing Feroxbuster directory scanning operations.
+def get_output_path(scan_input: Any) -> str:
+    scan_id = scan_input.id
+    tool_name = scan_input.current_tool.name
+    dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return dir_path + os.path.sep + "ferox_outputs_" + scan_id
 
-    This task orchestrates the execution of Feroxbuster scans against web targets,
-    managing input parameters, output file generation, and execution flow within
-    the Luigi workflow framework.
 
-    Attributes:
-        scan_input (luigi.Parameter): The scan input object containing target information
-                                    and configuration parameters for the scan operation
+def execute_scan(scan_input: Any) -> None:
+    output_file_path = get_output_path(scan_input)
+    if os.path.exists(output_file_path):
+        return
 
-    Methods:
-        output: Defines the output file target for the scan results
-        requires: Specifies task dependencies (inherited from parent tasks)
-        run: Executes the actual Feroxbuster scanning operation
+    global url_set
+    url_set = set()
 
-    Example:
-        >>> scan_obj = ScanInputObject(...)  # Configured scan input
-        >>> task = FeroxScan(scan_input=scan_obj)
-        >>> luigi.build([task])
+    scheduled_scan_obj = scan_input
+    output_dir = os.path.dirname(output_file_path)
 
-    Note:
-        This class inherits from luigi.Task and follows Luigi's task execution model.
-        The scan results are written to a file target that other tasks can depend on.
-    """
+    url_to_id_map = {}
+    tool_args = scheduled_scan_obj.current_tool.args
+    if tool_args:
+        tool_args = tool_args.split(" ")
 
-    scan_input = luigi.Parameter()
+    scan_wordlist = None
+    if scheduled_scan_obj.current_tool.wordlist_path and os.path.exists(scheduled_scan_obj.current_tool.wordlist_path):
+        scan_wordlist = scheduled_scan_obj.current_tool.wordlist_path
 
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define the output file target for Feroxbuster scan results.
+    # Get all the URLs to scan using the same pattern as NucleiScan
+    endpoint_url_map = scheduled_scan_obj.scan_data.get_urls()
 
-        Creates a unique output file path based on the scan ID and tool name,
-        ensuring that scan results are properly organized and accessible to
-        downstream tasks in the Luigi workflow.
+    # Convert the endpoint URL map to the format expected by FeroxScan
+    # Skip URLs that already have specific paths (not "/") since Feroxbuster discovers paths
+    for url_str, url_metadata in endpoint_url_map.items():
+        host_id = url_metadata.get('host_id')
+        port_id = url_metadata.get('port_id')
+        path = url_metadata.get('path')
 
-        Returns:
-            luigi.LocalTarget: A Luigi target representing the output file where
-                             Feroxbuster scan results will be stored
+        # Skip entries that have non-default paths since Feroxbuster is for path discovery
+        if path is not None and path != "/":
+            continue
 
-        Side Effects:
-            - Initializes the tool output directory structure if it doesn't exist
-            - Creates directory paths as needed for organized output storage
+        if url_str and url_str not in url_set:
+            url_set.add(url_str)
+            rand_str = str(random.randint(1000000, 2000000))
 
-        Example:
-            >>> task = FeroxScan(scan_input=scan_obj)
-            >>> target = task.output()
-            >>> print(target.path)
-            /path/to/outputs/feroxbuster/scan_123/ferox_outputs_123
+            # Add to url_to_id_map
+            scan_output_file_path = output_dir + os.path.sep + "ferox_out_" + rand_str
+            url_to_id_map[url_str] = {
+                'port_id': port_id,
+                'host_id': host_id,
+                'output_file': scan_output_file_path
+            }
 
-        Note:
-            The output file naming convention includes the scan ID to ensure
-            uniqueness across multiple scan operations.
-        """
+    futures = []
+    for target_url in url_to_id_map:
 
-        scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.id
+        # Get output file
+        scan_output_file_path = url_to_id_map[target_url]['output_file']
 
-        # Init directory
-        tool_name = scheduled_scan_obj.current_tool.name
-        dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+        command = []
+        if os.name != 'nt':
+            command.append("sudo")
 
-        scan_outputs_file = dir_path + os.path.sep + "ferox_outputs_" + scan_id
-        return luigi.LocalTarget(scan_outputs_file)
+        command_arr = [
+            "feroxbuster",
+            "--json",
+            "-k",  # Disable cert validation
+            "-A",  # Random User Agent
+            "-u",
+            target_url,
+            "-o",
+            scan_output_file_path
+        ]
 
-    def run(self) -> None:
-        """
-        Execute the Feroxbuster directory scanning operation.
+        command.extend(command_arr)
 
-        This method orchestrates the complete scanning workflow including:
-        - Target URL extraction using scan_data.get_urls()
-        - Command construction with appropriate arguments
-        - Concurrent execution of multiple scan processes
-        - Result collection and output file generation
+        # Add optional arguments
+        if tool_args and len(tool_args) > 0:
+            command.extend(tool_args)
 
-        The method uses the same URL extraction pattern as NucleiScan, leveraging
-        the get_urls() method to handle URL construction, domain resolution, and
-        path discovery automatically.
+        # Add wordlist if provided
+        if scan_wordlist:
+            command.extend(['-w', scan_wordlist])
 
-        Returns:
-            None: Results are written to the output file specified by self.output()
+        callback_with_tool_id = partial(
+            scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
 
-        Side Effects:
-            - Modifies the global url_set to track processed URLs
-            - Creates output files for each target scan
-            - Registers tool executors with the scan management system
-            - Writes consolidated results to the main output file
+        futures.append(scan_utils.executor.submit(
+            process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id))
 
-        Raises:
-            OSError: If output directories cannot be created or accessed
-            subprocess.SubprocessError: If Feroxbuster execution fails
-            json.JSONEncodeError: If results cannot be serialized to JSON
-            Exception: Various exceptions related to file I/O
+    # Register futures
+    scan_proc_inst = data_model.ToolExecutor(futures)
+    scheduled_scan_obj.register_tool_executor(
+        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
-        Example:
-            >>> task = FeroxScan(scan_input=scan_obj)
-            >>> task.run()  # Executes all configured scans
+    results_dict = {'url_to_id_map': url_to_id_map}
 
-        Note:
-            This method uses concurrent execution for performance and follows
-            the same URL extraction pattern as other web scanning tools in the
-            framework for consistency.
-        """
+    # Write output file
+    with open(output_file_path, 'w') as file_fd:
+        file_fd.write(json.dumps(results_dict))
 
-        global url_set
-        url_set = set()
-
-        scheduled_scan_obj = self.scan_input
-
-        # Get output file path
-        output_file_path = self.output().path
-        output_dir = os.path.dirname(output_file_path)
-
-        url_to_id_map = {}
-        tool_args = scheduled_scan_obj.current_tool.args
-        if tool_args:
-            tool_args = tool_args.split(" ")
-
-        scan_wordlist = None
-        if scheduled_scan_obj.current_tool.wordlist_path and os.path.exists(scheduled_scan_obj.current_tool.wordlist_path):
-            scan_wordlist = scheduled_scan_obj.current_tool.wordlist_path
-
-        # Get all the URLs to scan using the same pattern as NucleiScan
-        endpoint_url_map = scheduled_scan_obj.scan_data.get_urls()
-
-        # Convert the endpoint URL map to the format expected by FeroxScan
-        # Skip URLs that already have specific paths (not "/") since Feroxbuster discovers paths
-        for url_str, url_metadata in endpoint_url_map.items():
-            host_id = url_metadata.get('host_id')
-            port_id = url_metadata.get('port_id')
-            path = url_metadata.get('path')
-
-            # Skip entries that have non-default paths since Feroxbuster is for path discovery
-            if path is not None and path != "/":
-                continue
-
-            if url_str and url_str not in url_set:
-                url_set.add(url_str)
-                rand_str = str(random.randint(1000000, 2000000))
-
-                # Add to url_to_id_map
-                scan_output_file_path = output_dir + os.path.sep + "ferox_out_" + rand_str
-                url_to_id_map[url_str] = {
-                    'port_id': port_id,
-                    'host_id': host_id,
-                    'output_file': scan_output_file_path
-                }
-
-        futures = []
-        for target_url in url_to_id_map:
-
-            # Get output file
-            scan_output_file_path = url_to_id_map[target_url]['output_file']
-
-            command = []
-            if os.name != 'nt':
-                command.append("sudo")
-
-            command_arr = [
-                "feroxbuster",
-                "--json",
-                "-k",  # Disable cert validation
-                # "-q", # Quiet
-                "-A",  # Random User Agent
-                # "--thorough", # Collects words, extensions, and links in content
-                # "--auto-tune", # Resets speed based on errors
-                # "--auto-bail",  # Quits after too many errors
-                "-u",
-                target_url,
-                "-o",
-                scan_output_file_path
-            ]
-
-            command.extend(command_arr)
-
-            # Add optional arguments
-            if tool_args and len(tool_args) > 0:
-                command.extend(tool_args)
-
-            # Add wordlist if provided
-            if scan_wordlist:
-                command.extend(['-w', scan_wordlist])
-
-            callback_with_tool_id = partial(
-                scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
-
-            futures.append(scan_utils.executor.submit(
-                process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id))
-
-        # Register futures
-        scan_proc_inst = data_model.ToolExecutor(futures)
-        scheduled_scan_obj.register_tool_executor(
-            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
-
-        results_dict = {'url_to_id_map': url_to_id_map}
-
-        # Write output file
-        with open(output_file_path, 'w') as file_fd:
-            file_fd.write(json.dumps(results_dict))
-
-        # Wait for the tasks to complete and retrieve results
-        for future in futures:
-            ret_dict = future.result()
-            if ret_dict and 'exit_code' in ret_dict:
-                exit_code = ret_dict['exit_code']
-                if exit_code != 0:
-                    err_msg = ''
-                    if 'stderr' in ret_dict and ret_dict['stderr']:
-                        err_msg = ret_dict['stderr']
-                    logging.getLogger(__name__).error(
-                        "Feroxbuster scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
-                    raise RuntimeError("Feroxbuster scan for scan ID %s exited with code %d: %s" % (
-                        scheduled_scan_obj.id, exit_code, err_msg))
+    # Wait for the tasks to complete and retrieve results
+    for future in futures:
+        ret_dict = future.result()
+        if ret_dict and 'exit_code' in ret_dict:
+            exit_code = ret_dict['exit_code']
+            if exit_code != 0:
+                err_msg = ''
+                if 'stderr' in ret_dict and ret_dict['stderr']:
+                    err_msg = ret_dict['stderr']
+                logging.getLogger(__name__).error(
+                    "Feroxbuster scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+                raise RuntimeError("Feroxbuster scan for scan ID %s exited with code %d: %s" % (
+                    scheduled_scan_obj.id, exit_code, err_msg))
 
 
 def parse_feroxbuster_output(
@@ -517,97 +410,3 @@ def parse_feroxbuster_output(
                                 ret_arr.append(http_endpoint_data_obj)
 
     return ret_arr
-
-
-@inherits(FeroxScan)
-class ImportFeroxOutput(data_model.ImportToolXOutput):
-    """
-    Luigi task for importing and processing Feroxbuster scan results.
-
-    This task handles the post-processing of Feroxbuster scan outputs, parsing
-    JSON results, extracting discovered directories and files, and importing
-    the findings into the database structure.
-
-    The class inherits from both FeroxScan (via @inherits decorator) and
-    ImportToolXOutput, providing access to scan parameters and import functionality.
-
-    Attributes:
-        Inherits all attributes from FeroxScan including scan_input parameter
-
-    Methods:
-        requires: Specifies that FeroxScan must complete before import
-        run: Processes scan output files and imports results to database
-
-    Example:
-        >>> import_task = ImportFeroxOutput(scan_input=scan_obj)
-        >>> luigi.build([import_task])  # Runs FeroxScan then ImportFeroxOutput
-
-    Note:
-        This task automatically depends on FeroxScan completion and processes
-        all output files generated during the scanning phase.
-    """
-
-    def requires(self) -> FeroxScan:
-        """
-        Define task dependencies for the import operation.
-
-        Ensures that the FeroxScan task completes successfully before attempting
-        to import and process the scan results.
-
-        Returns:
-            FeroxScan: The scanning task that must complete before import
-
-        Example:
-            >>> task = ImportFeroxOutput(scan_input=scan_obj)
-            >>> deps = task.requires()
-            >>> print(type(deps).__name__)
-            FeroxScan
-        """
-        # Requires HttpScan Task to be run prior
-        return FeroxScan(scan_input=self.scan_input)
-
-    def run(self) -> None:
-        """
-        Process and import Feroxbuster scan results into the database.
-
-        This method performs comprehensive processing of Feroxbuster JSON output files,
-        extracting discovered web paths, HTTP endpoints, and status codes. It creates
-        appropriate database objects for domains, paths, and HTTP endpoints while
-        avoiding duplicates through hash-based deduplication.
-
-        The processing workflow includes:
-        - Loading scan results from JSON output files
-        - Parsing Feroxbuster response objects
-        - Extracting and hashing web paths for deduplication
-        - Creating domain objects for discovered hostnames
-        - Generating HTTP endpoint and endpoint data records
-        - Importing all findings into the database
-
-        Returns:
-            None: Results are imported directly into the database via self.import_results()
-
-        Side Effects:
-            - Creates database records for discovered domains, paths, and endpoints
-            - Updates path_hash_map and domain_name_id_map for deduplication
-            - Processes all output files from the preceding FeroxScan task
-
-        Raises:
-            json.JSONDecodeError: If scan output files contain invalid JSON
-            FileNotFoundError: If expected output files are missing
-            KeyError: If required fields are missing from scan results
-            Exception: Various exceptions related to URL parsing or database operations
-
-        Example:
-            >>> task = ImportFeroxOutput(scan_input=scan_obj)
-            >>> task.run()  # Processes and imports all scan results
-
-        Note:
-            Uses SHA-1 hashing for web path deduplication and handles both IP
-            addresses and domain names in discovered URLs. The method processes
-            only 'response' type entries from Feroxbuster output.
-        """
-
-        scheduled_scan_obj = self.scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        ret_arr = parse_feroxbuster_output(self.input().path, tool_instance_id)
-        self.import_results(scheduled_scan_obj, ret_arr)

@@ -39,14 +39,16 @@ import re
 import os
 import netaddr
 import xml.etree.ElementTree as ET
-import luigi
 import logging
 from typing import List, Dict, Set, Optional, Any, Union
 
-from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
+from waluigi.tool_runner import (
+    import_already_done as _import_already_done,
+    import_results as _import_results,
+)
 
 # Protocol constants for network scanning
 TCP: str = 'tcp'  # TCP protocol identifier
@@ -104,62 +106,8 @@ class Masscan(data_model.WaluigiTool):
             data_model.ServerRecordType.SUBNET, data_model.ServerRecordType.HOST]
         self.output_records = [
             data_model.ServerRecordType.HOST, data_model.ServerRecordType.PORT]
-        self.scan_func = Masscan.scan
-        self.import_func = Masscan.import_scan
-
-    @staticmethod
-    def scan(scan_input: Any) -> bool:
-        """
-        Execute Masscan port scanning operation.
-
-        This static method orchestrates the Masscan scanning process using Luigi
-        task management. It builds and executes a MasscanScan task with the
-        provided scan input configuration.
-
-        Args:
-            scan_input (Any): Scan input object containing scan configuration and context
-
-        Returns:
-            bool: True if scan completed successfully, False if scan failed
-
-        Example:
-            >>> scan_config = get_scan_input()
-            >>> success = Masscan.scan(scan_config)
-            >>> if success:
-            ...     print("Masscan port scan completed")
-        """
-        luigi_run_result = luigi.build(
-            [MasscanScan(scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
-
-    @staticmethod
-    def import_scan(scan_input: Any) -> bool:
-        """
-        Import and process Masscan scan results.
-
-        This static method handles the import of Masscan scan results into the
-        data model. It builds and executes an ImportMasscanOutput task to process
-        the discovered hosts and open ports.
-
-        Args:
-            scan_input (Any): Scan input object containing scan configuration and context
-
-        Returns:
-            bool: True if import completed successfully, False if import failed
-
-        Example:
-            >>> scan_config = get_scan_input()
-            >>> success = Masscan.import_scan(scan_config)
-            >>> if success:
-            ...     print("Masscan results imported")
-        """
-        luigi_run_result = luigi.build([ImportMasscanOutput(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
+        self.scan_func = masscan_scan_func
+        self.import_func = masscan_import
 
 
 def get_mac_address(ip_address: str) -> Optional[str]:
@@ -344,176 +292,107 @@ def get_masscan_input(scheduled_scan_obj: Any) -> Dict[str, Any]:
     return masscan_conf
 
 
-class MasscanScan(luigi.Task):
-    """
-    Luigi task for executing Masscan port scanning operations.
+def get_output_path(scan_input) -> str:
+    scan_id = scan_input.id
+    tool_name = scan_input.current_tool.name
+    dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return dir_path + os.path.sep + "mass_out_" + scan_id
 
-    This task orchestrates the complete Masscan scanning workflow including:
-    - Input preparation with target networks and port configurations
-    - Network interface and routing optimization
-    - High-speed port scanning execution
-    - Result output in XML format for processing
 
-    The task handles large-scale network scanning efficiently by:
-    - Configuring optimal network interfaces and routing
-    - Setting appropriate scan rates for network capacity
-    - Managing MAC address resolution for routing optimization
-    - Executing Masscan with proper privilege escalation (sudo)
+def execute_scan(scan_input) -> None:
+    output_file_path = get_output_path(scan_input)
+    if os.path.exists(output_file_path):
+        return
 
-    Attributes:
-        scan_input (luigi.Parameter): Scheduled scan object containing configuration
+    scheduled_scan_obj = scan_input
+    selected_interface = scheduled_scan_obj.selected_interface
+    masscan_output_file_path = output_file_path
 
-    Example:
-        >>> task = MasscanScan(scan_input=scheduled_scan)
-        >>> output_target = task.output()
-        >>> task.run()  # Execute high-speed port scanning
-    """
+    scan_config_dict = get_masscan_input(scheduled_scan_obj)
+    conf_file_path = scan_config_dict['config_path']
+    ips_file_path = scan_config_dict['input_path']
+    tool_args = scan_config_dict['tool_args']
 
-    scan_input = luigi.Parameter(default=None)
+    router_mac = None
+    default_gateway_ip = get_default_gateway()
+    if default_gateway_ip:
+        mac_address = get_mac_address(default_gateway_ip)
+        if mac_address:
+            router_mac = mac_address.replace(":", "-")
 
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define the output target for Masscan scan results.
+    if conf_file_path and ips_file_path:
+        command = []
+        if os.name != 'nt':
+            command.append("sudo")
+        command_arr = [
+            "masscan",
+            "--open",
+            "-oX",
+            masscan_output_file_path,
+            "-c",
+            conf_file_path,
+            "-iL",
+            ips_file_path
+        ]
+        if selected_interface:
+            int_name = selected_interface.name.strip()
+            command_arr.extend(['-e', int_name])
+        if router_mac:
+            command_arr.extend(['--router-mac', router_mac])
+        if tool_args and len(tool_args) > 0:
+            command_arr.extend(tool_args)
+        command.extend(command_arr)
 
-        Creates the output file path for storing Masscan scan results in XML format.
-        The file is stored in the tool's output directory within the scan workspace.
+        callback_with_tool_id = partial(
+            scheduled_scan_obj.register_tool_executor,
+            scheduled_scan_obj.current_tool_instance_id)
+        future = scan_utils.executor.submit(
+            process_wrapper,
+            cmd_args=command,
+            pid_callback=callback_with_tool_id)
+        ret_dict = future.result()
+        if ret_dict and 'exit_code' in ret_dict:
+            exit_code = ret_dict['exit_code']
+            if exit_code != 0:
+                err_msg = ''
+                if 'stderr' in ret_dict and ret_dict['stderr']:
+                    err_msg = ret_dict['stderr']
+                logging.getLogger(__name__).error(
+                    "Masscan scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+                raise RuntimeError("Masscan scan for scan ID %s exited with code %d: %s" % (
+                    scheduled_scan_obj.id, exit_code, err_msg))
+    else:
+        logging.getLogger(__name__).error("No targets to scan with masscan")
+        with open(masscan_output_file_path, 'w') as f:
+            pass
 
-        Returns:
-            luigi.LocalTarget: Target file for storing port scan results
 
-        Example:
-            >>> task = MasscanScan(scan_input=scan_obj)
-            >>> target = task.output()
-            >>> print(target.path)  # "/path/to/outputs/mass_out_scan123"
-        """
+def masscan_scan_func(scan_input) -> bool:
+    try:
+        execute_scan(scan_input)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "masscan scan failed: %s", e, exc_info=True)
+        return False
 
-        scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.id
-        tool_name = scheduled_scan_obj.current_tool.name
 
-        # Init output directory
-        dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-        out_file = dir_path + os.path.sep + "mass_out_" + scan_id
-
-        return luigi.LocalTarget(out_file)
-
-    def run(self) -> None:
-        """
-        Execute the Masscan port scanning operation.
-
-        This method performs the complete Masscan scanning workflow:
-        1. Prepare input configuration files and target lists
-        2. Resolve network routing information (gateway MAC)
-        3. Configure network interface for optimal scanning
-        4. Execute Masscan with appropriate privileges
-        5. Handle scanning errors and edge cases
-
-        The method handles:
-        - Network interface configuration for scanning
-        - MAC address resolution for routing optimization
-        - Privilege escalation (sudo) for raw socket access
-        - Command-line argument configuration
-        - Process execution and monitoring
-
-        Returns:
-            None: Results are written to the XML output file
-
-        Example:
-            >>> task = MasscanScan(scan_input=scan_config)
-            >>> task.run()  # Executes complete port scanning workflow
-
-        Note:
-            - Requires sudo privileges for raw socket access
-            - Uses router MAC address for optimal packet routing
-            - Creates empty output file if no targets are available
-            - Registers process executor for monitoring and control
-        """
-
-        scheduled_scan_obj = self.scan_input
-        selected_interface = scheduled_scan_obj.selected_interface
-        masscan_output_file_path = self.output().path
-
-        # Prepare Masscan input configuration and files
-        scan_config_dict = get_masscan_input(scheduled_scan_obj)
-
-        conf_file_path = scan_config_dict['config_path']
-        ips_file_path = scan_config_dict['input_path']
-        tool_args = scan_config_dict['tool_args']
-
-        # Optimize network routing by resolving router MAC address
-        router_mac = None
-        default_gateway_ip = get_default_gateway()
-        if default_gateway_ip:
-            mac_address = get_mac_address(default_gateway_ip)
-            if mac_address:
-                # Convert MAC format for Masscan (colon to hyphen)
-                router_mac = mac_address.replace(":", "-")
-
-        if conf_file_path and ips_file_path:
-            # Build Masscan command with required arguments
-            command = []
-
-            # Add sudo for raw socket access (required on non-Windows systems)
-            if os.name != 'nt':
-                command.append("sudo")
-
-            # Base Masscan command with essential options
-            command_arr = [
-                "masscan",        # Masscan executable
-                "--open",         # Only report open ports
-                "-oX",           # Output in XML format
-                masscan_output_file_path,  # Output file path
-                "-c",            # Configuration file
-                conf_file_path,  # Path to config file with ports
-                "-iL",           # Input list of targets
-                ips_file_path    # Path to file with IP addresses/subnets
-            ]
-
-            # Configure specific network interface if selected
-            if selected_interface:
-                int_name = selected_interface.name.strip()
-                command_arr.extend(['-e', int_name])
-
-            # Add router MAC for optimal packet routing
-            if router_mac:
-                command_arr.extend(['--router-mac', router_mac])
-
-            # Add additional tool-specific arguments
-            if tool_args and len(tool_args) > 0:
-                command_arr.extend(tool_args)
-
-            command.extend(command_arr)
-
-            # Execute Masscan process with monitoring
-            callback_with_tool_id = partial(
-                scheduled_scan_obj.register_tool_executor,
-                scheduled_scan_obj.current_tool_instance_id)
-
-            future = scan_utils.executor.submit(
-                process_wrapper,
-                cmd_args=command,
-                pid_callback=callback_with_tool_id)
-
-            # Wait for the scanning process to complete
-            ret_dict = future.result()
-            if ret_dict and 'exit_code' in ret_dict:
-                exit_code = ret_dict['exit_code']
-                if exit_code != 0:
-                    err_msg = ''
-                    if 'stderr' in ret_dict and ret_dict['stderr']:
-                        err_msg = ret_dict['stderr']
-                    logging.getLogger(__name__).error(
-                        "Masscan scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
-                    raise RuntimeError("Masscan scan for scan ID %s exited with code %d: %s" % (
-                        scheduled_scan_obj.id, exit_code, err_msg))
-
-        else:
-            # Handle case where no targets are available for scanning
-            logging.getLogger(__name__).error(
-                "No targets to scan with masscan")
-            # Create empty output file to satisfy Luigi dependencies
-            with open(masscan_output_file_path, 'w') as f:
-                pass
+def masscan_import(scan_input) -> bool:
+    try:
+        output_path = get_output_path(scan_input)
+        if not os.path.exists(output_path):
+            return True
+        if _import_already_done(scan_input, output_path):
+            return True
+        scheduled_scan_obj = scan_input
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+        obj_arr = parse_masscan_xml(output_path, tool_instance_id)
+        _import_results(scan_input, obj_arr, output_path)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "masscan import failed: %s", e, exc_info=True)
+        return False
 
 
 def parse_masscan_xml(
@@ -579,87 +458,3 @@ def parse_masscan_xml(
     return obj_arr
 
 
-@inherits(MasscanScan)
-class ImportMasscanOutput(data_model.ImportToolXOutput):
-    """
-    Luigi task for importing and processing Masscan scan results.
-
-    This task handles the import of Masscan XML output into the data model,
-    converting discovered hosts and open ports into structured Host and Port
-    objects. It processes the XML output format generated by Masscan and creates
-    appropriate data model objects.
-
-    The import process includes:
-    - Parsing Masscan XML output format
-    - Creating Host objects for discovered IP addresses
-    - Creating Port objects for discovered open ports
-    - Handling both IPv4 and IPv6 addresses
-    - Establishing proper parent-child relationships
-    - Protocol identification (TCP/UDP)
-
-    Inherits from:
-        MasscanScan: Inherits scan input parameter and depends on scan completion
-        ImportToolXOutput: Provides result import functionality
-
-    Example:
-        >>> import_task = ImportMasscanOutput(scan_input=scheduled_scan)
-        >>> import_task.run()  # Import and process Masscan results
-    """
-
-    def requires(self) -> MasscanScan:
-        """
-        Define task dependencies - requires MasscanScan to complete first.
-
-        Returns:
-            MasscanScan: The scan task that must complete before import
-
-        Example:
-            >>> import_task = ImportMasscanOutput(scan_input=scan_obj)
-            >>> dependency = import_task.requires()
-            >>> print(type(dependency).__name__)  # "MasscanScan"
-        """
-        # Requires MassScan Task to be run prior
-        return MasscanScan(scan_input=self.scan_input)
-
-    def run(self) -> None:
-        """
-        Import and process Masscan scan results into the data model.
-
-        This method performs the complete import workflow:
-        1. Read XML output from MasscanScan task
-        2. Parse XML structure to extract host and port information
-        3. Create Host objects for each discovered IP address
-        4. Create Port objects for each discovered open port
-        5. Establish proper parent-child relationships
-        6. Import results into the scan data structure
-
-        The method handles:
-        - XML parsing and error handling
-        - IP address validation and normalization
-        - Protocol identification (TCP/UDP mapping)
-        - IPv4 and IPv6 address support
-        - Tool instance ID tracking for data lineage
-
-        Returns:
-            None: Results are imported into the scan data structure
-
-        Example:
-            >>> import_task = ImportMasscanOutput(scan_input=scan_config)
-            >>> import_task.run()  # Process and import discovered hosts/ports
-
-        Raises:
-            Exception: If XML parsing fails or file is corrupted
-
-        Note:
-            - Removes corrupted output files automatically
-            - Creates Host objects for each unique IP address
-            - Associates Port objects with their parent Host
-            - Preserves tool instance ID for data tracking
-            - Handles empty scan results gracefully
-        """
-
-        scheduled_scan_obj = self.scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        masscan_output_file = self.input().path
-        obj_arr = parse_masscan_xml(masscan_output_file, tool_instance_id)
-        self.import_results(scheduled_scan_obj, obj_arr)

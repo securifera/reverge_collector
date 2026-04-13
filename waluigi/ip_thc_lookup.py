@@ -44,16 +44,18 @@ Note:
 """
 
 import http.client
-import luigi
 import os
 import json
 import logging
 import netaddr
 from typing import Dict, Set, List, Any, Optional, Union
 
-from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
+from waluigi.tool_runner import (
+    import_already_done as _import_already_done,
+    import_results as _import_results,
+)
 
 # Global proxy configuration for IP THC API requests
 proxies: Optional[Dict[str, str]] = None
@@ -120,44 +122,10 @@ class IPThc(data_model.WaluigiTool):
         self.collector_type = data_model.CollectorType.PASSIVE.value
         self.scan_order = 5
         self.args = ""
-        self.import_func = IPThc.import_ip_thc_ip_lookup
+        self.import_func = ip_thc_import
         self.input_records = [data_model.ServerRecordType.HOST,
                               data_model.ServerRecordType.SUBNET, data_model.ServerRecordType.DOMAIN]
         self.output_records = [data_model.ServerRecordType.DOMAIN]
-
-    @staticmethod
-    def import_ip_thc_ip_lookup(scan_input: data_model.ScheduledScan) -> bool:
-        """
-        Import and process IP THC IP lookup results.
-
-        This static method serves as the main entry point for executing IP THC
-        IP-to-domain lookups within the Waluigi framework. It creates and executes
-        a Luigi workflow to perform the API-based reconnaissance and import results
-        into the framework's data model.
-
-        Args:
-            scan_input (data_model.ScheduledScan): The scheduled scan object containing
-                target information, API keys, and framework configuration needed
-                for the IP THC lookup operation.
-
-        Returns:
-            bool: True if the lookup and import operation completed successfully,
-                  False if any errors occurred during execution.
-
-        Example:
-            >>> scan_obj = data_model.ScheduledScan(...)
-            >>> success = IPThc.import_ip_thc_ip_lookup(scan_obj)
-            >>> if success:
-            ...     print("IP THC lookup completed")
-
-        Note:
-            The operation is performed asynchronously using Luigi's task execution framework.
-        """
-        luigi_run_result = luigi.build([ImportIPThcIPLookupOutput(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
 
 
 def process_response(data):
@@ -392,293 +360,170 @@ def reverse_dns_request_wrapper(ip_addr: str) -> Dict[str, Union[str, List[str]]
     return ret_str
 
 
-class IPThcIPLookupScan(luigi.Task):
-    """
-    Luigi task for executing IP THC IP lookup operations.
+def get_output_path(scan_input) -> str:
+    scan_id = scan_input.id
+    tool_name = scan_input.current_tool.name
+    dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return dir_path + os.path.sep + "ip-thc-ip-lookup-outputs-" + scan_id
 
-    This task handles the execution of IP THC API requests for IP-to-domain
-    lookups within the Luigi workflow framework. It processes multiple IP addresses
-    from the scan input, performs concurrent API requests, and saves results to
-    the output file for subsequent import processing.
 
-    The task supports:
-        - Concurrent API requests for multiple IP addresses
-        - Error handling for API calls
-        - Progress tracking and execution monitoring
-        - Structured output generation for import processing
+def execute_scan(scan_input) -> None:
+    output_file_path = get_output_path(scan_input)
+    if os.path.exists(output_file_path):
+        return
 
-    Attributes:
-        scan_input (luigi.Parameter): The scheduled scan object containing target
-            IP addresses.
+    scheduled_scan_obj = scan_input
+    ip_to_host_dict_map: Dict[str, Dict[str, Any]] = {}
 
-    Methods:
-        output: Defines the output file path for lookup results
-        run: Executes the IP lookup operation and saves results
+    target_map = scheduled_scan_obj.scan_data.host_port_obj_map
+    if len(target_map) == 0:
+        logging.getLogger(__name__).debug("No target map in scan input")
 
-    Example:
-        >>> # Task is typically executed through Luigi framework
-        >>> task = IPThcIPLookupScan(scan_input=scan_obj)
-        >>> luigi.build([task], local_scheduler=True)
+    for target_key in target_map:
+        target_obj_dict = target_map[target_key]
+        host_obj = target_obj_dict['host_obj']
+        ip_addr = host_obj.ipv4_addr
+        ip_to_host_dict_map[ip_addr] = {
+            'host_id': host_obj.id,
+            'obj_type': 'ip',
+            'obj': None
+        }
 
-    Note:
-        Results are saved in JSON format for import processing.
-    """
-
-    # Luigi task parameter for scan input configuration
-    scan_input = luigi.Parameter()
-
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define the output file path for IP THC lookup results.
-
-        Creates the necessary directory structure and defines the output file
-        path where IP lookup results will be stored in JSON format.
-
-        Returns:
-            luigi.LocalTarget: Target object representing the output file path
-                for storing IP THC lookup results.
-
-        Example:
-            >>> task = IPThcIPLookupScan(scan_input=scan_obj)
-            >>> output_target = task.output()
-            >>> print(output_target.path)
-            /path/to/outputs/ip-thc-ip-lookup-outputs-scan123
-        """
-
-        scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.id
-
-        # Initialize output directory structure
-        tool_name = scheduled_scan_obj.current_tool.name
-        dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-
-        # Define output file path
-        http_outputs_file = dir_path + os.path.sep + \
-            "ip-thc-ip-lookup-outputs-" + scan_id
-        return luigi.LocalTarget(http_outputs_file)
-
-    def run(self) -> None:
-        """
-        Execute IP THC IP lookup operations for all target IP addresses and subnets.
-
-        This method performs the main execution logic for the IP THC lookup
-        task. It processes all IP addresses and subnets from the scan input, executes concurrent
-        API requests, and saves the results to the output file.
-
-        For IP addresses with existing Host objects, domains are mapped to those hosts.
-        For subnets, domains are queried and IPs are extracted from domain names where possible.
-        Host objects are created for any discovered IPs within the subnet range.
-
-        The execution process includes:
-            - Processing target IP addresses and subnets from scan input
-            - Executing concurrent API requests with thread pool
-            - Collecting and organizing lookup results
-            - Extracting IPs from domain names for subnet results
-            - Creating Host objects for discovered subnet IPs
-            - Saving results to output file in JSON format
-
-        Raises:
-            Exception: If no target map is available in the scan input configuration.
-
-        Example:
-            >>> task = IPThcIPLookupScan(scan_input=scan_obj)
-            >>> task.run()  # Executes the lookup operation
-
-        Note:
-            This method uses a thread pool executor for concurrent API requests
-            to improve performance when processing multiple IP addresses and subnets.
-        """
-
-        scheduled_scan_obj = self.scan_input
-
-        # Get output file path for results storage
-        output_file_path = self.output().path
-
-        # Initialize IP-to-host mapping dictionary
-        ip_to_host_dict_map: Dict[str, Dict[str, Any]] = {}
-
-        # Process target hosts from scan input
-        target_map = scheduled_scan_obj.scan_data.host_port_obj_map
-        if len(target_map) == 0:
-            logging.getLogger(__name__).debug(
-                "No target map in scan input")
-
-        # Build IP address mapping for lookup operations
-        for target_key in target_map:
-            target_obj_dict = target_map[target_key]
-            host_obj = target_obj_dict['host_obj']
-            ip_addr = host_obj.ipv4_addr
-
-            # Add IP address to host mapping with existing host ID
-            ip_to_host_dict_map[ip_addr] = {
-                'host_id': host_obj.id,
-                'obj_type': 'ip',
-                'obj': None
-            }
-
-        target_list = []
-        subnet_map = scheduled_scan_obj.scan_data.subnet_map
-        for subnet_id in subnet_map:
-            subnet_obj = subnet_map[subnet_id]
-            if int(subnet_obj.mask) < 25:
-                # Large subnets: query as CIDR range, extract IPs from domain names
-                subnet_str = "%s/%s" % (subnet_obj.subnet, subnet_obj.mask)
-                target_list.append(subnet_str)
-                ip_to_host_dict_map[subnet_str] = {
-                    'host_id': None,
-                    'obj_type': 'subnet',
-                    'obj': subnet_obj
-                }
-            else:
-                # Small subnets: expand into individual IP addresses
-                ip_network = netaddr.IPNetwork(
-                    f"{subnet_obj.subnet}/{subnet_obj.mask}")
-                for ip_addr in [str(ip) for ip in ip_network]:
-                    target_list.append(ip_addr)
-
-                    # Add IP address to host mapping if not already present
-                    if ip_addr not in ip_to_host_dict_map:
-                        ip_to_host_dict_map[ip_addr] = {
-                            'host_id': None,
-                            'obj_type': 'ip',
-                            'obj': None
-                        }
-
-        # Build IP address mapping for lookup operations
-        futures = []
-        # Execute concurrent API requests for all IP addresses and subnets
-        for ip_addr in ip_to_host_dict_map:
-            futures.append(scan_utils.executor.submit(
-                reverse_dns_request_wrapper, ip_addr=ip_addr))
-
-        domain_obj_list = scheduled_scan_obj.scan_data.get_domains(
-            [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
-        for domain_obj in domain_obj_list:
-
-            # Check against a list of cloud hosting domains to skip (.amazonaws.com, .cloudfront.net, etc.)
-            if scan_utils.is_cloud_domain(domain_obj.name):
-                logging.getLogger(__name__).debug(
-                    "Skipping cloud hosting domain: %s" % domain_obj.name)
-                continue
-
-            # Check if the domain is a wildcard domain
-            if domain_obj.name.startswith("*."):
-                logging.getLogger(__name__).debug(
-                    "Skipping wildcard domain: %s" % domain_obj.name)
-                continue
-
-            host_obj = domain_obj.parent
-
-            # Add IP address to host mapping with existing host ID
-            ip_to_host_dict_map[domain_obj.name] = {
+    target_list = []
+    subnet_map = scheduled_scan_obj.scan_data.subnet_map
+    for subnet_id in subnet_map:
+        subnet_obj = subnet_map[subnet_id]
+        if int(subnet_obj.mask) < 25:
+            subnet_str = "%s/%s" % (subnet_obj.subnet, subnet_obj.mask)
+            target_list.append(subnet_str)
+            ip_to_host_dict_map[subnet_str] = {
                 'host_id': None,
-                'obj_type': 'domain',
-                'obj': domain_obj
+                'obj_type': 'subnet',
+                'obj': subnet_obj
             }
+        else:
+            ip_network = netaddr.IPNetwork(
+                f"{subnet_obj.subnet}/{subnet_obj.mask}")
+            for ip_addr in [str(ip) for ip in ip_network]:
+                target_list.append(ip_addr)
+                if ip_addr not in ip_to_host_dict_map:
+                    ip_to_host_dict_map[ip_addr] = {
+                        'host_id': None,
+                        'obj_type': 'ip',
+                        'obj': None
+                    }
 
-            futures.append(scan_utils.executor.submit(
-                subdomain_request_wrapper, domain=domain_obj.name))
+    futures = []
+    for ip_addr in ip_to_host_dict_map:
+        futures.append(scan_utils.executor.submit(
+            reverse_dns_request_wrapper, ip_addr=ip_addr))
 
-        # Register futures with scan execution framework
-        scan_proc_inst = data_model.ToolExecutor(futures)
-        scheduled_scan_obj.register_tool_executor(
-            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+    domain_obj_list = scheduled_scan_obj.scan_data.get_domains(
+        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+    for domain_obj in domain_obj_list:
+        if scan_utils.is_cloud_domain(domain_obj.name):
+            logging.getLogger(__name__).debug(
+                "Skipping cloud hosting domain: %s" % domain_obj.name)
+            continue
+        if domain_obj.name.startswith("*."):
+            logging.getLogger(__name__).debug(
+                "Skipping wildcard domain: %s" % domain_obj.name)
+            continue
+        ip_to_host_dict_map[domain_obj.name] = {
+            'host_id': None,
+            'obj_type': 'domain',
+            'obj': domain_obj
+        }
+        futures.append(scan_utils.executor.submit(
+            subdomain_request_wrapper, domain=domain_obj.name))
 
-        # Collect results from concurrent API requests
-        serializable_map = {}
-        for future in futures:
-            ret_dict = future.result()
-            # Extract IP address/subnet from results
-            ip_or_subnet = ret_dict['target']
-            # Get corresponding mapping dictionary
-            target_dict = ip_to_host_dict_map[ip_or_subnet]
+    scan_proc_inst = data_model.ToolExecutor(futures)
+    scheduled_scan_obj.register_tool_executor(
+        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
-            # For subnets, resolve domains to IPs and create host entries
-            ret_domains = ret_dict['domains']
-            if ret_domains and len(ret_domains) > 0:
-
-                if target_dict['obj_type'] == 'subnet':
-                    subnet_obj = target_dict['obj']
-                    subnet_network = netaddr.IPNetwork(
-                        "%s/%s" % (subnet_obj.subnet, subnet_obj.mask))
-
-                    # Resolve domains to IPs and create host entries using scan_utils.dns_wrapper
-                    dns_results = scan_utils.dns_wrapper(
-                        set(ret_domains))
-                    for dns_result in dns_results:
-                        domain = dns_result['domain']
-                        resolved_ip = dns_result['ip']
-                        try:
-                            ip_obj = netaddr.IPAddress(resolved_ip)
-                            # Check if resolved IP is within the subnet range
-                            if ip_obj in subnet_network:
-                                ip_str = str(ip_obj)
-                                # Create new host entry for this IP if not already present
-                                if ip_str not in serializable_map:
-                                    serializable_map[ip_str] = {
-                                        'host_id': None,
-                                        'domains': [domain],
-                                    }
-                                elif 'domains' not in serializable_map[ip_str]:
-                                    serializable_map[ip_str]['domains'] = [
-                                        domain]
-                                else:
-                                    if domain not in serializable_map[ip_str]['domains']:
-                                        serializable_map[ip_str]['domains'].append(
-                                            domain)
-                        except (netaddr.core.AddrFormatError, ValueError):
-                            # Skip invalid IP addresses
-                            pass
-
-                elif target_dict['obj_type'] == 'domain':
-
-                    dns_results = scan_utils.dns_wrapper(
-                        set(ret_domains))
-
-                    for dns_result in dns_results:
-                        domain = dns_result['domain']
-                        resolved_ip = dns_result['ip']
-
-                        try:
-                            ip_obj = netaddr.IPAddress(resolved_ip)
-                            # Check if resolved IP is within the subnet range
+    serializable_map = {}
+    for future in futures:
+        ret_dict = future.result()
+        ip_or_subnet = ret_dict['target']
+        target_dict = ip_to_host_dict_map[ip_or_subnet]
+        ret_domains = ret_dict['domains']
+        if ret_domains and len(ret_domains) > 0:
+            if target_dict['obj_type'] == 'subnet':
+                subnet_obj = target_dict['obj']
+                subnet_network = netaddr.IPNetwork(
+                    "%s/%s" % (subnet_obj.subnet, subnet_obj.mask))
+                dns_results = scan_utils.dns_wrapper(set(ret_domains))
+                for dns_result in dns_results:
+                    domain = dns_result['domain']
+                    resolved_ip = dns_result['ip']
+                    try:
+                        ip_obj = netaddr.IPAddress(resolved_ip)
+                        if ip_obj in subnet_network:
                             ip_str = str(ip_obj)
-                            # Create new host entry for this IP if not already present
                             if ip_str not in serializable_map:
                                 serializable_map[ip_str] = {
-                                    'host_id': None,
-                                    'domains': [domain],
-                                }
+                                    'host_id': None, 'domains': [domain]}
                             elif 'domains' not in serializable_map[ip_str]:
-                                serializable_map[ip_str]['domains'] = [
-                                    domain]
+                                serializable_map[ip_str]['domains'] = [domain]
                             else:
                                 if domain not in serializable_map[ip_str]['domains']:
                                     serializable_map[ip_str]['domains'].append(
                                         domain)
-
-                        except (netaddr.core.AddrFormatError, ValueError):
-                            # Skip invalid IP addresses
-                            pass
-
+                    except (netaddr.core.AddrFormatError, ValueError):
+                        pass
+            elif target_dict['obj_type'] == 'domain':
+                dns_results = scan_utils.dns_wrapper(set(ret_domains))
+                for dns_result in dns_results:
+                    domain = dns_result['domain']
+                    resolved_ip = dns_result['ip']
+                    try:
+                        ip_obj = netaddr.IPAddress(resolved_ip)
+                        ip_str = str(ip_obj)
+                        if ip_str not in serializable_map:
+                            serializable_map[ip_str] = {
+                                'host_id': None, 'domains': [domain]}
+                        elif 'domains' not in serializable_map[ip_str]:
+                            serializable_map[ip_str]['domains'] = [domain]
+                        else:
+                            if domain not in serializable_map[ip_str]['domains']:
+                                serializable_map[ip_str]['domains'].append(
+                                    domain)
+                    except (netaddr.core.AddrFormatError, ValueError):
+                        pass
+            else:
+                if ip_or_subnet not in serializable_map:
+                    serializable_map[ip_or_subnet] = {
+                        'host_id': target_dict['host_id'],
+                        'domains': ret_domains,
+                    }
+                elif 'domains' not in serializable_map[ip_or_subnet]:
+                    serializable_map[ip_or_subnet]['domains'] = ret_domains
                 else:
+                    serializable_map[ip_or_subnet]['domains'].extend(
+                        ret_domains)
 
-                    if ip_or_subnet not in serializable_map:
-                        serializable_map[ip_or_subnet] = {
-                            'host_id': target_dict['host_id'],
-                            'domains': ret_domains,
-                        }
-                    elif 'domains' not in serializable_map[ip_or_subnet]:
-                        serializable_map[ip_or_subnet]['domains'] = ret_domains
-                    else:
-                        serializable_map[ip_or_subnet]['domains'].extend(
-                            ret_domains)
+    results_dict = {'ip_to_host_dict_map': serializable_map}
+    with open(output_file_path, 'w') as file_fd:
+        file_fd.write(json.dumps(results_dict))
 
-        results_dict = {'ip_to_host_dict_map': serializable_map}
 
-        # Write results to output file in JSON format
-        with open(output_file_path, 'w') as file_fd:
-            file_fd.write(json.dumps(results_dict))
+def ip_thc_import(scan_input) -> bool:
+    try:
+        execute_scan(scan_input)
+        output_path = get_output_path(scan_input)
+        if not os.path.exists(output_path):
+            return True
+        if _import_already_done(scan_input, output_path):
+            return True
+        tool_instance_id = scan_input.current_tool_instance_id
+        ret_arr = parse_ip_thc_output(output_path, tool_instance_id)
+        if len(ret_arr) > 0:
+            _import_results(scan_input, ret_arr, output_path)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "ip_thc import failed: %s", e, exc_info=True)
+        return False
 
 
 def parse_ip_thc_output(
@@ -728,86 +573,3 @@ def parse_ip_thc_output(
                 domain_obj_list.append(domain_obj)
 
     return list(host_obj_map.values()) + domain_obj_list
-
-
-@inherits(IPThcIPLookupScan)
-class ImportIPThcIPLookupOutput(data_model.ImportToolXOutput):
-    """
-    Luigi task for importing and processing IP THC IP lookup results.
-
-    This task handles the import and integration of IP THC lookup results
-    into the Waluigi framework's data model. It reads the JSON output from the
-    lookup scan, processes domain information, and creates appropriate data model
-    objects for storage in the framework database.
-
-    The import process includes:
-        - Reading JSON output from IP THC lookup scan
-        - Processing IP-to-domain mappings from API results
-        - Creating Domain objects with proper parent relationships
-        - Integrating results into the framework's data model
-        - Updating scan progress and status information
-
-    Attributes:
-        Inherits all attributes from IPThcIPLookupScan and ImportToolXOutput
-
-    Methods:
-        requires: Specifies dependency on IPThcIPLookupScan task
-        run: Processes lookup results and imports into data model
-
-    Example:
-        >>> # Task is executed as part of the Luigi workflow
-        >>> import_task = ImportIPThcIPLookupOutput(scan_input=scan_obj)
-        >>> luigi.build([import_task], local_scheduler=True)
-
-    Note:
-        This task creates Domain objects with collection_tool_instance_id
-        for tracking which tool instance discovered each domain.
-    """
-
-    def requires(self) -> IPThcIPLookupScan:
-        """
-        Specify task dependencies for the import operation.
-
-        Returns:
-            IPThcIPLookupScan: The lookup scan task that must complete
-                before this import task can execute.
-        """
-        return IPThcIPLookupScan(scan_input=self.scan_input)
-
-    def run(self) -> None:
-        """
-        Import and process IP THC IP lookup results into the data model.
-
-        This method reads the JSON output from the IP THC lookup scan,
-        processes the IP-to-domain mappings, creates Domain objects for each
-        discovered domain, and imports them into the framework's data model.
-
-        For IPs with existing Host objects (from original scope), Domain objects
-        are created with the existing host as parent.
-
-        For IPs discovered from subnet queries (extracted from domain names),
-        new Host objects are created before Domain objects are attached.
-
-        The import process includes:
-            - Reading lookup results from the output file
-            - Parsing IP-to-host-to-domain mappings
-            - Creating Host objects for IPs discovered from subnet queries
-            - Creating Domain objects with proper parent-child relationships
-            - Setting collection tool instance IDs for tracking
-            - Importing results into the framework database
-
-        Example:
-            >>> import_task = ImportIPThcIPLookupOutput(scan_input=scan_obj)
-            >>> import_task.run()  # Processes and imports results
-
-        Note:
-            Domain objects are created with parent_id linking to the host object
-            and collection_tool_instance_id for tracking discovery source.
-            Host objects are created for IPs discovered during subnet queries.
-        """
-
-        scheduled_scan_obj = self.scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        ret_arr = parse_ip_thc_output(self.input().path, tool_instance_id)
-        if len(ret_arr) > 0:
-            self.import_results(scheduled_scan_obj, ret_arr)

@@ -51,7 +51,6 @@ Note:
 import json
 import os
 import netaddr
-import luigi
 import traceback
 import os.path
 import logging
@@ -60,11 +59,14 @@ import binascii
 
 from typing import List, Dict, Set, Optional, Any, Tuple
 from functools import partial
-from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
 from urllib.parse import urlparse
 from waluigi.proc_utils import process_wrapper
+from waluigi.tool_runner import (
+    import_already_done as _import_already_done,
+    import_results as _import_results,
+)
 
 
 class Gau(data_model.WaluigiTool):
@@ -120,190 +122,139 @@ class Gau(data_model.WaluigiTool):
 
     @staticmethod
     def gau_lookup(scan_input: Any) -> bool:
-        """
-        Execute a Gau scan using Luigi workflow.
-
-        Args:
-            scan_input (Any): Input object containing scan parameters and context.
-
-        Returns:
-            bool: True if the scan completed successfully, False otherwise.
-
-        This method triggers the GauScan Luigi task, which performs passive URL enumeration
-        for the provided domains. The scan results are written to output files for later import.
-        """
-        luigi_run_result = luigi.build([GauScan(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
+        try:
+            execute_scan(scan_input)
+            return True
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                "Gau scan failed: %s", e, exc_info=True)
             return False
-        return True
 
     @staticmethod
     def gau_import(scan_input: Any) -> bool:
-        """
-        Import Gau scan results using Luigi workflow.
-
-        Args:
-            scan_input (Any): Input object containing scan parameters and context.
-
-        Returns:
-            bool: True if the import completed successfully, False otherwise.
-
-        This method triggers the GauImport Luigi task, which processes Gau scan output files
-        and imports discovered URLs, endpoints, and related data into the Waluigi data model.
-        """
-        luigi_run_result = luigi.build([GauImport(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
+        try:
+            output_path = get_output_path(scan_input)
+            if not os.path.exists(output_path):
+                return True
+            if _import_already_done(scan_input, output_path):
+                return True
+            scheduled_scan_obj = scan_input
+            tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+            ret_arr = parse_gau_output(output_path, tool_instance_id)
+            _import_results(scan_input, ret_arr, output_path)
+            return True
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                "Gau import failed: %s", e, exc_info=True)
             return False
-        return True
 
 
-class GauScan(luigi.Task):
-    """
-    Luigi Task for Executing Gau Passive URL Enumeration.
+def get_output_path(scan_input: Any) -> str:
+    scan_id = scan_input.id
+    tool_name = scan_input.current_tool.name
+    dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return f"{dir_path}{os.path.sep}{tool_name}_meta_{scan_id}.json"
 
-    This task runs the Gau tool to fetch known URLs for a list of scoped domains. It manages
-    input preparation, output file handling, and process execution, integrating with the Waluigi
-    scan scheduling and data model.
 
-    Parameters:
-        scan_input (luigi.Parameter): Input object containing scan context and parameters.
+def execute_scan(scan_input: Any) -> None:
+    gau_meta_file_path = get_output_path(scan_input)
+    if os.path.exists(gau_meta_file_path):
+        return
 
-    Output:
-        luigi.LocalTarget: Path to the Gau scan metadata output file (JSON).
-    """
+    scheduled_scan_obj = scan_input
+    scope_obj = scheduled_scan_obj.scan_data
 
-    scan_input = luigi.Parameter()
+    domain_host_map = {}
+    domain_list_str = None
+    all_endpoint_port_obj_map = scope_obj.get_urls()
+    if len(all_endpoint_port_obj_map) > 0:
 
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define the output target for the Gau scan task.
+        # Filter URLs to only include base URLs (path is None or "/")
+        for url, port_data in all_endpoint_port_obj_map.items():
+            # Only include URLs with no specific path or root path
+            if port_data.get('path') is None or port_data.get('path').endswith('/'):
 
-        Returns:
-            luigi.LocalTarget: File target for Gau scan metadata output (JSON).
+                u = urlparse(url)
+                domain_str = u.netloc
+                if ":" in domain_str:
+                    domain_arr = domain_str.split(":")
+                    domain_str = domain_arr[0].lower()
+                else:
+                    domain_str = domain_str.lower()
 
-        This method constructs the output file path based on the scan ID and tool name,
-        ensuring results are stored in the appropriate directory for downstream import.
-        """
+                domain_host_map[domain_str] = port_data
 
-        scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.id
+        if len(domain_host_map) > 0:
+            domain_list_str = '\n'.join(domain_host_map.keys())
 
-        # Init directory
-        tool_name = scheduled_scan_obj.current_tool.name
-        dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    else:
 
-        # path to input file
-        scan_outputs_file = f"{dir_path}{os.path.sep}{tool_name}_meta_{scan_id}.json"
-        return luigi.LocalTarget(scan_outputs_file)
+        domain_obj_list = scope_obj.get_domains(
+            [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
 
-    def run(self) -> None:
-        """
-        Execute the Gau scan process for scoped domains.
+        # Create a list of domains to pass to gau
+        domain_list_str = '\n'.join(
+            domain.name for domain in domain_obj_list)
 
-        This method prepares the domain list, configures environment variables, builds the Gau
-        command, and submits the process for execution. Results are written to output files,
-        and errors are logged and raised as needed. Integrates with Waluigi's scan_utils and
-        data_model for process management and result tracking.
-        """
+    tool_args = scheduled_scan_obj.current_tool.args
+    if tool_args:
+        tool_args = tool_args.split(" ")
 
-        scheduled_scan_obj = self.scan_input
-        scope_obj = scheduled_scan_obj.scan_data
+    dir_path = os.path.dirname(gau_meta_file_path)
+    gau_scan_output_path = f"{dir_path}{os.path.sep}{scheduled_scan_obj.current_tool.name}_outputs_{scheduled_scan_obj.id}.json"
 
-        domain_host_map = {}
-        domain_list_str = None
-        all_endpoint_port_obj_map = scope_obj.get_urls()
-        if len(all_endpoint_port_obj_map) > 0:
+    # Add env variables for HOME
+    my_env = os.environ.copy()
 
-            # Filter URLs to only include base URLs (path is None or "/")
-            for url, port_data in all_endpoint_port_obj_map.items():
-                # Only include URLs with no specific path or root path
-                if port_data.get('path') is None or port_data.get('path').endswith('/'):
+    if os.name != 'nt':
+        home_dir = os.path.expanduser('~')
+        my_env["HOME"] = home_dir
 
-                    u = urlparse(url)
-                    domain_str = u.netloc
-                    if ":" in domain_str:
-                        domain_arr = domain_str.split(":")
-                        domain_str = domain_arr[0].lower()
-                    else:
-                        domain_str = domain_str.lower()
+    # Add the lines
+    if len(domain_list_str) > 0:
 
-                    domain_host_map[domain_str] = port_data
+        command = []
+        command_arr = [
+            "gau",
+            "--json",
+            "--o",
+            gau_scan_output_path,
+        ]
 
-            if len(domain_host_map) > 0:
-                domain_list_str = '\n'.join(domain_host_map.keys())
+        command.extend(command_arr)
 
-        else:
+        # Add script args
+        if tool_args and len(tool_args) > 0:
+            command.extend(tool_args)
 
-            domain_obj_list = scope_obj.get_domains(
-                [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+        callback_with_tool_id = partial(
+            scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
 
-            # Create a list of domains to pass to gau
-            domain_list_str = '\n'.join(
-                domain.name for domain in domain_obj_list)
+        # Add process dict to process array
+        future = scan_utils.executor.submit(
+            process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id, stdin_data=domain_list_str, my_env=my_env, print_output=False, store_output=False)
 
-        tool_args = scheduled_scan_obj.current_tool.args
-        if tool_args:
-            tool_args = tool_args.split(" ")
+        # Register futures
+        scan_proc_inst = data_model.ToolExecutor([future])
+        scheduled_scan_obj.register_tool_executor(
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
-        # Ensure output folder exists
-        gau_meta_file_path = self.output().path
-        dir_path = os.path.dirname(gau_meta_file_path)
-        gau_scan_output_path = f"{dir_path}{os.path.sep}{scheduled_scan_obj.current_tool.name}_outputs_{scheduled_scan_obj.id}.json"
+        ret_dict = future.result()
+        if ret_dict and 'exit_code' in ret_dict:
+            exit_code = ret_dict['exit_code']
+            if exit_code != 0:
+                err_msg = ''
+                if 'stderr' in ret_dict and ret_dict['stderr']:
+                    err_msg = ret_dict['stderr']
+                logging.getLogger(__name__).error(
+                    "Gau scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+                raise RuntimeError("Gau scan for scan ID %s exited with code %d: %s" % (
+                    scheduled_scan_obj.id, exit_code, err_msg))
 
-        # Add env variables for HOME
-        my_env = os.environ.copy()
-
-        if os.name != 'nt':
-            home_dir = os.path.expanduser('~')
-            my_env["HOME"] = home_dir
-
-        # Add the lines
-        if len(domain_list_str) > 0:
-
-            command = []
-            command_arr = [
-                "gau",
-                "--json",
-                "--o",
-                gau_scan_output_path,
-            ]
-
-            command.extend(command_arr)
-
-            # Add script args
-            if tool_args and len(tool_args) > 0:
-                command.extend(tool_args)
-
-            callback_with_tool_id = partial(
-                scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
-
-            # Add process dict to process array
-            future = scan_utils.executor.submit(
-                process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id, stdin_data=domain_list_str, my_env=my_env, print_output=False, store_output=False)
-
-            # Register futures
-            scan_proc_inst = data_model.ToolExecutor([future])
-            scheduled_scan_obj.register_tool_executor(
-                scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
-
-            ret_dict = future.result()
-            if ret_dict and 'exit_code' in ret_dict:
-                exit_code = ret_dict['exit_code']
-                if exit_code != 0:
-                    err_msg = ''
-                    if 'stderr' in ret_dict and ret_dict['stderr']:
-                        err_msg = ret_dict['stderr']
-                    logging.getLogger(__name__).error(
-                        "Gau scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
-                    raise RuntimeError("Gau scan for scan ID %s exited with code %d: %s" % (
-                        scheduled_scan_obj.id, exit_code, err_msg))
-
-            # Write the output file
-            with open(gau_meta_file_path, 'w') as output_fd:
-                output_fd.write(json.dumps(
-                    {'domain_map': domain_host_map, 'output_file': gau_scan_output_path}))
+        # Write the output file
+        with open(gau_meta_file_path, 'w') as output_fd:
+            output_fd.write(json.dumps(
+                {'domain_map': domain_host_map, 'output_file': gau_scan_output_path}))
 
 
 def parse_gau_output(
@@ -448,43 +399,3 @@ def parse_gau_output(
                         ret_arr.append(http_endpoint_data_obj)
 
     return ret_arr
-
-
-@inherits(GauScan)
-class GauImport(data_model.ImportToolXOutput):
-    """
-    Luigi Task for Importing Gau Scan Results.
-
-    This task processes the output files generated by GauScan, parsing discovered URLs and
-    endpoints, resolving domains, and importing structured data into the Waluigi data model.
-    It supports enrichment of scan results with host, domain, path, port, and endpoint objects.
-    """
-
-    def requires(self) -> GauScan:
-        """
-        Specify the required GauScan task dependency.
-
-        Returns:
-            GauScan: The GauScan task instance that must be completed prior to import.
-
-        Ensures that GauImport only runs after the corresponding GauScan task has produced
-        its output files.
-        """
-
-        # Requires GauScan Task to be run prior
-        return GauScan(scan_input=self.scan_input)
-
-    def run(self) -> None:
-        """
-        Process and import Gau scan results into the Waluigi data model.
-
-        This method reads Gau scan output files, parses URLs, resolves domains, and creates
-        Host, Domain, ListItem, Port, HttpEndpoint, and HttpEndpointData objects as needed.
-        Results are imported and associated with the current scan context. Handles error
-        conditions, DNS resolution, and object deduplication for robust data ingestion.
-        """
-
-        scheduled_scan_obj = self.scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        ret_arr = parse_gau_output(self.input().path, tool_instance_id)
-        self.import_results(scheduled_scan_obj, ret_arr)

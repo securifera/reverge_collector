@@ -53,7 +53,6 @@ Note:
 import json
 import os
 import binascii
-import luigi
 import traceback
 import hashlib
 import base64
@@ -63,11 +62,12 @@ import shlex
 import time
 from typing import Dict, Tuple, Any, Optional, List
 
-from luigi.util import inherits
-from webcap import Browser
-from webcap.errors import WebCapError
 from waluigi import scan_utils
 from waluigi import data_model
+from waluigi.tool_runner import (
+    import_already_done as _import_already_done,
+    import_results as _import_results,
+)
 
 # Global future mapping for screenshot target management and deduplication
 future_map: Dict[str, Tuple[int, Optional[int], Optional[str], str]] = {}
@@ -144,76 +144,13 @@ class Webcap(data_model.WaluigiTool):
             data_model.ServerRecordType.HTTP_ENDPOINT,
             data_model.ServerRecordType.HTTP_ENDPOINT_DATA
         ]
-        self.scan_func = Webcap.webcap_scan_func
-        self.import_func = Webcap.webcap_import
+        self.scan_func = webcap_scan_func
+        self.import_func = webcap_import
 
         # Set logging higher for websockets and httpcore to avoid too much output
         logging.getLogger("websockets.client").setLevel(logging.WARNING)
         logging.getLogger("httpcore.http11").setLevel(logging.WARNING)
         logging.getLogger("httpcore.connection").setLevel(logging.WARNING)
-
-    @staticmethod
-    def webcap_scan_func(scan_input: Any) -> bool:
-        """
-        Execute Webcap Chrome-based screenshot capture operations.
-
-        This static method serves as the entry point for executing Chrome-based
-        screenshot capture operations within the Waluigi framework. It builds and
-        runs the WebcapScan Luigi task with the provided scan input configuration.
-
-        Args:
-            scan_input (Any): The scan input object containing target information,
-                            endpoint data, and execution parameters
-
-        Returns:
-            bool: True if the screenshot capture completed successfully, False otherwise
-
-        Example:
-            >>> scan_obj = create_scan_input(...)  # Configure scan
-            >>> success = Webcap.webcap_scan_func(scan_obj)
-            >>> print(f"Chrome screenshot capture successful: {success}")
-
-        Note:
-            Uses Luigi's local scheduler for task execution and provides detailed
-            summary information for debugging and monitoring purposes.
-        """
-        luigi_run_result = luigi.build([WebcapScan(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
-
-    @staticmethod
-    def webcap_import(scan_input: Any) -> bool:
-        """
-        Import and process Webcap screenshot results.
-
-        This static method handles the import phase of the screenshot workflow,
-        processing captured screenshots and importing findings into the database
-        structure with proper metadata, titles, and relationships.
-
-        Args:
-            scan_input (Any): The scan input object containing configuration
-                            and metadata for the import operation
-
-        Returns:
-            bool: True if the import completed successfully, False otherwise
-
-        Example:
-            >>> # After successful screenshot capture
-            >>> imported = Webcap.webcap_import(scan_obj)
-            >>> print(f"Import successful: {imported}")
-
-        Note:
-            This method depends on the successful completion of the Chrome-based
-            screenshot capture phase and processes all generated screenshot files
-            and metadata including page titles and status codes.
-        """
-        luigi_run_result = luigi.build([ImportWebcapOutput(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
 
 
 def parse_args(args_str: str) -> Tuple[int, int, int]:
@@ -322,6 +259,9 @@ async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
     # Get the arguments for timeout and threads
     timeout, threads, image_format, quality = parse_args(webcap_args)
 
+    from webcap import Browser  # noqa: PLC0415
+    from webcap.errors import WebCapError  # noqa: PLC0415
+
     # create a browser instance
     browser = Browser(timeout=timeout, threads=threads,
                       image_format=image_format, quality=quality)
@@ -426,157 +366,47 @@ def webcap_wrapper(future_map: Dict[str, Tuple], meta_file_path: str,
     return asyncio.run(webcap_asyncio(future_map, meta_file_path, webcap_scan_args))
 
 
-class WebcapScan(luigi.Task):
-    """
-    Luigi task for executing Webcap Chrome-based screenshot capture operations.
+def get_output_path(scan_input) -> str:
+    scan_id = scan_input.id
+    tool_name = scan_input.current_tool.name
+    dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return dir_path + os.path.sep + 'screenshots.json'
 
-    This task orchestrates the execution of Chrome-based screenshot capture against
-    discovered web endpoints, managing input parameters, output file generation, and
-    execution flow within the Luigi workflow framework. It processes HTTP endpoints
-    from previous scanning phases and generates high-quality visual documentation.
 
-    Attributes:
-        scan_input (luigi.Parameter): The scan input object containing target information,
-                                    endpoint data, and configuration parameters
+def execute_scan(scan_input) -> None:
+    output_file_path = get_output_path(scan_input)
+    if os.path.exists(output_file_path):
+        return
 
-    Methods:
-        output: Defines the output file target for the screenshot metadata
-        requires: Specifies task dependencies (inherited from parent tasks)
-        run: Executes the actual Chrome-based screenshot capture operations
+    global future_map
+    dir_path = os.path.dirname(output_file_path)
 
-    Example:
-        >>> scan_obj = ScanInputObject(...)  # Configured scan input
-        >>> task = WebcapScan(scan_input=scan_obj)
-        >>> luigi.build([task])
+    logging.getLogger(__name__).debug(
+        "WebcapScan started. Output directory: %s" % dir_path)
 
-    Note:
-        This class inherits from luigi.Task and follows Luigi's task execution model.
-        The task processes HTTP endpoints discovered by previous scanning phases
-        and generates Chrome-rendered screenshots with comprehensive metadata.
-    """
+    scheduled_scan_obj = scan_input
+    webcap_scan_args = scheduled_scan_obj.current_tool.args
 
-    scan_input = luigi.Parameter()
+    future_map = {}
+    url_metadata_map = scheduled_scan_obj.scan_data.get_urls()
 
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define the output file target for Chrome screenshot metadata.
+    for url, metadata in url_metadata_map.items():
+        scan_tuple = (
+            metadata["port_id"],
+            metadata.get("http_endpoint_data_id"),
+            metadata.get("domain"),
+            metadata["path"]
+        )
+        future_map[url] = scan_tuple
 
-        Creates a unique JSON metadata file path based on the scan ID and tool name,
-        ensuring that screenshot metadata is properly organized and accessible to
-        downstream tasks in the Luigi workflow.
+    future_inst = scan_utils.executor.submit(
+        webcap_wrapper, future_map, output_file_path, webcap_scan_args)
 
-        Returns:
-            luigi.LocalTarget: A Luigi target representing the JSON metadata file where
-                             Chrome screenshot information will be stored
+    scan_proc_inst = data_model.ToolExecutor([future_inst])
+    scheduled_scan_obj.register_tool_executor(
+        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
-        Side Effects:
-            - Initializes the tool output directory structure if it doesn't exist
-            - Creates directory paths as needed for organized output storage
-
-        Example:
-            >>> task = WebcapScan(scan_input=scan_obj)
-            >>> target = task.output()
-            >>> print(target.path)
-            /path/to/outputs/webcap/scan_123/screenshots.json
-
-        Note:
-            The metadata file contains JSON lines with screenshot information
-            including Base64 image data, URLs, titles, status codes, and
-            associated endpoint data for comprehensive documentation.
-        """
-
-        scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.id
-
-        # Init directory
-        tool_name = scheduled_scan_obj.current_tool.name
-        dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-
-        # Meta file when complete
-        meta_file = '%s%s%s' % (dir_path, os.path.sep, 'screenshots.json')
-
-        return luigi.LocalTarget(meta_file)
-
-    def run(self) -> None:
-        """
-        Execute the Webcap Chrome-based screenshot capture operation.
-
-        This method orchestrates the complete Chrome screenshot workflow including:
-        - Processing discovered HTTP endpoints and web paths
-        - Queuing screenshot targets with intelligent deduplication
-        - Handling both IP-based and domain-based targets
-        - Chrome browser-based screenshot execution with async processing
-        - Intelligent filtering for likely web endpoints
-        - Advanced error handling and recovery
-
-        The method processes all HTTP endpoints from previous scan phases,
-        constructs appropriate URLs, and executes Chrome-based screenshot capture
-        with configurable timeout, thread count, and quality settings.
-
-        Returns:
-            None: Screenshots and metadata are written to the output JSON file
-
-        Side Effects:
-            - Modifies the global future_map to track screenshot targets
-            - Creates Chrome browser instances for screenshot capture
-            - Generates JSON metadata file with screenshot information
-            - Registers tool executors with the scan management system
-
-        Raises:
-            OSError: If output directories cannot be created or accessed
-            WebCapError: If Chrome browser fails to start or capture screenshots
-            Exception: Various exceptions related to screenshot capture or file I/O
-
-        Example:
-            >>> task = WebcapScan(scan_input=scan_obj)
-            >>> task.run()  # Executes all configured Chrome screenshot captures
-
-        Note:
-            This method includes intelligent filtering to avoid screenshot attempts
-            on non-web ports and uses asynchronous Chrome browser execution for
-            superior performance compared to synchronous alternatives.
-        """
-
-        global future_map
-        # Ensure output folder exists
-        dir_path = os.path.dirname(self.output().path)
-
-        logging.getLogger(__name__).debug(
-            "WebcapScan started. Output directory: %s" % dir_path)
-
-        scheduled_scan_obj = self.scan_input
-        webcap_scan_args = scheduled_scan_obj.current_tool.args
-
-        future_map = {}
-
-        # Get all URLs with metadata - this replaces all the complex iteration
-        url_metadata_map = scheduled_scan_obj.scan_data.get_urls()
-
-        # logging.getLogger(__name__).debug(
-        #    "WebcapScan URLs %s" % str(url_metadata_map))
-
-        # Convert to the format expected by webcap_asyncio
-        future_map = {}
-        for url, metadata in url_metadata_map.items():
-            scan_tuple = (
-                metadata["port_id"],
-                metadata.get("http_endpoint_data_id"),
-                metadata.get("domain"),
-                metadata["path"]
-            )
-            future_map[url] = scan_tuple
-
-        # Submit the scan task
-        meta_file = '%s%s%s' % (dir_path, os.path.sep, 'screenshots.json')
-        future_inst = scan_utils.executor.submit(
-            webcap_wrapper, future_map, meta_file, webcap_scan_args)
-
-        scan_proc_inst = data_model.ToolExecutor([future_inst])
-        scheduled_scan_obj.register_tool_executor(
-            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
-
-        # Wait for the tasks to complete and retrieve results
-        future_inst.result()
+    future_inst.result()
 
 
 def parse_webcap_output(meta_file, tool_instance_id):
@@ -669,254 +499,29 @@ def parse_webcap_output(meta_file, tool_instance_id):
     return ret_arr
 
 
-@inherits(WebcapScan)
-class ImportWebcapOutput(data_model.ImportToolXOutput):
-    """
-    Luigi task for importing and processing Webcap Chrome screenshot results.
+def webcap_scan_func(scan_input) -> bool:
+    try:
+        execute_scan(scan_input)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "webcap scan failed: %s", e, exc_info=True)
+        return False
 
-    This task handles the post-processing of Webcap screenshot outputs, parsing
-    JSON metadata files, processing screenshot images with titles and status codes,
-    and importing the findings into the database structure with proper relationships
-    and comprehensive metadata.
 
-    The class inherits from both WebcapScan (via @inherits decorator) and
-    ImportToolXOutput, providing access to scan parameters and import functionality.
-
-    Processing includes:
-        - Loading screenshot metadata from JSON line files
-        - Hash-based screenshot deduplication using image content
-        - Processing page titles and HTTP status codes
-        - Creation of database objects for screenshots, domains, and endpoints
-        - Batch import of processed data with relationship mapping
-        - Real-time scope updates for immediate availability
-
-    Attributes:
-        Inherits all attributes from WebcapScan including scan_input parameter
-
-    Methods:
-        requires: Specifies that WebcapScan must complete before import
-        run: Processes Chrome screenshot files and imports results to database
-
-    Example:
-        >>> import_task = ImportWebcapOutput(scan_input=scan_obj)
-        >>> luigi.build([import_task])  # Runs WebcapScan then ImportWebcapOutput
-
-    Note:
-        This task automatically depends on WebcapScan completion and processes
-        all screenshot data and metadata generated during the Chrome capture phase.
-        Uses SHA-1 hashing for both screenshot and path deduplication with
-        comprehensive title and status code processing.
-    """
-
-    def requires(self) -> WebcapScan:
-        """
-        Define task dependencies for the import operation.
-
-        Ensures that the WebcapScan task completes successfully before attempting
-        to import and process the Chrome screenshot results and metadata.
-
-        Returns:
-            WebcapScan: The Chrome screenshot capture task that must complete before import
-
-        Example:
-            >>> task = ImportWebcapOutput(scan_input=scan_obj)
-            >>> deps = task.requires()
-            >>> print(type(deps).__name__)
-            WebcapScan
-        """
-        # Requires WebcapScan Task to be run prior
-        return WebcapScan(scan_input=self.scan_input)
-
-    def run(self) -> None:
-        """
-        Process and import Webcap Chrome screenshot results into the database.
-
-        This method performs comprehensive processing of Chrome screenshot files and
-        metadata, including image hashing, title extraction, status code processing,
-        and database object creation. It handles the complete import workflow from
-        JSON line file processing to database insertion with proper relationship mapping.
-
-        The processing workflow includes:
-        - Loading screenshot metadata from JSON line files
-        - Processing Base64-encoded screenshot images with hash-based deduplication
-        - Extracting page titles and HTTP status codes from Chrome capture
-        - Creating domain, path, endpoint, and screenshot database objects
-        - Real-time batch importing with proper relationship mapping
-        - Updating scan scope with imported data for immediate availability
-        - Comprehensive logging and error handling
-
-        Returns:
-            None: Results are imported directly into the database via batch operations
-
-        Side Effects:
-            - Creates database records for screenshots, domains, paths, and endpoints
-            - Updates deduplication maps for screenshots and paths
-            - Processes all screenshot metadata from the preceding WebcapScan task
-            - Writes import results to the tool import file with JSON line format
-            - Updates scan scope for real-time data availability
-
-        Raises:
-            json.JSONDecodeError: If metadata files contain invalid JSON
-            FileNotFoundError: If expected screenshot metadata files are missing
-            base64.binascii.Error: If Base64 image data cannot be decoded
-            Exception: Various exceptions related to image processing or database operations
-
-        Example:
-            >>> task = ImportWebcapOutput(scan_input=scan_obj)
-            >>> task.run()  # Processes and imports all Chrome screenshot results
-
-        Note:
-            Uses SHA-1 hashing for both screenshot and web path deduplication.
-            Screenshot images are processed as Base64-encoded strings from Chrome.
-            The method handles both existing and new HTTP endpoint data objects
-            with comprehensive title and status code metadata.
-        """
-
-        meta_file = self.input().path
-        scheduled_scan_obj = self.scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        scan_id = scheduled_scan_obj.scan_id
-        recon_manager = scheduled_scan_obj.scan_thread.recon_manager
-        tool_obj = scheduled_scan_obj.current_tool
-        tool_id = tool_obj.id
-
-        path_hash_map = {}
-        screenshot_hash_map = {}
-        domain_name_id_map = {}
-
-        if os.path.exists(meta_file):
-
-            tool_import_file = self.output().path
-            with open(meta_file, 'r') as file_fd, open(tool_import_file, 'w') as import_fd:
-                count = 0
-                for line in file_fd:
-                    if not line.strip():
-                        continue
-
-                    ret_arr = []
-                    screenshot_meta = json.loads(line)
-                    web_path = screenshot_meta['path']
-                    port_id = screenshot_meta['port_id']
-                    status_code = screenshot_meta['status_code']
-                    screenshot_bytes_b64 = screenshot_meta['image_data']
-                    title = screenshot_meta['title']
-                    http_endpoint_data_id = screenshot_meta['http_endpoint_data_id']
-
-                    # Hash the image
-                    screenshot_id = None
-                    hash_alg = hashlib.sha1
-                    hashobj = hash_alg()
-                    hashobj.update(base64.b64decode(screenshot_bytes_b64))
-                    image_hash = hashobj.digest()
-                    image_hash_str = binascii.hexlify(image_hash).decode()
-
-                    if image_hash_str in screenshot_hash_map:
-                        screenshot_obj = screenshot_hash_map[image_hash_str]
-                    else:
-                        screenshot_obj = data_model.Screenshot()
-                        screenshot_obj.collection_tool_instance_id = tool_instance_id
-                        screenshot_obj.screenshot = screenshot_bytes_b64
-                        screenshot_obj.image_hash = image_hash_str
-
-                        # Add to map and the object list
-                        screenshot_hash_map[image_hash_str] = screenshot_obj
-
-                    ret_arr.append(screenshot_obj)
-
-                    screenshot_id = screenshot_obj.id
-
-                    hashobj = hash_alg()
-                    hashobj.update(web_path.encode())
-                    path_hash = hashobj.digest()
-                    hex_str = binascii.hexlify(path_hash).decode()
-                    web_path_hash = hex_str
-
-                    # Domain key exists and is not None
-                    endpoint_domain_id = None
-                    if 'domain' in screenshot_meta and screenshot_meta['domain']:
-                        domain_str = screenshot_meta['domain']
-                        if domain_str in domain_name_id_map:
-                            domain_obj = domain_name_id_map[domain_str]
-                        else:
-                            domain_obj = data_model.Domain()
-                            domain_obj.collection_tool_instance_id = tool_instance_id
-                            domain_obj.name = domain_str
-                            domain_name_id_map[domain_str] = domain_obj
-
-                        # Add domain
-                        ret_arr.append(domain_obj)
-                        # Set endpoint id
-                        endpoint_domain_id = domain_obj.id
-
-                    if web_path_hash in path_hash_map:
-                        path_obj = path_hash_map[web_path_hash]
-                    else:
-                        path_obj = data_model.ListItem()
-                        path_obj.collection_tool_instance_id = tool_instance_id
-                        path_obj.web_path = web_path
-                        path_obj.web_path_hash = web_path_hash
-
-                        # Add to map and the object list
-                        path_hash_map[web_path_hash] = path_obj
-
-                    # Add path object
-                    ret_arr.append(path_obj)
-
-                    web_path_id = path_obj.id
-
-                    # Add http endpoint
-                    http_endpoint_obj = data_model.HttpEndpoint(
-                        parent_id=port_id)
-                    http_endpoint_obj.collection_tool_instance_id = tool_instance_id
-                    http_endpoint_obj.web_path_id = web_path_id
-
-                    # Add the endpoint
-                    ret_arr.append(http_endpoint_obj)
-
-                    # Add http endpoint data
-                    http_endpoint_data_obj = data_model.HttpEndpointData(
-                        parent_id=http_endpoint_obj.id)
-                    http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
-                    http_endpoint_data_obj.domain_id = endpoint_domain_id
-                    http_endpoint_data_obj.status = status_code
-                    http_endpoint_data_obj.title = title
-                    http_endpoint_data_obj.screenshot_id = screenshot_id
-
-                    # Set the object id if the object already exists
-                    if http_endpoint_data_id:
-                        http_endpoint_data_obj.id = http_endpoint_data_id
-
-                    # Add the endpoint
-                    ret_arr.append(http_endpoint_data_obj)
-
-                    if len(ret_arr) > 0:
-
-                        record_map = {}
-                        import_arr = []
-                        for obj in ret_arr:
-                            record_map[obj.id] = obj
-                            flat_obj = obj.to_jsonable()
-                            import_arr.append(flat_obj)
-
-                        # Import the ports to the manager
-                        updated_record_map = recon_manager.import_data(
-                            scan_id, tool_id, import_arr)
-
-                        # Update the records
-                        updated_import_arr = data_model.update_scope_array(
-                            record_map, updated_record_map)
-
-                        import_fd.write(json.dumps(updated_import_arr) + '\n')
-
-                        # Update the scan scope
-                        scheduled_scan_obj.scan_data.update(record_map)
-
-                    count += 1
-
-                logging.getLogger(__name__).debug(
-                    "Imported %d screenshots to manager." % (count))
-
-        else:
-
-            logging.getLogger(__name__).error(
-                "[-] Screenshot file does not exist.")
+def webcap_import(scan_input) -> bool:
+    try:
+        output_path = get_output_path(scan_input)
+        if not os.path.exists(output_path):
+            return True
+        if _import_already_done(scan_input, output_path):
+            return True
+        tool_instance_id = scan_input.current_tool_instance_id
+        ret_arr = parse_webcap_output(output_path, tool_instance_id)
+        if ret_arr:
+            _import_results(scan_input, ret_arr, output_path)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "webcap import failed: %s", e, exc_info=True)
+        return False

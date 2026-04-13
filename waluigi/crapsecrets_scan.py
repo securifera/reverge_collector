@@ -55,16 +55,18 @@ Note:
 
 import json
 import os
-import luigi
 # import traceback
 import time
 import logging
 from typing import Dict, Set, List, Any, Optional, Union
 
-from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
+from waluigi.tool_runner import (
+    import_already_done as _import_already_done,
+    import_results as _import_results,
+)
 
 # Global URL tracking set to prevent duplicate scanning
 url_set: Set[str] = set()
@@ -139,71 +141,8 @@ class Crapsecrets(data_model.WaluigiTool):
         self.input_records = [data_model.ServerRecordType.PORT,
                               data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
         self.output_records = [data_model.ServerRecordType.VULNERABILITY]
-        self.scan_func = Crapsecrets.crapsecrets_scan_func
-        self.import_func = Crapsecrets.crapsecrets_import
-
-    @staticmethod
-    def crapsecrets_scan_func(scan_input: Any) -> bool:
-        """
-        Execute CrapSecrets cryptographic vulnerability scanning operations.
-
-        This static method serves as the entry point for executing cryptographic
-        vulnerability scanning within the Waluigi framework. It builds and runs
-        the CrapSecretsScan Luigi task with the provided scan input configuration.
-
-        Args:
-            scan_input (Any): The scan input object containing target information,
-                            endpoint data, and execution parameters
-
-        Returns:
-            bool: True if the vulnerability scanning completed successfully, False otherwise
-
-        Example:
-            >>> scan_obj = create_scan_input(...)  # Configure scan
-            >>> success = Crapsecrets.crapsecrets_scan_func(scan_obj)
-            >>> print(f"Cryptographic vulnerability scan successful: {success}")
-
-        Note:
-            Uses Luigi's local scheduler for task execution and provides detailed
-            summary information for debugging and monitoring purposes.
-        """
-        luigi_run_result = luigi.build([CrapSecretsScan(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
-
-    @staticmethod
-    def crapsecrets_import(scan_input: Any) -> bool:
-        """
-        Import and process CrapSecrets vulnerability scan results.
-
-        This static method handles the import phase of the vulnerability scanning
-        workflow, processing discovered cryptographic vulnerabilities and importing
-        findings into the database structure with proper vulnerability categorization.
-
-        Args:
-            scan_input (Any): The scan input object containing configuration
-                            and metadata for the import operation
-
-        Returns:
-            bool: True if the import completed successfully, False otherwise
-
-        Example:
-            >>> # After successful vulnerability scanning
-            >>> imported = Crapsecrets.crapsecrets_import(scan_obj)
-            >>> print(f"Vulnerability import successful: {imported}")
-
-        Note:
-            This method depends on the successful completion of the vulnerability
-            scanning phase and processes all discovered cryptographic vulnerabilities
-            with detailed categorization and severity assessment.
-        """
-        luigi_run_result = luigi.build([ImportCrapSecretsOutput(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
+        self.scan_func = crapsecrets_scan_func
+        self.import_func = crapsecrets_import
 
 
 def queue_scan(url_dict: Dict[str, Any]) -> Optional[Any]:
@@ -344,203 +283,108 @@ def request_wrapper(url_obj: Dict[str, Any]) -> Dict[str, Any]:
     return url_obj
 
 
-class CrapSecretsScan(luigi.Task):
-    """
-    Luigi task for executing CrapSecrets cryptographic vulnerability scanning operations.
+def get_output_path(scan_input) -> str:
+    scan_id = scan_input.id
+    tool_name = scan_input.current_tool.name
+    dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return f"{dir_path}{os.path.sep}crapsecrets_outputs_{scan_id}.json"
 
-    This task orchestrates the execution of cryptographic vulnerability analysis against
-    discovered web endpoints and URLs, managing input parameters, output file generation,
-    and execution flow within the Luigi workflow framework. It processes HTTP endpoints
-    from previous scanning phases and custom URL lists to identify cryptographic weaknesses.
 
-    The scan focuses on base URLs (root paths) only, filtering out URLs with specific
-    paths to concentrate cryptographic vulnerability analysis on the primary endpoints
-    where secrets are most commonly exposed.
+def execute_scan(scan_input) -> None:
+    output_file_path = get_output_path(scan_input)
+    if os.path.exists(output_file_path):
+        return
 
-    Attributes:
-        scan_input (luigi.Parameter): The scan input object containing target information,
-                                    endpoint data, and configuration parameters
+    scheduled_scan_obj = scan_input
+    output_file_list = []
 
-    Methods:
-        output: Defines the output file target for the vulnerability scan results
-        requires: Specifies task dependencies (inherited from parent tasks)
-        run: Executes the actual CrapSecrets cryptographic vulnerability scanning
+    global url_set
+    url_set = set()
+    global path_hash_map
+    path_hash_map.clear()
 
-    Example:
-        >>> scan_obj = ScanInputObject(...)  # Configured scan input
-        >>> task = CrapSecretsScan(scan_input=scan_obj)
-        >>> luigi.build([task])
+    custom_args = None
+    if scheduled_scan_obj.current_tool.args:
+        custom_args = scheduled_scan_obj.current_tool.args.split(" ")
 
-    Note:
-        This class inherits from luigi.Task and follows Luigi's task execution model.
-        The task processes both discovered HTTP endpoints and custom URL lists to
-        provide comprehensive cryptographic vulnerability coverage focused on base URLs.
-    """
+    all_endpoint_port_obj_map = scheduled_scan_obj.scan_data.get_urls()
+    endpoint_port_obj_map = {}
+    for url, port_data in all_endpoint_port_obj_map.items():
+        if port_data.get('path') is None or port_data.get('path') == '/':
+            endpoint_port_obj_map[url] = port_data
 
-    scan_input = luigi.Parameter()
+    scope_obj = scheduled_scan_obj.scan_data
+    url_list = scope_obj.get_scope_urls()
 
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define the output file target for CrapSecrets vulnerability scan results.
+    futures = []
+    for url_str, url_metadata in endpoint_port_obj_map.items():
+        port_id = url_metadata.get('port_id')
+        http_endpoint_id = url_metadata.get('http_endpoint_id')
+        url_obj = {
+            'port_id': port_id,
+            'http_endpoint_id': http_endpoint_id,
+            'url': url_str,
+            'custom_args': custom_args
+        }
+        future_inst = queue_scan(url_obj)
+        if future_inst:
+            futures.append(future_inst)
 
-        Creates a unique output file path based on the scan ID and tool name,
-        ensuring that vulnerability scan results are properly organized and
-        accessible to downstream tasks in the Luigi workflow.
-
-        Returns:
-            luigi.LocalTarget: A Luigi target representing the output file where
-                             CrapSecrets vulnerability scan results will be stored
-
-        Side Effects:
-            - Initializes the tool output directory structure if it doesn't exist
-            - Creates directory paths as needed for organized output storage
-
-        Example:
-            >>> task = CrapSecretsScan(scan_input=scan_obj)
-            >>> target = task.output()
-            >>> print(target.path)
-            /path/to/outputs/crapsecrets/scan_123/crapsecrets_outputs_123
-
-        Note:
-            The output file contains JSON data with vulnerability findings,
-            including cryptographic weakness details and affected endpoints.
-        """
-
-        scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.id
-
-        # Init directory
-        tool_name = scheduled_scan_obj.current_tool.name
-        dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-
-        # path to input file
-        scan_outputs_file = f"{dir_path}{os.path.sep}crapsecrets_outputs_{scan_id}.json"
-        return luigi.LocalTarget(scan_outputs_file)
-
-    def run(self) -> None:
-        """
-        Execute the CrapSecrets cryptographic vulnerability scanning operation.
-
-        This method orchestrates the complete vulnerability scanning workflow including:
-        - Processing discovered HTTP endpoints using scan_data.get_urls()
-        - Filtering to only scan base URLs (root paths) for focused analysis
-        - Handling custom URL lists for additional target coverage
-        - Concurrent execution of cryptographic vulnerability analysis
-        - Collection and aggregation of vulnerability findings
-
-        The method uses the same URL extraction pattern as NucleiScan and FeroxScan,
-        filtering URLs to only include base URLs (path is None or "/") to focus
-        cryptographic analysis on primary endpoints where secrets are typically exposed.
-
-        Returns:
-            None: Vulnerability findings are written to the output file
-
-        Side Effects:
-            - Modifies the global url_set to track processed URLs
-            - Creates vulnerability scan tasks for concurrent execution
-            - Generates output file with aggregated vulnerability data
-            - Registers tool executors with the scan management system
-
-        Raises:
-            OSError: If output directories cannot be created or accessed
-            requests.RequestException: If HTTP requests fail repeatedly
-            json.JSONEncodeError: If results cannot be serialized to JSON
-            Exception: Various exceptions related to network requests or file I/O
-
-        Example:
-            >>> task = CrapSecretsScan(scan_input=scan_obj)
-            >>> task.run()  # Executes all configured vulnerability scans
-
-        Note:
-            The method filters to base URLs only and uses concurrent execution for
-            performance. It includes comprehensive error handling for network operations
-            and fallback to custom scope URLs when no base URLs are available.
-        """
-
-        scheduled_scan_obj = self.scan_input
-
-        # Get output file path
-        output_file_path = self.output().path
-        output_file_list = []
-
-        # Clear global URL set and path hash map on each run
-        global url_set
-        url_set = set()
-
-        global path_hash_map
-        path_hash_map.clear()
-
-        # Extract custom args from tool configuration
-        custom_args = None
-        if scheduled_scan_obj.current_tool.args:
-            custom_args = scheduled_scan_obj.current_tool.args.split(" ")
-
-        # Get all the endpoints to scan using the same pattern as NucleiScan and FeroxScan
-        # Filter to only base URLs (skip non-default paths)
-        all_endpoint_port_obj_map = scheduled_scan_obj.scan_data.get_urls()
-        endpoint_port_obj_map = {}
-
-        # Filter URLs to only include base URLs (path is None or "/")
-        for url, port_data in all_endpoint_port_obj_map.items():
-            # Only include URLs with no specific path or root path
-            if port_data.get('path') is None or port_data.get('path') == '/':
-                endpoint_port_obj_map[url] = port_data
-
-        # Also get any custom scope URLs
-        scope_obj = scheduled_scan_obj.scan_data
-        url_list = scope_obj.get_scope_urls()
-
-        futures = []
-
-        # Process the filtered endpoint URLs
-        for url_str, url_metadata in endpoint_port_obj_map.items():
-            port_id = url_metadata.get('port_id')
-            http_endpoint_id = url_metadata.get('http_endpoint_id')
-
-            url_obj = {
-                'port_id': port_id,
-                'http_endpoint_id': http_endpoint_id,
-                'url': url_str,
-                'custom_args': custom_args
-            }
+    if len(endpoint_port_obj_map) == 0 and len(url_list) > 0:
+        for url in url_list:
+            url_obj = {'port_id': None, 'http_endpoint_id': None, 'url': url,
+                       'custom_args': custom_args}
             future_inst = queue_scan(url_obj)
             if future_inst:
                 futures.append(future_inst)
 
-        # Process custom scope URLs if no endpoint URLs found
-        if len(endpoint_port_obj_map) == 0 and len(url_list) > 0:
-            for url in url_list:
-                url_obj = {'port_id': None,
-                           'http_endpoint_id': None, 'url': url,
-                           'custom_args': custom_args}
-                future_inst = queue_scan(url_obj)
-                if future_inst:
-                    futures.append(future_inst)
+    if len(futures) == 0:
+        logging.getLogger(__name__).debug("No targets to scan for CrapSecrets")
 
-        if len(futures) == 0:
-            logging.getLogger(__name__).debug(
-                "No targets to scan for CrapSecrets")
+    if len(futures) > 0:
+        scan_proc_inst = data_model.ToolExecutor(futures)
+        scheduled_scan_obj.register_tool_executor(
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+        for future in futures:
+            ret_obj = future.result()
+            if ret_obj:
+                output_file_list.append(ret_obj)
+    else:
+        logging.getLogger(__name__).debug("No targets to scan for CrapSecrets")
 
-        # If there are any futures, wait for them to complete
-        if len(futures) > 0:
-            scan_proc_inst = data_model.ToolExecutor(futures)
-            scheduled_scan_obj.register_tool_executor(
-                scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+    results_dict = {'output_list': output_file_list}
+    with open(output_file_path, 'w') as file_fd:
+        file_fd.write(json.dumps(results_dict))
 
-            # Wait for the tasks to complete and retrieve results
-            for future in futures:
-                ret_obj = future.result()
-                if ret_obj:
-                    output_file_list.append(ret_obj)
-        else:
-            logging.getLogger(__name__).debug(
-                "No targets to scan for CrapSecrets")
 
-        results_dict = {'output_list': output_file_list}
+def crapsecrets_scan_func(scan_input) -> bool:
+    try:
+        execute_scan(scan_input)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "crapsecrets scan failed: %s", e, exc_info=True)
+        return False
 
-        # Write output file
-        with open(output_file_path, 'w') as file_fd:
-            file_fd.write(json.dumps(results_dict))
+
+def crapsecrets_import(scan_input) -> bool:
+    try:
+        output_path = get_output_path(scan_input)
+        if not os.path.exists(output_path):
+            return True
+        if _import_already_done(scan_input, output_path):
+            return True
+        scheduled_scan_obj = scan_input
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+        tool_id = scheduled_scan_obj.current_tool.id
+        ret_arr = parse_crapsecrets_output(
+            output_path, tool_instance_id, tool_id)
+        _import_results(scan_input, ret_arr, output_path)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "crapsecrets import failed: %s", e, exc_info=True)
+        return False
 
 
 def parse_crapsecrets_output(output_file, tool_instance_id, tool_id):
@@ -614,107 +458,3 @@ def parse_crapsecrets_output(output_file, tool_instance_id, tool_id):
     return ret_arr
 
 
-@inherits(CrapSecretsScan)
-class ImportCrapSecretsOutput(data_model.ImportToolXOutput):
-    """
-    Luigi task for importing and processing CrapSecrets vulnerability scan results.
-
-    This task handles the post-processing of CrapSecrets vulnerability outputs,
-    parsing scan results, extracting vulnerability details, and importing findings
-    into the database structure with proper categorization and severity assessment.
-
-    The class inherits from both CrapSecretsScan (via @inherits decorator) and
-    ImportToolXOutput, providing access to scan parameters and import functionality.
-
-    Processing includes:
-        - Loading vulnerability scan results from JSON output files
-        - Parsing SecretFound findings with detailed vulnerability information
-        - Creating database objects for vulnerabilities with proper classification
-        - Handling both existing endpoints and new target object creation
-        - Comprehensive vulnerability detail extraction and storage
-
-    Attributes:
-        Inherits all attributes from CrapSecretsScan including scan_input parameter
-
-    Methods:
-        requires: Specifies that CrapSecretsScan must complete before import
-        run: Processes vulnerability findings and imports results to database
-
-    Example:
-        >>> import_task = ImportCrapSecretsOutput(scan_input=scan_obj)
-        >>> luigi.build([import_task])  # Runs CrapSecretsScan then ImportCrapSecretsOutput
-
-    Note:
-        This task automatically depends on CrapSecretsScan completion and processes
-        all vulnerability findings with detailed categorization including vulnerability
-        names, descriptions, and affected cryptographic secrets.
-    """
-
-    def requires(self) -> CrapSecretsScan:
-        """
-        Define task dependencies for the import operation.
-
-        Ensures that the CrapSecretsScan task completes successfully before attempting
-        to import and process the cryptographic vulnerability scan results.
-
-        Returns:
-            CrapSecretsScan: The vulnerability scanning task that must complete before import
-
-        Example:
-            >>> task = ImportCrapSecretsOutput(scan_input=scan_obj)
-            >>> deps = task.requires()
-            >>> print(type(deps).__name__)
-            CrapSecretsScan
-        """
-        # Requires CrapSecretsScan Task to be run prior
-        return CrapSecretsScan(scan_input=self.scan_input)
-
-    def run(self) -> None:
-        """
-        Process and import CrapSecrets cryptographic vulnerability results into the database.
-
-        This method performs comprehensive processing of vulnerability scan findings,
-        including vulnerability classification, detail extraction, and database object
-        creation. It handles the complete import workflow from JSON parsing to database
-        insertion with proper vulnerability categorization.
-
-        The processing workflow includes:
-        - Loading vulnerability scan results from JSON output files
-        - Parsing findings with cryptographic vulnerability details
-        - Extracting vulnerability names, descriptions, and affected secrets
-        - Creating database objects for vulnerabilities with proper relationships
-        - Handling new target creation for URLs not in existing scope
-        - Comprehensive vulnerability detail storage and classification
-
-        Returns:
-            None: Results are imported directly into the database via import_results()
-
-        Side Effects:
-            - Creates database records for vulnerabilities with detailed information
-            - May create new host, port, and endpoint objects for discovered targets
-            - Processes all vulnerability findings from the preceding CrapSecretsScan task
-            - Updates vulnerability database with cryptographic weakness information
-
-        Raises:
-            json.JSONDecodeError: If scan output files contain invalid JSON
-            FileNotFoundError: If expected vulnerability output files are missing
-            KeyError: If required fields are missing from vulnerability findings
-            Exception: Various exceptions related to vulnerability processing or database operations
-
-        Example:
-            >>> task = ImportCrapSecretsOutput(scan_input=scan_obj)
-            >>> task.run()  # Processes and imports all vulnerability findings
-
-        Note:
-            The method processes output from the crapsecrets CLI tool and extracts
-            detailed vulnerability information from the structured findings.
-            For new URLs not in the existing scope, it creates appropriate database
-            objects using the create_port_objs helper function.
-        """
-
-        scheduled_scan_obj = self.scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        tool_id = scheduled_scan_obj.current_tool.id
-        ret_arr = parse_crapsecrets_output(
-            self.input().path, tool_instance_id, tool_id)
-        self.import_results(scheduled_scan_obj, ret_arr)

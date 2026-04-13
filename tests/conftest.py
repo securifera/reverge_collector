@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from waluigi.data_model import WaluigiTool
 from waluigi.recon_manager import ReconManager
+from waluigi.api_client import ApiClient
 
 
 @pytest.fixture(autouse=True)
@@ -12,7 +13,7 @@ def change_test_dir(monkeypatch):
 
 @pytest.fixture
 def mock_update_collector_and_session_key():
-    with patch.object(ReconManager, 'update_collector',
+    with patch.object(ApiClient, 'update_collector',
                       return_value={'tool_name_id_map': {'masscan': '323482209708942791672081599309763638881',
                                                          'subfinder': '323482209708942791672081599309763638882',
                                                          'httpx': '323482209708942791672081599309763638883',
@@ -30,9 +31,9 @@ def mock_update_collector_and_session_key():
                                                          'netexec': '323482209708942791672081599309763638895',
                                                          'metasploit': '323482209708942791672081599309763638896',
                                                          'sqlmap': '323482209708942791672081599309763638897'}}) as mock_update_collector, \
-            patch.object(ReconManager, '_get_session_key', return_value='mock_session_key') as mock_get_session_key, \
+            patch.object(ApiClient, '_init_session_key', return_value=b'mock_session_key') as mock_init_session_key, \
             patch.object(ReconManager, 'update_scan_status', return_value=''):
-        yield mock_update_collector, mock_get_session_key
+        yield mock_update_collector, mock_init_session_key
 
 
 @pytest.fixture

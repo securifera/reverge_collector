@@ -23,7 +23,6 @@ from functools import partial
 import json
 import os
 from typing import Dict, Any, List, Set, Optional, Union
-import luigi
 import hashlib
 import binascii
 import base64
@@ -31,11 +30,14 @@ import netaddr
 import time
 import logging
 
-from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
 from urllib.parse import urlparse
+from waluigi.tool_runner import (
+    import_already_done as _import_already_done,
+    import_results as _import_results,
+)
 
 
 class Httpx(data_model.WaluigiTool):
@@ -103,321 +105,202 @@ class Httpx(data_model.WaluigiTool):
             data_model.ServerRecordType.PORT,
             data_model.ServerRecordType.HOST
         ]
-        self.scan_func = Httpx.httpx_scan_func
-        self.import_func = Httpx.httpx_import
-
-    @staticmethod
-    def httpx_scan_func(scan_input: data_model.ScheduledScan) -> bool:
-        """
-        Execute HTTPX web scan.
-
-        Initiates an HTTPX scan using Luigi task orchestration. The scan targets
-        web services and applications, probing for HTTP/HTTPS endpoints with
-        comprehensive analysis including technology detection and certificate
-        information.
-
-        Args:
-            scan_input (data_model.ScheduledScan): Scheduled scan configuration
-                containing target information and scan parameters
-
-        Returns:
-            bool: True if scan completed successfully, False otherwise
-
-        Example:
-            >>> scan_input = ScheduledScan(...)
-            >>> success = Httpx.httpx_scan_func(scan_input)
-            >>> print(success)
-            True
-        """
-        luigi_run_result = luigi.build([HttpXScan(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
-
-    @staticmethod
-    def httpx_import(scan_input: data_model.ScheduledScan) -> bool:
-        """
-        Import and process HTTPX scan results.
-
-        Processes the JSON output from completed HTTPX scans, parsing web
-        application information, SSL certificates, technology stacks, and
-        HTTP endpoint data into the data model.
-
-        Args:
-            scan_input (data_model.ScheduledScan): Scheduled scan configuration
-                containing scan results to import
-
-        Returns:
-            bool: True if import completed successfully, False otherwise
-
-        Example:
-            >>> scan_input = ScheduledScan(...)
-            >>> success = Httpx.httpx_import(scan_input)
-            >>> print(success)
-            True
-        """
-        luigi_run_result = luigi.build([ImportHttpXOutput(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
-        return True
+        self.scan_func = httpx_scan_func
+        self.import_func = httpx_import
 
 
-class HttpXScan(luigi.Task):
-    """
-    Luigi task for executing HTTPX web scans.
+def get_output_path(scan_input) -> str:
+    scan_id: str = scan_input.id
+    tool_name: str = scan_input.current_tool.name
+    dir_path: str = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return dir_path + os.path.sep + "httpx_outputs_" + scan_id
 
-    This task orchestrates the execution of HTTPX scans against web endpoints,
-    handling target preparation, parallel scanning, and output collection. The
-    task supports both masscan-optimized scanning and comprehensive web discovery
-    across hosts, domains, and ports.
 
-    The scan process includes:
-    - URL extraction using scan_data.get_urls() when masscan results are available
-    - Port-based URL grouping for optimized parallel scanning
-    - Fallback to traditional host/domain/port enumeration when no masscan data
-    - Parallel HTTPX execution for performance
-    - JSON output collection for import processing
+def execute_scan(scan_input) -> None:
+    output_file_path = get_output_path(scan_input)
+    if os.path.exists(output_file_path):
+        return
 
-    Features:
-    - Technology detection and favicon analysis
-    - SSL/TLS certificate analysis
-    - HTTP response header analysis
-    - Screenshot capture capabilities
-    - Response size and timeout controls
+    scheduled_scan_obj = scan_input
+    output_dir = os.path.dirname(output_file_path)
 
-    Attributes:
-        scan_input (luigi.Parameter): Scheduled scan configuration parameter
+    output_file_list = []
+    scope_obj = scheduled_scan_obj.scan_data
+    port_target_list_map = {}
 
-    Example:
-        >>> scan_task = HttpXScan(scan_input=scheduled_scan)
-        >>> scan_task.run()
-        # Executes HTTPX scan and saves JSON results
-    """
+    script_args = scheduled_scan_obj.current_tool.args
+    if script_args:
+        script_args = script_args.split(" ")
 
-    scan_input: luigi.Parameter = luigi.Parameter()
+    scope_urls = scheduled_scan_obj.scan_data.get_urls()
 
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define output file target for scan results.
+    host_list = scope_obj.get_hosts(
+        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+    domain_list = scope_obj.get_domains(
+        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+    port_list = scope_obj.get_ports(
+        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
 
-        Creates the output file path where scan results metadata will be stored,
-        incorporating scan ID for uniqueness.
+    mass_scan_ran = False
+    for collection_tool in scheduled_scan_obj.collection_tool_map.values():
+        if collection_tool.collection_tool.name == 'masscan':
+            mass_scan_ran = True
+            break
 
-        Returns:
-            luigi.LocalTarget: Output file target for scan results metadata
-
-        Example:
-            >>> task = HttpXScan(scan_input=scan)
-            >>> target = task.output()
-            >>> print(target.path)
-            '/path/to/outputs/httpx_outputs_scan123'
-        """
-        scheduled_scan_obj = self.scan_input
-        scan_id: str = scheduled_scan_obj.id
-
-        # Init directory
-        tool_name: str = scheduled_scan_obj.current_tool.name
-        dir_path: str = scan_utils.init_tool_folder(
-            tool_name, 'outputs', scan_id)
-
-        # Path to output metadata file
-        http_outputs_file: str = dir_path + os.path.sep + "httpx_outputs_" + scan_id
-        return luigi.LocalTarget(http_outputs_file)
-
-    def run(self):
-
-        scheduled_scan_obj = self.scan_input
-
-        # Get output file path
-        output_file_path = self.output().path
-        output_dir = os.path.dirname(output_file_path)
-
-        output_file_list = []
-
-        scope_obj = scheduled_scan_obj.scan_data
-        port_target_list_map = {}
-
-        script_args = scheduled_scan_obj.current_tool.args
-        if script_args:
-            script_args = script_args.split(" ")
-
-        # Use get_urls() to get all URLs and group them by port for HTTPX parallel processing
-        scope_urls = scheduled_scan_obj.scan_data.get_urls()
-
-        host_list = scope_obj.get_hosts(
-            [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
-        domain_list = scope_obj.get_domains(
-            [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
-        port_list = scope_obj.get_ports(
-            [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
-
-        # Check if massscan was already run
-        mass_scan_ran = False
-        for collection_tool in scheduled_scan_obj.collection_tool_map.values():
-            if collection_tool.collection_tool.name == 'masscan':
-                mass_scan_ran = True
-                break
-
-        if mass_scan_ran:
-            # Use get_urls() for masscan optimization - group URLs by port for parallel processing
-            for url_str in scope_urls.keys():
-                # Extract port from URL for grouping
-                port_str = scan_utils.get_url_port(url_str)
+    if mass_scan_ran:
+        for url_str in scope_urls.keys():
+            port_str = scan_utils.get_url_port(url_str)
+            if port_str is None:
+                continue
+            port_str = str(port_str)
+            if port_str in port_target_list_map:
+                url_set = port_target_list_map[port_str]
+            else:
+                url_set = set()
+                port_target_list_map[port_str] = url_set
+            url_set.add(url_str)
+    else:
+        url_list = scope_obj.get_scope_urls()
+        if len(url_list) > 0:
+            for url_inst in url_list:
+                port_str = scan_utils.get_url_port(url_inst)
                 if port_str is None:
                     continue
-
                 port_str = str(port_str)
-
-                # Add to port-based grouping
                 if port_str in port_target_list_map:
-                    url_set = port_target_list_map[port_str]
+                    endpoint_url_set = port_target_list_map[port_str]
                 else:
-                    url_set = set()
-                    port_target_list_map[port_str] = url_set
+                    endpoint_url_set = set()
+                    port_target_list_map[port_str] = endpoint_url_set
+                endpoint_url_set.add(url_inst)
 
-                url_set.add(url_str)
-
-        else:
-
-            url_list = scope_obj.get_scope_urls()
-            if len(url_list) > 0:
-
-                for url_inst in url_list:
-
-                    port_str = scan_utils.get_url_port(url_inst)
-                    if port_str is None:
-                        continue
-
-                    port_str = str(port_str)
-                    # Add to ip set
-                    if port_str in port_target_list_map:
-                        endpoint_url_set = port_target_list_map[port_str]
-                    else:
-                        endpoint_url_set = set()
-                        port_target_list_map[port_str] = endpoint_url_set
-
-                    # Add IP to list
-                    endpoint_url_set.add(url_inst)
-
-            scan_port_list = scope_obj.get_port_number_list_from_scope()
-            if len(scan_port_list) > 0:
-
-                for port_str in scan_port_list:
-
-                    # Add a port entry for each host
-                    for host_obj in host_list:
-                        ip_addr = host_obj.ipv4_addr
-
-                        # Add to ip set
-                        if port_str in port_target_list_map:
-                            ip_set = port_target_list_map[port_str]
-                        else:
-                            ip_set = set()
-                            port_target_list_map[port_str] = ip_set
-
-                        # Add IP to list
-                        ip_set.add(ip_addr)
-
-                    # Add a port entry for each domain
-                    for domain_obj in domain_list:
-                        # domain_obj = domain_map[domain_id]
-                        domain_name = domain_obj.name
-
-                        if port_str in port_target_list_map:
-                            ip_set = port_target_list_map[port_str]
-                        else:
-                            ip_set = set()
-                            port_target_list_map[port_str] = ip_set
-
-                        # Add domain to list
-                        ip_set.add(domain_name)
-
-            elif len(port_list) > 0:
-
-                for port_obj in port_list:
-
-                    url_list = port_obj.get_urls(scope_obj)
-                    # Add to ip set
-                    port_str = str(port_obj.port)
+        scan_port_list = scope_obj.get_port_number_list_from_scope()
+        if len(scan_port_list) > 0:
+            for port_str in scan_port_list:
+                for host_obj in host_list:
+                    ip_addr = host_obj.ipv4_addr
                     if port_str in port_target_list_map:
                         ip_set = port_target_list_map[port_str]
                     else:
                         ip_set = set()
                         port_target_list_map[port_str] = ip_set
+                    ip_set.add(ip_addr)
+                for domain_obj in domain_list:
+                    domain_name = domain_obj.name
+                    if port_str in port_target_list_map:
+                        ip_set = port_target_list_map[port_str]
+                    else:
+                        ip_set = set()
+                        port_target_list_map[port_str] = ip_set
+                    ip_set.add(domain_name)
+        elif len(port_list) > 0:
+            for port_obj in port_list:
+                url_list = port_obj.get_urls(scope_obj)
+                port_str = str(port_obj.port)
+                if port_str in port_target_list_map:
+                    ip_set = port_target_list_map[port_str]
+                else:
+                    ip_set = set()
+                    port_target_list_map[port_str] = ip_set
+                ip_set.update(url_list)
 
-                    ip_set.update(url_list)
+    futures = []
+    for port_str in port_target_list_map:
+        scan_output_file_path = output_dir + os.path.sep + "httpx_out_" + port_str
+        output_file_list.append(scan_output_file_path)
 
-        futures = []
-        for port_str in port_target_list_map:
+        ip_list = port_target_list_map[port_str]
+        scan_input_file_path = output_dir + os.path.sep + "httpx_in_" + port_str
+        with open(scan_input_file_path, 'w') as file_fd:
+            for ip in ip_list:
+                file_fd.write(ip + "\n")
 
-            scan_output_file_path = output_dir + os.path.sep + "httpx_out_" + port_str
-            output_file_list.append(scan_output_file_path)
+        command = []
+        if os.name != 'nt':
+            command.append("sudo")
 
-            ip_list = port_target_list_map[port_str]
+        command_arr = [
+            "/usr/local/bin/httpx",
+            "-json",
+            "-silent",
+            "-irr",
+            "-s",
+            "-sd",
+            "-l",
+            scan_input_file_path,
+            "-o",
+            scan_output_file_path
+        ]
+        command.extend(command_arr)
 
-            # Write ips to file
-            scan_input_file_path = output_dir + os.path.sep + "httpx_in_" + port_str
-            with open(scan_input_file_path, 'w') as file_fd:
-                for ip in ip_list:
-                    file_fd.write(ip + "\n")
+        if script_args and len(script_args) > 0:
+            command.extend(script_args)
 
-            command = []
-            if os.name != 'nt':
-                command.append("sudo")
+        callback_with_tool_id = partial(
+            scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
 
-            command_arr = [
-                "/usr/local/bin/httpx",
-                "-json",
-                "-silent",
-                "-irr",  # Return response so Headers can be parsed
-                # "-ss", Removed from default because it is too memory/cpu intensive for small collectors
-                "-s",  # Stream mode
-                "-sd",  # Disable dedupe
-                "-l",
-                scan_input_file_path,
-                "-o",
-                scan_output_file_path
-            ]
+        futures.append(scan_utils.executor.submit(
+            process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id))
 
-            command.extend(command_arr)
+    scan_proc_inst = data_model.ToolExecutor(futures)
+    scheduled_scan_obj.register_tool_executor(
+        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
-            # Add script args
-            if script_args and len(script_args) > 0:
-                command.extend(script_args)
+    for future in futures:
+        ret_dict = future.result()
+        if ret_dict and 'exit_code' in ret_dict:
+            exit_code = ret_dict['exit_code']
+            if exit_code != 0:
+                err_msg = ''
+                if 'stderr' in ret_dict and ret_dict['stderr']:
+                    err_msg = ret_dict['stderr']
+                logging.getLogger(__name__).error(
+                    "HTTPX scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+                raise RuntimeError("HTTPX scan for scan ID %s exited with code %d: %s" % (
+                    scheduled_scan_obj.id, exit_code, err_msg))
 
-            callback_with_tool_id = partial(
-                scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
+    results_dict = {'output_file_list': output_file_list}
+    with open(output_file_path, 'w') as file_fd:
+        file_fd.write(json.dumps(results_dict))
 
-            # Add process dict to process array
-            futures.append(scan_utils.executor.submit(
-                process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id))
 
-        # Register futures
-        scan_proc_inst = data_model.ToolExecutor(futures)
-        scheduled_scan_obj.register_tool_executor(
-            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+def httpx_scan_func(scan_input) -> bool:
+    try:
+        execute_scan(scan_input)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "httpx scan failed: %s", e, exc_info=True)
+        return False
 
-        # Wait for the tasks to complete and retrieve results
-        for future in futures:
-            ret_dict = future.result()  # This blocks until the individual task is complete
-            if ret_dict and 'exit_code' in ret_dict:
-                exit_code = ret_dict['exit_code']
-                if exit_code != 0:
-                    err_msg = ''
-                    if 'stderr' in ret_dict and ret_dict['stderr']:
-                        err_msg = ret_dict['stderr']
-                    logging.getLogger(__name__).error(
-                        "Nuclei scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
-                    raise RuntimeError("Nuclei scan for scan ID %s exited with code %d: %s" % (
-                        scheduled_scan_obj.id, exit_code, err_msg))
 
-        results_dict = {'output_file_list': output_file_list}
-
-        # Write output file
-        with open(output_file_path, 'w') as file_fd:
-            file_fd.write(json.dumps(results_dict))
+def httpx_import(scan_input) -> bool:
+    try:
+        output_path = get_output_path(scan_input)
+        if not os.path.exists(output_path):
+            return True
+        if _import_already_done(scan_input, output_path):
+            return True
+        scheduled_scan_obj = scan_input
+        scope_obj = scheduled_scan_obj.scan_data
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+        tool_id = scheduled_scan_obj.current_tool.id
+        with open(output_path, 'r') as file_fd:
+            data = file_fd.read()
+        if len(data) == 0:
+            logging.getLogger(__name__).error(
+                "Httpx scan output file is empty")
+            return True
+        scan_data_dict = json.loads(data)
+        output_file_list = scan_data_dict['output_file_list']
+        ret_arr = parse_httpx_output(
+            output_file_list, tool_instance_id, tool_id, scope_obj)
+        _import_results(scan_input, ret_arr, output_path)
+        return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "httpx import failed: %s", e, exc_info=True)
+        return False
 
 
 def parse_httpx_output(
@@ -723,69 +606,3 @@ def parse_httpx_output(
             ret_arr.append(http_endpoint_data_obj)
 
     return ret_arr
-
-
-@inherits(HttpXScan)
-class ImportHttpXOutput(data_model.ImportToolXOutput):
-    """
-    Luigi task for importing and processing HTTPX scan results.
-
-    This task processes the JSON output from HTTPX scans, parsing comprehensive
-    web application information including HTTP endpoints, SSL certificates,
-    technology stacks, screenshots, and response data into the data model.
-
-    The import process extracts:
-    - Host information and IP address resolution
-    - HTTP/HTTPS endpoint data with status codes and titles
-    - SSL/TLS certificates with validity and domain information
-    - Web technologies and component versions
-    - Favicon hashes and screenshot data
-    - HTTP response headers and metadata
-    - Web paths and endpoint relationships
-
-    Attributes:
-        Inherits all attributes from HttpXScan task
-
-    Example:
-        >>> import_task = ImportHttpXOutput(scan_input=scheduled_scan)
-        >>> import_task.run()
-        # Processes and imports HTTPX web application results
-    """
-
-    def requires(self) -> HttpXScan:
-        """
-        Specify task dependencies.
-
-        This task requires the HttpXScan task to complete before it can
-        process the JSON scan results.
-
-        Returns:
-            HttpXScan: The required scan task that must complete first
-        """
-        return HttpXScan(scan_input=self.scan_input)
-        # Requires HttpScan Task to be run prior
-        return HttpXScan(scan_input=self.scan_input)
-
-    def run(self):
-
-        scheduled_scan_obj = self.scan_input
-        scope_obj = scheduled_scan_obj.scan_data
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        tool_obj = scheduled_scan_obj.current_tool
-        tool_id = tool_obj.id
-
-        http_output_file = self.input().path
-        with open(http_output_file, 'r') as file_fd:
-            data = file_fd.read()
-
-        if len(data) == 0:
-            logging.getLogger(__name__).error(
-                "Httpx scan output file is empty")
-            return
-
-        scan_data_dict = json.loads(data)
-        output_file_list = scan_data_dict['output_file_list']
-        ret_arr = parse_httpx_output(
-            output_file_list, tool_instance_id, tool_id, scope_obj)
-
-        self.import_results(scheduled_scan_obj, ret_arr)

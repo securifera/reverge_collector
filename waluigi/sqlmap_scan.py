@@ -48,14 +48,16 @@ from functools import partial
 import json
 import os
 from typing import Dict, Any, Set, Optional, List
-import luigi
 import logging
 import random
 
-from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
+from waluigi.tool_runner import (
+    import_already_done as _import_already_done,
+    import_results as _import_results,
+)
 
 # Global URL tracking set to prevent duplicate scanning
 url_set: Set[str] = set()
@@ -136,216 +138,134 @@ class Sqlmap(data_model.WaluigiTool):
 
     @staticmethod
     def sqlmap_scan_func(scan_input: Any) -> bool:
-        """
-        Execute SQLMap SQL injection scanning operations.
-
-        This static method serves as the entry point for executing SQLMap scans
-        within the Waluigi framework. It builds and runs the SqlmapScan Luigi task
-        with the provided scan input configuration.
-
-        Args:
-            scan_input (Any): The scan input object containing target information,
-                            tool configuration, and execution parameters
-
-        Returns:
-            bool: True if the scan completed successfully, False otherwise
-
-        Example:
-            >>> scan_obj = create_scan_input(...)
-            >>> success = Sqlmap.sqlmap_scan_func(scan_obj)
-            >>> print(f"Scan successful: {success}")
-        """
-        luigi_run_result = luigi.build(
-            [SqlmapScan(scan_input=scan_input)],
-            local_scheduler=True,
-            detailed_summary=True,
-        )
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
+        try:
+            execute_scan(scan_input)
+            return True
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                "SQLMap scan failed: %s", e, exc_info=True)
             return False
-        return True
 
     @staticmethod
     def sqlmap_import(scan_input: Any) -> bool:
-        """
-        Import and process SQLMap scan results.
-
-        This static method handles the import phase of the scanning workflow,
-        processing SQLMap output files and importing discovered SQL injection
-        vulnerabilities into the database structure.
-
-        Args:
-            scan_input (Any): The scan input object containing configuration
-                            and metadata for the import operation
-
-        Returns:
-            bool: True if the import completed successfully, False otherwise
-
-        Example:
-            >>> imported = Sqlmap.sqlmap_import(scan_obj)
-            >>> print(f"Import successful: {imported}")
-        """
-        luigi_run_result = luigi.build(
-            [ImportSqlmapOutput(scan_input=scan_input)],
-            local_scheduler=True,
-            detailed_summary=True,
-        )
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
+        try:
+            output_path = get_output_path(scan_input)
+            if not os.path.exists(output_path):
+                return True
+            if _import_already_done(scan_input, output_path):
+                return True
+            scheduled_scan_obj = scan_input
+            tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+            ret_arr = parse_sqlmap_output(output_path, tool_instance_id)
+            _import_results(scan_input, ret_arr, output_path)
+            return True
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                "SQLMap import failed: %s", e, exc_info=True)
             return False
-        return True
 
 
-class SqlmapScan(luigi.Task):
-    """
-    Luigi task for executing SQLMap SQL injection scanning operations.
+def get_output_path(scan_input: Any) -> str:
+    scan_id = scan_input.id
+    tool_name = scan_input.current_tool.name
+    dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return dir_path + os.path.sep + "sqlmap_outputs_" + scan_id
 
-    This task orchestrates the execution of SQLMap scans against web targets,
-    managing input parameters, output file generation, and execution flow within
-    the Luigi workflow framework.  It uses the same URL extraction pattern as
-    NucleiScan and FeroxScan, leveraging get_urls() to collect all reachable
-    HTTP endpoints as targets.
 
-    Attributes:
-        scan_input (luigi.Parameter): The scan input object containing target
-                                     information and configuration parameters
+def execute_scan(scan_input: Any) -> None:
+    output_file_path = get_output_path(scan_input)
+    if os.path.exists(output_file_path):
+        return
 
-    Methods:
-        output: Defines the output file target for the scan results
-        run: Executes the actual SQLMap scanning operation
+    global url_set
+    url_set = set()
 
-    Example:
-        >>> task = SqlmapScan(scan_input=scan_obj)
-        >>> luigi.build([task])
+    scheduled_scan_obj = scan_input
 
-    Note:
-        Unlike FeroxScan, all URLs (including those with non-root paths) are
-        included as targets, since SQL injection testing is relevant for any
-        URL that may accept parameters.
-    """
+    # Resolve output paths
+    output_dir = os.path.dirname(output_file_path)
 
-    scan_input = luigi.Parameter()
+    url_to_id_map: Dict[str, Dict[str, Any]] = {}
 
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define the output file target for SQLMap scan results.
+    tool_args = scheduled_scan_obj.current_tool.args
+    if tool_args:
+        tool_args = tool_args.split()
 
-        Returns:
-            luigi.LocalTarget: A Luigi target representing the output file where
-                             the URL-to-output-file mapping will be stored
-        """
-        scheduled_scan_obj = self.scan_input
-        scan_id = scheduled_scan_obj.id
+    # Collect all URLs using the same pattern as NucleiScan / FeroxScan
+    endpoint_url_map = scheduled_scan_obj.scan_data.get_urls()
 
-        # Initialise output directory
-        tool_name = scheduled_scan_obj.current_tool.name
-        dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    for url_str, url_metadata in endpoint_url_map.items():
+        host_id = url_metadata.get('host_id')
+        port_id = url_metadata.get('port_id')
 
-        scan_outputs_file = dir_path + os.path.sep + "sqlmap_outputs_" + scan_id
-        return luigi.LocalTarget(scan_outputs_file)
-
-    def run(self) -> None:
-        """
-        Execute the SQLMap SQL injection scanning operation.
-
-        Collects all target URLs via scan_data.get_urls(), launches one SQLMap
-        process per URL, captures stdout to individual output files, and writes
-        a consolidated JSON manifest for the import phase.
-
-        Returns:
-            None: Results are written to the output file specified by self.output()
-
-        Raises:
-            RuntimeError: If any SQLMap process exits with a non-zero exit code
-        """
-        global url_set
-        url_set = set()
-
-        scheduled_scan_obj = self.scan_input
-
-        # Resolve output paths
-        output_file_path = self.output().path
-        output_dir = os.path.dirname(output_file_path)
-
-        url_to_id_map: Dict[str, Dict[str, Any]] = {}
-
-        tool_args = scheduled_scan_obj.current_tool.args
-        if tool_args:
-            tool_args = tool_args.split()
-
-        # Collect all URLs using the same pattern as NucleiScan / FeroxScan
-        endpoint_url_map = scheduled_scan_obj.scan_data.get_urls()
-
-        for url_str, url_metadata in endpoint_url_map.items():
-            host_id = url_metadata.get('host_id')
-            port_id = url_metadata.get('port_id')
-
-            if url_str and url_str not in url_set:
-                url_set.add(url_str)
-                rand_str = str(random.randint(1000000, 2000000))
-                scan_output_file_path = (
-                    output_dir + os.path.sep + "sqlmap_out_" + rand_str
-                )
-                url_to_id_map[url_str] = {
-                    'port_id': port_id,
-                    'host_id': host_id,
-                    'output_file': scan_output_file_path,
-                }
-
-        futures = []
-        for target_url, target_meta in url_to_id_map.items():
-            scan_output_file_path = target_meta['output_file']
-
-            command = []
-            if os.name != 'nt':
-                command.append("sudo")
-
-            command.extend([
-                "python3",
-                SQLMAP_PATH,
-                "-u", target_url,
-            ])
-
-            if tool_args and len(tool_args) > 0:
-                command.extend(tool_args)
-
-            callback_with_tool_id = partial(
-                scheduled_scan_obj.register_tool_executor,
-                scheduled_scan_obj.current_tool_instance_id,
+        if url_str and url_str not in url_set:
+            url_set.add(url_str)
+            rand_str = str(random.randint(1000000, 2000000))
+            scan_output_file_path = (
+                output_dir + os.path.sep + "sqlmap_out_" + rand_str
             )
+            url_to_id_map[url_str] = {
+                'port_id': port_id,
+                'host_id': host_id,
+                'output_file': scan_output_file_path,
+            }
 
-            futures.append(scan_utils.executor.submit(
-                process_wrapper,
-                cmd_args=command,
-                pid_callback=callback_with_tool_id,
-                stdout_file=scan_output_file_path,
-            ))
+    futures = []
+    for target_url, target_meta in url_to_id_map.items():
+        scan_output_file_path = target_meta['output_file']
 
-        # Register all futures as a single ToolExecutor
-        scan_proc_inst = data_model.ToolExecutor(futures)
-        scheduled_scan_obj.register_tool_executor(
-            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst
+        command = []
+        if os.name != 'nt':
+            command.append("sudo")
+
+        command.extend([
+            "python3",
+            SQLMAP_PATH,
+            "-u", target_url,
+        ])
+
+        if tool_args and len(tool_args) > 0:
+            command.extend(tool_args)
+
+        callback_with_tool_id = partial(
+            scheduled_scan_obj.register_tool_executor,
+            scheduled_scan_obj.current_tool_instance_id,
         )
 
-        results_dict = {'url_to_id_map': url_to_id_map}
+        futures.append(scan_utils.executor.submit(
+            process_wrapper,
+            cmd_args=command,
+            pid_callback=callback_with_tool_id,
+            stdout_file=scan_output_file_path,
+        ))
 
-        # Write manifest file consumed by the import phase
-        with open(output_file_path, 'w') as file_fd:
-            file_fd.write(json.dumps(results_dict))
+    # Register all futures as a single ToolExecutor
+    scan_proc_inst = data_model.ToolExecutor(futures)
+    scheduled_scan_obj.register_tool_executor(
+        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst
+    )
 
-        # Wait for all scan processes to complete
-        for future in futures:
-            ret_dict = future.result()
-            if ret_dict and 'exit_code' in ret_dict:
-                exit_code = ret_dict['exit_code']
-                if exit_code != 0:
-                    err_msg = ret_dict.get('stderr', '')
-                    logging.getLogger(__name__).error(
-                        "SQLMap scan for scan ID %s exited with code %d: %s"
-                        % (scheduled_scan_obj.id, exit_code, err_msg)
-                    )
-                    raise RuntimeError(
-                        "SQLMap scan for scan ID %s exited with code %d: %s"
-                        % (scheduled_scan_obj.id, exit_code, err_msg)
-                    )
+    results_dict = {'url_to_id_map': url_to_id_map}
+
+    # Write manifest file consumed by the import phase
+    with open(output_file_path, 'w') as file_fd:
+        file_fd.write(json.dumps(results_dict))
+
+    # Wait for all scan processes to complete
+    for future in futures:
+        ret_dict = future.result()
+        if ret_dict and 'exit_code' in ret_dict:
+            exit_code = ret_dict['exit_code']
+            if exit_code != 0:
+                err_msg = ret_dict.get('stderr', '')
+                logging.getLogger(__name__).error(
+                    "SQLMap scan for scan ID %s exited with code %d: %s"
+                    % (scheduled_scan_obj.id, exit_code, err_msg)
+                )
+                raise RuntimeError(
+                    "SQLMap scan for scan ID %s exited with code %d: %s"
+                    % (scheduled_scan_obj.id, exit_code, err_msg)
+                )
 
 
 def _extract_vuln_details(content: str, url: str) -> str:
@@ -438,53 +358,3 @@ def parse_sqlmap_output(
 
     return ret_arr
 
-
-@inherits(SqlmapScan)
-class ImportSqlmapOutput(data_model.ImportToolXOutput):
-    """
-    Luigi task for importing and processing SQLMap scan results.
-
-    This task handles the post-processing of SQLMap scan outputs, parsing
-    stdout captures for SQL injection indicators and importing any discovered
-    vulnerabilities into the database structure.
-
-    The class inherits from both SqlmapScan (via @inherits decorator) and
-    ImportToolXOutput, providing access to scan parameters and import functionality.
-
-    Methods:
-        requires: Specifies that SqlmapScan must complete before import
-        run: Processes scan output files and imports results to database
-
-    Example:
-        >>> import_task = ImportSqlmapOutput(scan_input=scan_obj)
-        >>> luigi.build([import_task])  # Runs SqlmapScan then ImportSqlmapOutput
-    """
-
-    def requires(self) -> SqlmapScan:
-        """
-        Define task dependencies for the import operation.
-
-        Ensures that SqlmapScan completes successfully before attempting
-        to process and import the scan results.
-
-        Returns:
-            SqlmapScan: The scanning task that must complete before import
-        """
-        return SqlmapScan(scan_input=self.scan_input)
-
-    def run(self) -> None:
-        """
-        Process and import SQLMap scan results into the database.
-
-        Reads the manifest produced by SqlmapScan, parses each per-URL stdout
-        capture for SQL injection indicators, and imports any discovered Vuln
-        records via self.import_results().
-
-        Returns:
-            None: Results are imported directly into the database via
-                  self.import_results()
-        """
-        scheduled_scan_obj = self.scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        ret_arr = parse_sqlmap_output(self.input().path, tool_instance_id)
-        self.import_results(scheduled_scan_obj, ret_arr)

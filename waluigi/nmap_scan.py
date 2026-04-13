@@ -26,17 +26,19 @@ import shutil
 import time
 from datetime import datetime
 from typing import Dict, Any, List, Set, Optional, Union
-import luigi
 import netaddr
 import traceback
 import logging
 
 from libnmap.parser import NmapParser
-from luigi.util import inherits
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi import tool_utils
 from waluigi.proc_utils import process_wrapper
+from waluigi.tool_runner import (
+    import_already_done as _import_already_done,
+    import_results as _import_results,
+)
 
 
 class Nmap(data_model.WaluigiTool):
@@ -85,8 +87,8 @@ class Nmap(data_model.WaluigiTool):
         self.collector_type: str = data_model.CollectorType.ACTIVE.value
         self.scan_order: int = 6
         self.args: str = "-sT -sV --script +ssl-cert --script-args ssl=True"
-        self.scan_func = Nmap.nmap_scan_func
-        self.import_func = Nmap.nmap_import
+        self.scan_func = nmap_scan_func
+        self.import_func = nmap_import
         self.modules_func = Nmap.nmap_modules
         self.input_records = [
             data_model.ServerRecordType.SUBNET, data_model.ServerRecordType.HOST, data_model.ServerRecordType.PORT]
@@ -220,117 +222,272 @@ class Nmap(data_model.WaluigiTool):
 
         return modules
 
-    @staticmethod
-    def nmap_scan_func(scan_input: data_model.ScheduledScan) -> bool:
-        """
-        Execute Nmap network scan.
 
-        Initiates an Nmap scan using Luigi task orchestration. The scan targets
-        are processed from the scheduled scan input, with intelligent optimization
-        based on previous masscan results when available.
+def get_output_path(scan_input) -> str:
+    scan_id: str = scan_input.id
+    tool_name: str = scan_input.current_tool.name
+    dir_path: str = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return dir_path + os.path.sep + "nmap_scan_" + scan_id + ".meta"
 
-        Args:
-            scan_input (data_model.ScheduledScan): Scheduled scan configuration
-                containing target information and scan parameters
 
-        Returns:
-            bool: True if scan completed successfully, False otherwise
+def execute_scan(scan_input) -> None:
+    meta_file_path: str = get_output_path(scan_input)
+    if os.path.exists(meta_file_path):
+        return
 
-        Example:
-            >>> scan_input = ScheduledScan(...)
-            >>> success = Nmap.nmap_scan_func(scan_input)
-            >>> print(success)
-            True
-        """
-        luigi_run_result = luigi.build([NmapScan(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
+    scheduled_scan_obj = scan_input
+    selected_interface = scheduled_scan_obj.selected_interface
+    dir_path: str = os.path.dirname(meta_file_path)
+    scope_obj = scheduled_scan_obj.scan_data
+
+    nmap_scan_data: Optional[Dict[str, Any]] = None
+    nmap_scan_args: Optional[List[str]] = None
+    if scheduled_scan_obj.current_tool.args:
+        nmap_scan_args = scheduled_scan_obj.current_tool.args.split(" ")
+
+    mass_scan_ran: bool = False
+    for collection_tool in scheduled_scan_obj.collection_tool_map.values():
+        if collection_tool.collection_tool.name == 'masscan':
+            mass_scan_ran = True
+            break
+
+    nmap_scan_list: List[Dict[str, Any]] = []
+    scan_port_map: Dict[str, Dict[str, Any]] = {}
+
+    if mass_scan_ran:
+        target_map: Dict[str, Dict[str, Any]] = scope_obj.host_port_obj_map
+        for target_key in target_map:
+            target_obj_dict = target_map[target_key]
+            port_obj = target_obj_dict['port_obj']
+            port_str: str = port_obj.port
+            host_obj = target_obj_dict['host_obj']
+            ip_addr: str = host_obj.ipv4_addr
+            if port_str in scan_port_map:
+                scan_obj = scan_port_map[port_str]
+            else:
+                scan_obj: Dict[str, Any] = {
+                    'port_list': [str(port_str)],
+                    'tool_args': nmap_scan_args,
+                    'resolve_dns': False
+                }
+                scan_port_map[port_str] = scan_obj
+            if 'ip_set' not in scan_obj:
+                scan_obj['ip_set'] = set()
+            ip_set: Set[str] = scan_obj['ip_set']
+            ip_set.add(ip_addr)
+            target_arr: List[str] = target_key.split(":")
+            if target_arr[0] != ip_addr:
+                domain_str: str = target_arr[0]
+                scan_obj['resolve_dns'] = True
+                ip_set.add(domain_str)
+        nmap_scan_list.extend(list(scan_port_map.values()))
+    else:
+        target_map = scope_obj.host_port_obj_map
+        port_num_list: List[str] = scope_obj.get_port_number_list_from_scope()
+        subnet_map: Dict[int, Any] = scope_obj.subnet_map
+        if len(subnet_map) > 0:
+            for subnet_id in subnet_map:
+                subnet_obj = subnet_map[subnet_id]
+                subnet_str: str = "%s/%s" % (subnet_obj.subnet,
+                                             subnet_obj.mask)
+                scan_obj: Dict[str, Any] = {
+                    'ip_set': [subnet_str],
+                    'tool_args': nmap_scan_args,
+                    'resolve_dns': False,
+                    'port_list': list(set(port_num_list))
+                }
+                nmap_scan_list.append(scan_obj)
+        elif len(target_map) > 0:
+            for target_key in target_map:
+                target_obj_dict = target_map[target_key]
+                port_obj = target_obj_dict['port_obj']
+                port_str = port_obj.port
+                host_obj = target_obj_dict['host_obj']
+                ip_addr = host_obj.ipv4_addr
+                if port_str in scan_port_map:
+                    scan_obj = scan_port_map[port_str]
+                else:
+                    scan_obj = {
+                        'port_list': [str(port_str)],
+                        'tool_args': nmap_scan_args,
+                        'resolve_dns': False
+                    }
+                    scan_port_map[port_str] = scan_obj
+                if 'ip_set' not in scan_obj:
+                    scan_obj['ip_set'] = set()
+                ip_set = scan_obj['ip_set']
+                ip_set.add(ip_addr)
+                target_arr = target_key.split(":")
+                if target_arr[0] != ip_addr:
+                    domain_str = target_arr[0]
+                    scan_obj['resolve_dns'] = True
+                    ip_set.add(domain_str)
+            nmap_scan_list.extend(list(scan_port_map.values()))
+        else:
+            if len(port_num_list) > 0:
+                scan_obj: Dict[str, Any] = {}
+                target_set: Set[str] = set()
+                resolve_dns: bool = False
+                host_list = scope_obj.get_hosts(
+                    [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+                for host_obj in host_list:
+                    ip_addr = host_obj.ipv4_addr
+                    target_set.add(ip_addr)
+                    if host_obj.id in scope_obj.domain_host_id_map:
+                        temp_domain_list = scope_obj.domain_host_id_map[host_obj.id]
+                        if len(temp_domain_list) > 0:
+                            resolve_dns = True
+                            for domain_obj in temp_domain_list:
+                                domain_name: str = domain_obj.name
+                                target_set.add(domain_name)
+                domain_list = scope_obj.get_domains(
+                    [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+                for domain_obj in domain_list:
+                    domain_name = domain_obj.name
+                    target_set.add(domain_name)
+                scan_obj['ip_set'] = target_set
+                scan_obj['tool_args'] = nmap_scan_args
+                scan_obj['resolve_dns'] = resolve_dns
+                scan_obj['port_list'] = list(set(port_num_list))
+                nmap_scan_list.append(scan_obj)
+
+    nmap_scan_cmd_list: List[Dict[str, Any]] = []
+    nmap_scan_data = {}
+    counter: int = 0
+    futures: List[Any] = []
+
+    for scan_obj in nmap_scan_list:
+        nmap_scan_inst: Dict[str, Any] = {}
+        script_args: Optional[List[str]] = scan_obj.get('tool_args')
+        port_list: List[str] = scan_obj['port_list']
+        port_comma_list: str = ','.join(port_list)
+        ip_list_path: str = dir_path + os.path.sep + "nmap_in_" + str(counter)
+        ip_list: Union[Set[str], List[str]] = scan_obj['ip_set']
+        if len(ip_list) == 0:
+            continue
+        with open(ip_list_path, 'w') as in_file_fd:
+            for ip in ip_list:
+                in_file_fd.write(ip + "\n")
+        nmap_output_xml_file: str = dir_path + \
+            os.path.sep + "nmap_out_" + str(counter)
+        command: List[str] = []
+        if os.name != 'nt':
+            command.append("sudo")
+        command_arr: List[str] = [
+            "nmap",
+            "-v",
+            "-Pn",
+            "--open",
+            "--host-timeout",
+            "30m",
+            "--script-timeout",
+            "2m",
+            "--script-args",
+            'http.useragent="%s"' % scan_utils.custom_user_agent,
+            "-p",
+            port_comma_list,
+            "-oX",
+            nmap_output_xml_file,
+            "-iL",
+            ip_list_path
+        ]
+        if selected_interface:
+            int_name: str = selected_interface.name.strip()
+            command_arr.extend(['-e', int_name])
+        command.extend(command_arr)
+        resolve_dns: bool = scan_obj['resolve_dns']
+        if not resolve_dns:
+            command.append("-n")
+        if script_args and len(script_args) > 0:
+            command.extend(script_args)
+        nmap_scan_inst['nmap_command'] = command
+        nmap_scan_inst['output_file'] = nmap_output_xml_file
+        nmap_scan_cmd_list.append(nmap_scan_inst)
+        callback_with_tool_id = partial(
+            scheduled_scan_obj.register_tool_executor,
+            scheduled_scan_obj.current_tool_instance_id)
+        futures.append(scan_utils.executor.submit(
+            process_wrapper,
+            cmd_args=command,
+            pid_callback=callback_with_tool_id))
+        counter += 1
+
+    if len(futures) > 0:
+        scan_proc_inst = data_model.ToolExecutor(futures)
+        scheduled_scan_obj.register_tool_executor(
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+        for future in futures:
+            ret_dict = future.result()
+            if ret_dict and 'exit_code' in ret_dict:
+                exit_code = ret_dict['exit_code']
+                if exit_code != 0:
+                    err_msg = ''
+                    if 'stderr' in ret_dict and ret_dict['stderr']:
+                        err_msg = ret_dict['stderr']
+                    logging.getLogger(__name__).error(
+                        "Nmap scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+                    raise RuntimeError("Nmap scan for scan ID %s exited with code %d: %s" % (
+                        scheduled_scan_obj.id, exit_code, err_msg))
+
+    nmap_scan_data['nmap_scan_list'] = nmap_scan_cmd_list
+    if nmap_scan_data:
+        with open(meta_file_path, 'w') as meta_file_fd:
+            meta_file_fd.write(json.dumps(nmap_scan_data))
+
+
+def nmap_scan_func(scan_input) -> bool:
+    try:
+        execute_scan(scan_input)
         return True
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "nmap scan failed: %s", e, exc_info=True)
+        return False
 
-    @staticmethod
-    def nmap_import(scan_input: data_model.ScheduledScan) -> bool:
-        """
-        Import and process Nmap scan results.
 
-        Processes the XML output from completed Nmap scans, parsing detailed
-        host information, open ports, services, SSL certificates, and script
-        results into the data model.
-
-        Args:
-            scan_input (data_model.ScheduledScan): Scheduled scan configuration
-                containing scan results to import
-
-        Returns:
-            bool: True if import completed successfully, False otherwise
-
-        Example:
-            >>> scan_input = ScheduledScan(...)
-            >>> success = Nmap.nmap_import(scan_input)
-            >>> print(success)
-            True
-        """
-        luigi_run_result = luigi.build([ImportNmapOutput(
-            scan_input=scan_input)], local_scheduler=True, detailed_summary=True)
-        if luigi_run_result and luigi_run_result.status != luigi.execution_summary.LuigiStatusCode.SUCCESS:
-            return False
+def nmap_import(scan_input) -> bool:
+    try:
+        meta_file = get_output_path(scan_input)
+        if not os.path.exists(meta_file):
+            return True
+        if _import_already_done(scan_input, meta_file):
+            return True
+        scheduled_scan_obj = scan_input
+        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
+        scope_obj = scheduled_scan_obj.scan_data
+        tool_id = scheduled_scan_obj.current_tool.id
+        ret_arr: List[Any] = []
+        with open(meta_file) as file_fd:
+            json_input = file_fd.read()
+        if json_input:
+            nmap_scan_obj = json.loads(json_input)
+            for nmap_scan_entry in nmap_scan_obj['nmap_scan_list']:
+                nmap_out = nmap_scan_entry['output_file']
+                try:
+                    if os.path.exists(nmap_out) and os.path.getsize(nmap_out) > 0:
+                        ret_arr.extend(
+                            parse_nmap_xml(nmap_out, scope_obj,
+                                           tool_instance_id, tool_id)
+                        )
+                    else:
+                        logging.getLogger(__name__).warning(
+                            f"Skipping nmap output file {nmap_out}: file does not exist or is empty."
+                        )
+                except Exception:
+                    logging.getLogger(__name__).error(
+                        "Failed parsing nmap output: %s" % nmap_out)
+                    logging.getLogger(__name__).error(traceback.format_exc())
+                    try:
+                        shutil.rmtree(os.path.dirname(meta_file))
+                    except Exception:
+                        pass
+                    raise
+        _import_results(scan_input, ret_arr, meta_file)
         return True
-
-
-class NmapScan(luigi.Task):
-    """
-    Luigi task for executing Nmap network scans.
-
-    This task orchestrates the execution of Nmap scans against target networks,
-    handling input preparation, command execution, and output collection. The
-    task supports both subnet-based scanning and targeted port scanning with
-    intelligent optimization based on previous masscan results.
-
-    The scan process includes:
-    - Target preparation (subnets, IPs, domains)
-    - Port list optimization based on previous scans
-    - Command construction with appropriate arguments
-    - Parallel execution of scan jobs
-    - XML output collection for import processing
-
-    Attributes:
-        scan_input (luigi.Parameter): Scheduled scan configuration parameter
-
-    Example:
-        >>> scan_task = NmapScan(scan_input=scheduled_scan)
-        >>> scan_task.run()
-        # Executes Nmap scan and saves XML results
-    """
-
-    scan_input: luigi.Parameter = luigi.Parameter()
-
-    def output(self) -> luigi.LocalTarget:
-        """
-        Define output file target for scan metadata.
-
-        Creates the output file path where scan metadata will be stored,
-        incorporating scan ID and optional module ID for uniqueness.
-
-        Returns:
-            luigi.LocalTarget: Output file target for scan metadata
-
-        Example:
-            >>> task = NmapScan(scan_input=scan)
-            >>> target = task.output()
-            >>> print(target.path)
-            '/path/to/outputs/nmap_scan_scan123.meta'
-        """
-        scheduled_scan_obj = self.scan_input
-        scan_id: str = scheduled_scan_obj.id
-
-        # Init directory
-        tool_name: str = scheduled_scan_obj.current_tool.name
-        dir_path: str = scan_utils.init_tool_folder(
-            tool_name, 'outputs', scan_id)
-        meta_file_path: str = dir_path + os.path.sep + \
-            "nmap_scan_" + scan_id + ".meta"
-
-        return luigi.LocalTarget(meta_file_path)
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            "nmap import failed: %s", e, exc_info=True)
+        return False
 
     def run(self) -> None:
         """
@@ -835,152 +992,3 @@ def parse_nmap_xml(
                 ret_arr.append(module_output_obj)
 
     return ret_arr
-
-
-@inherits(NmapScan)
-class ImportNmapOutput(data_model.ImportToolXOutput):
-    """
-    Luigi task for importing and processing Nmap scan results.
-
-    This task handles the complete import and processing of Nmap XML output files,
-    parsing detailed network information and integrating it into the Waluigi framework's
-    data model. It processes host discovery, port scanning, service detection, 
-    SSL certificate information, and script execution results.
-
-    The import process includes:
-        - Reading and parsing Nmap XML output files
-        - Processing host information and network addresses
-        - Extracting open ports and service details
-        - Analyzing SSL certificates and subject alternative names
-        - Processing Nmap script execution results
-        - Creating comprehensive data model objects
-        - Handling module-based scan results and outputs
-
-    Key Features:
-        - Robust XML parsing with error handling and recovery
-        - Complete host and port information extraction
-        - SSL certificate analysis with domain extraction
-        - Service version and component detection
-        - Script result processing and module correlation
-        - Duplicate detection and data deduplication
-        - Comprehensive logging and error reporting
-
-    Attributes:
-        Inherits all attributes from NmapScan and ImportToolXOutput
-
-    Methods:
-        requires: Specifies dependency on completed NmapScan task
-        run: Main processing method for importing scan results
-
-    Example:
-        >>> # Task is executed as part of the Luigi workflow
-        >>> import_task = ImportNmapOutput(scan_input=scan_obj)
-        >>> luigi.build([import_task], local_scheduler=True)
-
-    Note:
-        This task creates comprehensive data model objects including hosts,
-        ports, domains, certificates, web components, and module outputs
-        with proper parent-child relationships and tracking information.
-    """
-
-    def requires(self) -> NmapScan:
-        """
-        Specify task dependencies for the import operation.
-
-        Returns:
-            NmapScan: The Nmap scan task that must complete before
-                this import task can execute, providing XML output files.
-        """
-        return NmapScan(scan_input=self.scan_input)
-
-    def run(self) -> None:
-        """
-        Import and process Nmap scan results into the framework's data model.
-
-        This method performs comprehensive processing of Nmap XML output files,
-        extracting detailed network information and creating appropriate data
-        model objects. The process handles multiple XML files from parallel
-        scan executions and correlates results with existing scan data.
-
-        The import workflow includes:
-            1. Reading scan metadata from the meta file
-            2. Processing each XML output file from parallel scans
-            3. Parsing host information and network addresses
-            4. Extracting port details and service information
-            5. Processing SSL certificates and extracting domains
-            6. Analyzing Nmap script execution results
-            7. Creating data model objects with proper relationships
-            8. Handling module outputs and component detection
-            9. Importing results into the framework database
-
-        Data Processing Details:
-            - Host Objects: Created for each discovered IP address with proper IPv4/IPv6 handling
-            - Port Objects: Generated for each open port with protocol and service information
-            - Domain Objects: Extracted from hostnames, certificates, and DNS resolution
-            - Certificate Objects: Comprehensive SSL/TLS certificate analysis with validity dates
-            - Component Objects: Service and product detection from version scanning
-            - Module Outputs: Script results and specialized scan module data
-
-        Error Handling:
-            - Graceful handling of malformed XML files
-            - Comprehensive logging of parsing errors
-            - Automatic cleanup of corrupted scan directories
-            - Continuation of processing despite individual file failures
-
-        Raises:
-            Exception: If critical XML parsing errors occur that prevent
-                processing, or if scan directory cleanup fails.
-
-        Example:
-            >>> import_task = ImportNmapOutput(scan_input=scan_obj)
-            >>> import_task.run()  # Processes all XML files and imports results
-
-        Note:
-            The method handles both individual host scanning and subnet-based
-            scanning results, with intelligent correlation of existing scope
-            data and optimization based on previous scan results.
-        """
-
-        scheduled_scan_obj = self.scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        scope_obj = scheduled_scan_obj.scan_data
-        tool_obj = scheduled_scan_obj.current_tool
-        tool_id = tool_obj.id
-
-        ret_arr: List[Any] = []
-
-        meta_file = self.input().path
-        if os.path.exists(meta_file):
-            with open(meta_file) as file_fd:
-                json_input = file_fd.read()
-
-            if json_input:
-                nmap_scan_obj = json.loads(json_input)
-                for nmap_scan_entry in nmap_scan_obj['nmap_scan_list']:
-                    nmap_out = nmap_scan_entry['output_file']
-                    try:
-                        if os.path.exists(nmap_out) and os.path.getsize(nmap_out) > 0:
-                            ret_arr.extend(
-                                parse_nmap_xml(
-                                    nmap_out, scope_obj, tool_instance_id, tool_id
-                                )
-                            )
-                        else:
-                            logging.getLogger(__name__).warning(
-                                f"Skipping nmap output file {nmap_out}: "
-                                "file does not exist or is empty."
-                            )
-                    except Exception:
-                        logging.getLogger(__name__).error(
-                            "Failed parsing nmap output: %s" % nmap_out
-                        )
-                        logging.getLogger(__name__).error(
-                            traceback.format_exc())
-                        try:
-                            shutil.rmtree(os.path.dirname(meta_file))
-                        except Exception:
-                            pass
-                        raise
-
-        # Import, Update, & Save
-        self.import_results(scheduled_scan_obj, ret_arr)

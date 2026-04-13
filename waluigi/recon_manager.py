@@ -56,25 +56,16 @@ from types import SimpleNamespace
 from threading import Event, Thread
 from waluigi import scan_cleanup
 from waluigi import data_model
-from waluigi import tool_utils
-from waluigi.tool_utils import encrypt_data
+from waluigi.api_client import ApiClient
 from functools import partial
 
+import logging
+import netifaces
 import requests
-import json
 import threading
 import traceback
-import os
-import netifaces
-import enum
-import functools
-import logging
-import luigi
 from typing import Optional, Dict, List, Any, Union, Tuple
 
-
-# Configuration Constants
-custom_user_agent: str = "Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; AS; rv:11.0) like Gecko"
 
 # Global Configuration: Disable SSL warnings for target sites with SSL issues
 requests.packages.urllib3.disable_warnings()
@@ -219,7 +210,7 @@ class ScheduledScanThread(threading.Thread):
     - Luigi task failure handling and error reporting
 
     Attributes:
-        failed_task_exception (Tuple): Static variable holding Luigi task failures
+        failed_task_exception (Tuple): Instance variable holding task failures for error reporting
         _is_running (bool): Thread execution state flag
         _daemon (bool): Daemon thread flag for background execution
         _enabled (bool): Enable/disable scan polling
@@ -241,9 +232,6 @@ class ScheduledScanThread(threading.Thread):
         - Implements Luigi event handler for task failure capture
         - Supports graceful shutdown via stop() method
     """
-
-    # Static variable to hold luigi task failures for error reporting
-    failed_task_exception: Optional[Tuple[Any, Exception]] = None
 
     def __init__(self, recon_manager: 'ReconManager', connection_manager: Optional[Any] = None) -> None:
         """
@@ -269,25 +257,12 @@ class ScheduledScanThread(threading.Thread):
         self.scan_thread_lock = threading.Lock()
         self.log_queue: Optional[Any] = None
         self.scheduled_scan_map: Dict[str, data_model.ScheduledScan] = {}
+        # Per-instance variable to hold task failures (avoids cross-thread race)
+        self.failed_task_exception: Optional[Tuple[Any, Exception]] = None
 
-    @luigi.Task.event_handler(luigi.Event.FAILURE)
-    def catch_failure(task: Any, exception: Exception) -> None:
-        """
-        Luigi event handler to capture task failures for error reporting.
-
-        This static method captures Luigi task failures and stores them
-        for inclusion in status updates to the management server.
-
-        Args:
-            task (Any): Luigi task that failed
-            exception (Exception): Exception that caused the failure
-
-        Note:
-            - Called automatically by Luigi when tasks fail
-            - Stored failures are included in tool status updates
-            - Static method for Luigi event handler compatibility
-        """
-        ScheduledScanThread.failed_task_exception = (task, exception)
+    def catch_failure(self, task: Any, exception: Exception) -> None:
+        """Capture tool task failures for inclusion in status updates."""
+        self.failed_task_exception = (task, exception)
 
     def toggle_poller(self) -> None:
         """
@@ -409,6 +384,7 @@ class ScheduledScanThread(threading.Thread):
                     collection_tool_inst.id, data_model.CollectionToolStatus.RUNNING.value)
 
                 # Handle active scanning tools that require target connection
+                scan_ran = False
                 if tool_obj.tool_type == 2:
 
                     if self.connection_manager and self.connection_manager.connect_to_target() == False:
@@ -422,7 +398,6 @@ class ScheduledScanThread(threading.Thread):
                             err_msg = "Scan function failed"
                             logging.getLogger(__name__).debug(err_msg)
                             ret_status = data_model.CollectionToolStatus.ERROR.value
-                            break
 
                     except Exception as e:
                         err_msg = "Error calling scan function: %s" % str(e)
@@ -430,22 +405,26 @@ class ScheduledScanThread(threading.Thread):
                         logging.getLogger(__name__).debug(
                             traceback.format_exc())
                         ret_status = data_model.CollectionToolStatus.ERROR.value
-                        break
                     finally:
-                        # Handle Luigi task failures and update status
-                        err_msg = ''
-                        if ScheduledScanThread.failed_task_exception:
-                            err_msg = f"{ScheduledScanThread.failed_task_exception[0]}\n{ScheduledScanThread.failed_task_exception[1]}"
-                            ScheduledScanThread.failed_task_exception = None
+                        scan_ran = True
+
+                        # Check for task failures
+                        if self.failed_task_exception:
+                            task_err = f"{self.failed_task_exception[0]}\n{self.failed_task_exception[1]}"
+                            self.failed_task_exception = None
+                            # Append to existing error or use as error
+                            err_msg = task_err if not err_msg else f"{err_msg}\n{task_err}"
 
                         if self.connection_manager and self.connection_manager.connect_to_extender() == False:
                             err_msg = "Failed connecting to extender"
                             logging.getLogger(__name__).error(err_msg)
                             return err_msg
 
-                        # Update the tool status after connecting back to extender
+                    # If scan failed, update status and stop tool loop
+                    if ret_status == data_model.CollectionToolStatus.ERROR.value:
                         scheduled_scan_obj.update_tool_status(
                             collection_tool_inst.id, ret_status, err_msg)
+                        break
 
                 # Import scan results regardless of tool type
                 try:
@@ -453,7 +432,6 @@ class ScheduledScanThread(threading.Thread):
                         err_msg = "Import function failed"
                         logging.getLogger(__name__).debug(err_msg)
                         ret_status = data_model.CollectionToolStatus.ERROR.value
-                        break
                     else:
                         ret_status = data_model.CollectionToolStatus.COMPLETED.value
                 except Exception as e:
@@ -461,17 +439,19 @@ class ScheduledScanThread(threading.Thread):
                     logging.getLogger(__name__).error(err_msg)
                     logging.getLogger(__name__).debug(traceback.format_exc())
                     ret_status = data_model.CollectionToolStatus.ERROR.value
+
+                # Check for task failures from import
+                if self.failed_task_exception:
+                    task_err = f"{self.failed_task_exception[0]}\n{self.failed_task_exception[1]}"
+                    self.failed_task_exception = None
+                    err_msg = task_err if not err_msg else f"{err_msg}\n{task_err}"
+
+                # Update tool status once after import (skip if scan already updated it)
+                scheduled_scan_obj.update_tool_status(
+                    collection_tool_inst.id, ret_status, err_msg if err_msg else '')
+
+                if ret_status == data_model.CollectionToolStatus.ERROR.value:
                     break
-
-                finally:
-                    # Final status update with Luigi failure handling
-                    err_msg = None
-                    if ScheduledScanThread.failed_task_exception:
-                        err_msg = f"{ScheduledScanThread.failed_task_exception[0]}\n{ScheduledScanThread.failed_task_exception[1]}"
-                        ScheduledScanThread.failed_task_exception = None
-
-                    scheduled_scan_obj.update_tool_status(
-                        collection_tool_inst.id, ret_status, err_msg)
 
             except Exception:
                 logging.getLogger(__name__).error("Error executing scan job")
@@ -607,12 +587,12 @@ class ScheduledScanThread(threading.Thread):
                 if self.connection_manager:
                     self.connection_manager.free_connection_lock()
 
-        # Remove the scan from the map
-        if data_model.ScanStatus.COMPLETED.value == scan_status:
-            with self.scan_thread_lock:
-                # Remove scan from active tracking
-                if scheduled_scan_obj.id in self.scheduled_scan_map:
-                    del self.scheduled_scan_map[scheduled_scan_obj.id]
+        # Always remove the scan from the map when processing is done.
+        # If the server wants a retry, it will return the scan again in
+        # get_scheduled_scans() and a fresh thread will be spawned.
+        with self.scan_thread_lock:
+            if scheduled_scan_obj.id in self.scheduled_scan_map:
+                del self.scheduled_scan_map[scheduled_scan_obj.id]
 
         return
 
@@ -656,10 +636,14 @@ class ScheduledScanThread(threading.Thread):
 
                 # Set running flag and enter main loop
                 self._is_running = True
+                first_poll = True
                 while self._is_running:
 
-                    # Wait for next polling cycle or exit signal
-                    self.exit_event.wait(self.checkin_interval)
+                    # Poll immediately on first iteration, then wait
+                    if first_poll:
+                        first_poll = False
+                    else:
+                        self.exit_event.wait(self.checkin_interval)
                     if self._enabled:
                         try:
                             # Acquire connection lock if using connection manager
@@ -878,11 +862,7 @@ class ReconManager:
         self.token = token
         self.debug = False
         self.manager_url = manager_url
-        self.headers = {'User-Agent': custom_user_agent,
-                        'Authorization': 'Bearer ' + self.token}
-
-        # Establish secure session with server
-        self.session_key = self._get_session_key()
+        self._api_client = ApiClient(token, manager_url)
 
         # Discover available network interfaces
         self.network_ifaces = self.get_network_interfaces()
@@ -908,7 +888,7 @@ class ReconManager:
         }
 
         # Register collector with server and get tool mappings
-        ret_obj = self.update_collector(collector_data)
+        ret_obj = self._api_client.update_collector(collector_data)
         if ret_obj:
             if 'tool_name_id_map' in ret_obj:
                 tool_name_id_map = ret_obj['tool_name_id_map']
@@ -1124,582 +1104,53 @@ class ReconManager:
         """
         return False
 
-    def _decrypt_json(self, content: Dict[str, str]) -> Optional[bytes]:
-        """
-        Decrypt JSON data received from the management server.
+    def get_subnets(self, scan_id: str) -> List[str]:
+        return self._api_client.get_subnets(scan_id)
 
-        This method handles the complete decryption process for server responses,
-        including error recovery through session key refresh and automatic
-        retry mechanisms.
+    def get_wordlist(self, wordlist_id: str):
+        return self._api_client.get_wordlist(wordlist_id)
 
-        Decryption process:
-        1. Extract base64-encoded encrypted data from response
-        2. Decode and split into nonce, tag, and ciphertext components
-        3. Decrypt using current session key with AES-EAX mode
-        4. Decompress decrypted data using zlib
-        5. Handle decryption failures with session key recovery
+    def get_urls(self, scan_id: str) -> List[str]:
+        return self._api_client.get_urls(scan_id)
 
-        Args:
-            content (Dict[str, str]): Server response containing encrypted 'data' field
+    def get_scheduled_scans(self) -> List[Any]:
+        return self._api_client.get_scheduled_scans()
 
-        Returns:
-            Optional[bytes]: Decrypted and decompressed data, None if decryption fails
+    def collector_poll(self, log_str: Optional[str]) -> Optional[Dict[str, Any]]:
+        return self._api_client.collector_poll(log_str)
 
-        Example:
-            >>> response = {"data": "base64_encrypted_data"}
-            >>> decrypted = manager._decrypt_json(response)
-            >>> if decrypted:
-            ...     result = json.loads(decrypted)
+    def get_scheduled_scan(self, sched_scan_id: str) -> Optional[Dict[str, Any]]:
+        return self._api_client.get_scheduled_scan(sched_scan_id)
 
-        Note:
-            - Implements automatic session recovery on decryption failure
-            - Removes corrupted session files and generates new session keys
-            - Uses AES-EAX mode for authenticated encryption
-            - Handles compression/decompression transparently
-        """
-        data = None
-        if 'data' in content:
-            b64_data = content['data']
-            try:
-                data = tool_utils.decrypt_data(self.session_key, b64_data)
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    "Error decrypting response: %s" % str(e))
+    def get_scan_status(self, scan_id: str) -> Optional[Any]:
+        return self._api_client.get_scan_status(scan_id)
 
-                # Attempt recovery using session key from disk
-                session_key = self._get_session_key_from_disk()
-                if session_key and session_key != self.session_key:
-                    try:
-                        data = tool_utils.decrypt_data(session_key, b64_data)
-                        self.session_key = session_key
-                        return data
-                    except Exception as e:
-                        logging.getLogger(__name__).error(
-                            "Error decrypting response with session from disk. Refreshing session: %s" % str(e))
+    def get_hosts(self, scan_id: str) -> List[Any]:
+        return self._api_client.get_hosts(scan_id)
 
-                # Clean up corrupted session and generate new key
-                os.remove('session')
-                self.session_key = self._get_session_key()
+    def update_collector(self, collector_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        return self._api_client.update_collector(collector_data)
 
-        return data
+    def update_scan_status(self, schedule_scan_id: str, status: int, err_msg: Optional[str] = None) -> bool:
+        return self._api_client.update_scan_status(schedule_scan_id, status, err_msg)
 
-    def _get_session_key_from_disk(self) -> Optional[bytes]:
-        """
-        Load session key from disk storage.
+    def get_tool_status(self, tool_id: str) -> Optional[int]:
+        return self._api_client.get_tool_status(tool_id)
 
-        This method retrieves a previously stored session key from the
-        'session' file in the current directory. The session key is stored
-        as hexadecimal text for persistence across application restarts.
+    def update_tool_status(self, tool_id: str, status: int, status_message: str = '') -> bool:
+        return self._api_client.update_tool_status(tool_id, status, status_message)
 
-        Returns:
-            Optional[bytes]: Session key as bytes if file exists, None otherwise
+    def import_ports(self, port_arr: List[Any]) -> bool:
+        return self._api_client.import_ports(port_arr)
 
-        Example:
-            >>> key = manager._get_session_key_from_disk()
-            >>> if key:
-            ...     print("Session key loaded from disk")
+    def import_ports_ext(self, scan_results_dict: Dict[str, Any]) -> bool:
+        return self._api_client.import_ports_ext(scan_results_dict)
 
-        Note:
-            - Session key is stored in hexadecimal format
-            - File location is './session' in current working directory
-            - Returns None if file doesn't exist or cannot be read
-        """
-        return tool_utils._load_session_key()
+    def import_data(self, scan_id: str, tool_id: str, scan_results: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+        return self._api_client.import_data(scan_id, tool_id, scan_results)
 
-    def _get_session_key(self) -> bytes:
-        """
-        Generate or retrieve AES session key for secure server communication.
-
-        This method implements the complete session establishment protocol:
-        1. Check for existing session key on disk
-        2. Generate temporary RSA key pair for key exchange
-        3. Send public key to server for session establishment
-        4. Receive encrypted session key from server
-        5. Decrypt session key using private RSA key
-        6. Store session key to disk for persistence
-
-        Returns:
-            bytes: AES session key for encrypted communication
-
-        Raises:
-            SessionException: If session establishment fails
-
-        Example:
-            >>> session_key = manager._get_session_key()
-            >>> # Session key is now ready for encrypted communication
-
-        Security Details:
-            - Uses 2048-bit RSA keys for key exchange
-            - AES session key is encrypted with RSA-OAEP
-            - Session key is stored with 0o777 permissions
-            - Automatic fallback to disk-stored key when available
-        """
-        try:
-            return tool_utils.get_session_key(self.manager_url, self.headers)
-        except RuntimeError as exc:
-            logging.getLogger(__name__).error(
-                "Error retrieving session key: %s", exc)
-            raise SessionException(str(exc)) from exc
-
-    def get_subnets(self, scan_id):
-
-        subnets = []
-        r = requests.get('%s/api/subnets/scan/%s' % (self.manager_url,
-                         scan_id), headers=self.headers, verify=False)
-        if r.status_code == 404:
-            return subnets
-        if r.status_code != 200:
-            logging.getLogger(__name__).error(
-                "Unknown Error retriving subnets")
-            return subnets
-
-        if r.content:
-            subnet_obj_arr = None
-            try:
-                content = r.json()
-                data = self._decrypt_json(content)
-                subnet_obj_arr = json.loads(
-                    data, object_hook=lambda d: SimpleNamespace(**d))
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    "Error retrieving subnets: %s" % str(e))
-                logging.getLogger(__name__).debug(traceback.format_exc())
-                return subnets
-
-            if subnet_obj_arr:
-                for subnet in subnet_obj_arr:
-                    ip = subnet.subnet
-                    subnet_inst = ip + "/" + str(subnet.mask)
-                    subnets.append(subnet_inst)
-
-        return subnets
-
-    def get_wordlist(self, wordlist_id):
-
-        wordlist = None
-        r = requests.get('%s/api/wordlist/%s' % (self.manager_url,
-                         wordlist_id), headers=self.headers, verify=False)
-        if r.status_code == 404:
-            return wordlist
-        if r.status_code != 200:
-            logging.getLogger(__name__).error(
-                "Unknown Error retrieving wordlist")
-            return wordlist
-
-        if r.content:
-            try:
-                content = r.json()
-                data = self._decrypt_json(content)
-                wordlist = json.loads(data)
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    "Error retrieving wordlist: %s" % str(e))
-                logging.getLogger(__name__).debug(traceback.format_exc())
-                return wordlist
-
-        return wordlist
-
-    # def get_target(self, scan_id):
-
-    #     target_obj = None
-    #     r = requests.get('%s/api/target/scan/%s' % (self.manager_url,
-    #                      scan_id), headers=self.headers, verify=False)
-    #     if r.status_code == 404:
-    #         return target_obj
-    #     if r.status_code != 200:
-    #         logging.getLogger(__name__).error(
-    #             "Unknown Error retrieving targets")
-    #         return target_obj
-
-    #     if r.content:
-    #         try:
-    #             content = r.json()
-    #             if content:
-    #                 data = self._decrypt_json(content)
-    #                 target_obj = json.loads(
-    #                     data, object_hook=lambda d: SimpleNamespace(**d))
-    #         except Exception as e:
-    #             logging.getLogger(__name__).error(
-    #                 "Error retrieving target: %s" % str(e))
-    #             logging.getLogger(__name__).debug(traceback.format_exc())
-
-    #     return target_obj
-
-    def get_urls(self, scan_id):
-
-        urls = []
-        r = requests.get('%s/api/urls/scan/%s' % (self.manager_url,
-                         scan_id), headers=self.headers, verify=False)
-        if r.status_code == 404:
-            return urls
-        if r.status_code != 200:
-            logging.getLogger(__name__).error("Unknown Error retrieving urls")
-            return urls
-
-        if r.content:
-            url_obj_arr = None
-            try:
-                content = r.json()
-                data = self._decrypt_json(content)
-                url_obj_arr = json.loads(
-                    data, object_hook=lambda d: SimpleNamespace(**d))
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    "Error retrieving urls: %s" % str(e))
-                logging.getLogger(__name__).debug(traceback.format_exc())
-                return urls
-
-            if url_obj_arr:
-                for url_obj in url_obj_arr:
-                    url = url_obj.url
-                    urls.append(url)
-
-        return urls
-
-    def get_scheduled_scans(self):
-
-        sched_scan_arr = []
-        r = requests.get('%s/api/scheduler/' %
-                         (self.manager_url), headers=self.headers, verify=False)
-        if r.status_code == 404:
-            return sched_scan_arr
-        elif r.status_code != 200:
-            logging.getLogger(__name__).error(
-                "Unknown Error retrieving scheduled scans")
-            return sched_scan_arr
-
-        if r.content:
-            try:
-                content = r.json()
-                data = self._decrypt_json(content)
-                if data:
-                    sched_scan_arr = json.loads(
-                        data, object_hook=lambda d: SimpleNamespace(**d))
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    "Error retrieving scheduled scans: %s" % str(e))
-                logging.getLogger(__name__).debug(traceback.format_exc())
-
-        return sched_scan_arr
-
-    def collector_poll(self, log_str):
-
-        settings = None
-        status_dict = {'logs': log_str}
-        json_data = json.dumps(status_dict).encode()
-        b64_val = encrypt_data(self.session_key, json_data)
-
-        r = requests.post('%s/api/collector/poll' %
-                          (self.manager_url), headers=self.headers, json={"data": b64_val}, verify=False)
-        if r.status_code == 404:
-            return settings
-        elif r.status_code != 200:
-            logging.getLogger(__name__).error(
-                "Unknown Error retrieving collector settings")
-            return settings
-
-        if r.content:
-            try:
-                content = r.json()
-                data = self._decrypt_json(content)
-                if data:
-                    settings = json.loads(data)
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    "Error retrieving collector settings: %s" % str(e))
-                logging.getLogger(__name__).debug(traceback.format_exc())
-
-        return settings
-
-    def get_scheduled_scan(self, sched_scan_id):
-
-        sched_scan = None
-        r = requests.get('%s/api/scheduler/%s/scan/' % (self.manager_url, sched_scan_id), headers=self.headers,
-                         verify=False)
-        if r.status_code == 404:
-            return sched_scan
-        elif r.status_code != 200:
-            logging.getLogger(__name__).error("Unknown Error retrieving scan")
-            return sched_scan
-
-        if r.content:
-            try:
-                content = r.json()
-                data = self._decrypt_json(content)
-                sched_scan = json.loads(data)
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    "Error retrieving scan: %s" % str(e))
-                logging.getLogger(__name__).debug(traceback.format_exc())
-
-        return sched_scan
-
-    def get_scan_status(self, scan_id):
-
-        scan_status = None
-        r = requests.get('%s/api/scan/%s/status' % (self.manager_url,
-                         scan_id), headers=self.headers, verify=False)
-        if r.status_code == 404:
-            return scan_status
-        elif r.status_code != 200:
-            logging.getLogger(__name__).error("Unknown Error retrieving scan")
-            return scan_status
-
-        if r.content:
-            try:
-                content = r.json()
-                data = self._decrypt_json(content)
-                scan_status = json.loads(
-                    data, object_hook=lambda d: SimpleNamespace(**d))
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    "Error retrieving scan status: %s" % str(e))
-                logging.getLogger(__name__).debug(traceback.format_exc())
-
-        return scan_status
-
-    def get_hosts(self, scan_id):
-
-        port_arr = []
-        r = requests.get('%s/api/hosts/scan/%s' % (self.manager_url,
-                         scan_id), headers=self.headers, verify=False)
-        if r.status_code == 404:
-            return port_arr
-        elif r.status_code != 200:
-            logging.getLogger(__name__).error("Unknown Error retrieving hosts")
-            return port_arr
-
-        if r.content:
-            try:
-                content = r.json()
-                data = self._decrypt_json(content)
-                port_arr = json.loads(
-                    data, object_hook=lambda d: SimpleNamespace(**d))
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    "Error retrieving hosts: %s" % str(e))
-                logging.getLogger(__name__).debug(traceback.format_exc())
-
-        return port_arr
-
-    # def get_tools(self):
-
-    #     tool_obj_arr = []
-    #     r = requests.get('%s/api/tools' % (self.manager_url),
-    #                      headers=self.headers, verify=False)
-    #     if r.status_code == 404:
-    #         return tool_obj_arr
-    #     elif r.status_code != 200:
-    #         logging.getLogger(__name__).error("Unknown Error retrieving tools")
-    #         return tool_obj_arr
-
-    #     if r.content:
-    #         try:
-    #             content = r.json()
-    #             data = self._decrypt_json(content)
-    #             tool_obj_arr = json.loads(
-    #                 data, object_hook=lambda d: SimpleNamespace(**d))
-    #         except Exception as e:
-    #             logging.getLogger(__name__).error(
-    #                 "Error retrieving tools: %s" % str(e))
-    #             logging.getLogger(__name__).debug(traceback.format_exc())
-
-    #     return tool_obj_arr
-
-    def update_collector(self, collector_data):
-
-        # Import the data to the manager
-        json_data = json.dumps(collector_data).encode()
-        b64_val = encrypt_data(self.session_key, json_data)
-        r = requests.post('%s/api/collector' % (self.manager_url),
-                          headers=self.headers, json={"data": b64_val}, verify=False)
-        if r.status_code != 200:
-            raise RuntimeError("[-] Error updating collector interfaces.")
-
-        ret_obj = None
-        if r.content:
-            try:
-                content = r.json()
-                data = self._decrypt_json(content)
-                ret_obj = json.loads(data)
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    "Error retrieving collector data: %s" % str(e))
-                logging.getLogger(__name__).debug(traceback.format_exc())
-
-        return ret_obj
-
-    def update_scan_status(self, schedule_scan_id, status, err_msg=None):
-
-        # Import the data to the manager
-        status_dict = {'status': status, 'error_message': err_msg}
-        json_data = json.dumps(status_dict).encode()
-
-        b64_val = encrypt_data(self.session_key, json_data)
-        r = requests.post('%s/api/scheduler/%s/' % (self.manager_url, schedule_scan_id),
-                          headers=self.headers, json={"data": b64_val}, verify=False)
-        if r.status_code == 404:
-            raise ScanNotFoundException(
-                f"Scan {schedule_scan_id} not found on server")
-        if r.status_code != 200:
-            raise RuntimeError("[-] Error updating scan status.")
-
-        return True
-
-    def get_tool_status(self, tool_id):
-
-        status = None
-        r = requests.get('%s/api/tool/status/%s' % (self.manager_url,
-                         tool_id), headers=self.headers, verify=False)
-        if r.status_code == 404:
-            return status
-        if r.status_code != 200:
-            logging.getLogger(__name__).error(
-                "Unknown Error retrieving tool status")
-            return status
-
-        if r.content:
-            try:
-                content = r.json()
-                data = self._decrypt_json(content)
-                if data:
-                    tool_inst = json.loads(
-                        data, object_hook=lambda d: SimpleNamespace(**d))
-                    status = tool_inst.status
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    "Error retrieving tool status: %s" % str(e))
-                logging.getLogger(__name__).debug(traceback.format_exc())
-
-        return status
-
-    def update_tool_status(self, tool_id, status, status_message=''):
-
-        # Import the data to the manager
-        status_dict = {'status': status, 'status_message': status_message}
-        json_data = json.dumps(status_dict).encode()
-
-        b64_val = encrypt_data(self.session_key, json_data)
-        r = requests.post('%s/api/tool/status/%s' % (self.manager_url, tool_id),
-                          headers=self.headers, json={"data": b64_val}, verify=False)
-        if r.status_code != 200:
-            raise RuntimeError("[-] Error updating tool status.")
-
-        return True
-
-    def import_ports(self, port_arr):
-
-        # Import the data to the manager
-        json_data = json.dumps(port_arr).encode()
-
-        b64_val = encrypt_data(self.session_key, json_data)
-        r = requests.post('%s/api/ports' % self.manager_url,
-                          headers=self.headers, json={"data": b64_val}, verify=False)
-        if r.status_code != 200:
-            raise RuntimeError("[-] Error importing ports to manager server.")
-
-        return True
-
-    def import_ports_ext(self, scan_results_dict):
-
-        # Import the data to the manager
-        json_data = json.dumps(scan_results_dict).encode()
-        b64_val = encrypt_data(self.session_key, json_data)
-        r = requests.post('%s/api/ports/ext' % self.manager_url,
-                          headers=self.headers, json={"data": b64_val}, verify=False)
-        if r.status_code != 200:
-            raise RuntimeError("[-] Error importing ports to manager server.")
-
-        return True
-
-    def import_data(self, scan_id, tool_id, scan_results):
-
-        scan_results_dict = {'tool_id': tool_id,
-                             'scan_id': scan_id, 'obj_list': scan_results}
-
-        # Import the data to the manager
-        json_data = json.dumps(scan_results_dict).encode()
-        b64_val = encrypt_data(self.session_key, json_data)
-        r = requests.post('%s/api/data/import' % self.manager_url,
-                          headers=self.headers, json={"data": b64_val}, verify=False)
-        if r.status_code != 200:
-            raise RuntimeError("[-] Error importing ports to manager server.")
-
-        record_arr = []
-        if r.content:
-            try:
-                content = r.json()
-                data = self._decrypt_json(content)
-                if data:
-                    record_arr = json.loads(data)
-            except Exception as e:
-                logging.getLogger(__name__).error(
-                    "Error retrieving import response: %s" % str(e))
-                logging.getLogger(__name__).debug(traceback.format_exc())
-
-        return record_arr
-
-    def import_shodan_data(self, scan_id, shodan_arr):
-
-        # Import the data to the manager
-        json_data = json.dumps(shodan_arr).encode()
-        b64_val = encrypt_data(self.session_key, json_data)
-        r = requests.post('%s/api/integration/shodan/import/%s' % (self.manager_url,
-                          str(scan_id)), headers=self.headers, json={"data": b64_val}, verify=False)
-        if r.status_code != 200:
-            raise RuntimeError("[-] Error importing ports to manager server.")
-
-        return True
+    def import_shodan_data(self, scan_id: str, shodan_arr: List[Any]) -> bool:
+        return self._api_client.import_shodan_data(scan_id, shodan_arr)
 
     def import_screenshot(self, data_dict: Dict[str, Any]) -> bool:
-        """
-        Import screenshot data to the management server.
-
-        This method uploads screenshot data captured during web application
-        scanning to the management server for storage and analysis. The data
-        is encrypted before transmission for security.
-
-        Args:
-            data_dict (Dict[str, Any]): Screenshot data dictionary containing:
-                - image data (base64 encoded or binary)
-                - URL or target information
-                - timestamp and metadata
-                - scan context information
-
-        Returns:
-            bool: True if import was successful
-
-        Raises:
-            RuntimeError: If server returns non-200 status code
-
-        Example:
-            >>> screenshot_data = {
-            ...     'url': 'https://example.com',
-            ...     'image': base64_encoded_image,
-            ...     'timestamp': '2024-01-01T12:00:00Z'
-            ... }
-            >>> success = manager.import_screenshot(screenshot_data)
-
-        Note:
-            - Data is automatically encrypted using session key
-            - Screenshot data is wrapped in array format for server API
-            - Error message mentions "ports" but this is for screenshots
-        """
-        # Wrap screenshot data in array format expected by server
-        obj_data = [data_dict]
-
-        # Encrypt and encode screenshot data
-        json_data = json.dumps(obj_data).encode()
-        b64_val = encrypt_data(self.session_key, json_data)
-
-        # Upload screenshot data to server
-        r = requests.post('%s/api/screenshots' % self.manager_url,
-                          headers=self.headers,
-                          json={"data": b64_val},
-                          verify=False)
-
-        if r.status_code != 200:
-            raise RuntimeError(
-                "[-] Error importing screenshot to manager server.")
-
-        return True
+        return self._api_client.import_screenshot(data_dict)
