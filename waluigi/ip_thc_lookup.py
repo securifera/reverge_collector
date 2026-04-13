@@ -523,7 +523,7 @@ def ip_thc_import(scan_input) -> bool:
     except Exception as e:
         logging.getLogger(__name__).error(
             "ip_thc import failed: %s", e, exc_info=True)
-        return False
+        raise
 
 
 def parse_ip_thc_output(

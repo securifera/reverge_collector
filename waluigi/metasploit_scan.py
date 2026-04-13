@@ -708,7 +708,7 @@ def metasploit_scan_func(scan_input) -> bool:
     except Exception as e:
         logging.getLogger(__name__).error(
             "metasploit scan failed: %s", e, exc_info=True)
-        return False
+        raise
 
 
 def metasploit_import(scan_input) -> bool:
@@ -922,4 +922,4 @@ def metasploit_import(scan_input) -> bool:
     except Exception as e:
         logging.getLogger(__name__).error(
             "metasploit import failed: %s", e, exc_info=True)
-        return False
+        raise

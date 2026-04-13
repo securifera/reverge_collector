@@ -364,7 +364,7 @@ def crapsecrets_scan_func(scan_input) -> bool:
     except Exception as e:
         logging.getLogger(__name__).error(
             "crapsecrets scan failed: %s", e, exc_info=True)
-        return False
+        raise
 
 
 def crapsecrets_import(scan_input) -> bool:
@@ -384,7 +384,7 @@ def crapsecrets_import(scan_input) -> bool:
     except Exception as e:
         logging.getLogger(__name__).error(
             "crapsecrets import failed: %s", e, exc_info=True)
-        return False
+        raise
 
 
 def parse_crapsecrets_output(output_file, tool_instance_id, tool_id):
@@ -456,5 +456,3 @@ def parse_crapsecrets_output(output_file, tool_instance_id, tool_id):
                                 continue
 
     return ret_arr
-
-

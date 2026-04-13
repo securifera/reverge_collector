@@ -271,7 +271,7 @@ def httpx_scan_func(scan_input) -> bool:
     except Exception as e:
         logging.getLogger(__name__).error(
             "httpx scan failed: %s", e, exc_info=True)
-        return False
+        raise
 
 
 def httpx_import(scan_input) -> bool:
@@ -300,7 +300,7 @@ def httpx_import(scan_input) -> bool:
     except Exception as e:
         logging.getLogger(__name__).error(
             "httpx import failed: %s", e, exc_info=True)
-        return False
+        raise
 
 
 def parse_httpx_output(

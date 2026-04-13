@@ -41,7 +41,7 @@ class IISShortnameScanner(data_model.WaluigiTool):
         except Exception as e:
             logging.getLogger(__name__).error(
                 "IIS short scan failed: %s", e, exc_info=True)
-            return False
+            raise
 
     @staticmethod
     def iis_short_scan_import(scan_input: data_model.ScheduledScan) -> bool:
@@ -60,7 +60,7 @@ class IISShortnameScanner(data_model.WaluigiTool):
         except Exception as e:
             logging.getLogger(__name__).error(
                 "IIS short scan import failed: %s", e, exc_info=True)
-            return False
+            raise
 
 
 def iis_short_scan_wrap(target_url_list: List[str]) -> List[Dict[str, Any]]:

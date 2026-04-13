@@ -506,7 +506,7 @@ def webcap_scan_func(scan_input) -> bool:
     except Exception as e:
         logging.getLogger(__name__).error(
             "webcap scan failed: %s", e, exc_info=True)
-        return False
+        raise
 
 
 def webcap_import(scan_input) -> bool:
@@ -524,4 +524,4 @@ def webcap_import(scan_input) -> bool:
     except Exception as e:
         logging.getLogger(__name__).error(
             "webcap import failed: %s", e, exc_info=True)
-        return False
+        raise

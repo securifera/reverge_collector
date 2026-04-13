@@ -107,7 +107,7 @@ class Subfinder(data_model.WaluigiTool):
         except Exception as e:
             logging.getLogger(__name__).error(
                 "Subfinder scan failed: %s", e, exc_info=True)
-            return False
+            raise
 
     @staticmethod
     def subfinder_import(scan_input: Any) -> bool:
@@ -125,7 +125,7 @@ class Subfinder(data_model.WaluigiTool):
         except Exception as e:
             logging.getLogger(__name__).error(
                 "Subfinder import failed: %s", e, exc_info=True)
-            return False
+            raise
 
 
 def subfinder_wrapper(scheduled_scan_obj: Any, scan_output_file_path: str,

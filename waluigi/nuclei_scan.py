@@ -367,7 +367,7 @@ def nuclei_scan_func(scan_input) -> bool:
     except Exception as e:
         logging.getLogger(__name__).error(
             "nuclei scan failed: %s", e, exc_info=True)
-        return False
+        raise
 
 
 def nuclei_import(scan_input) -> bool:
@@ -397,7 +397,7 @@ def nuclei_import(scan_input) -> bool:
     except Exception as e:
         logging.getLogger(__name__).error(
             "nuclei import failed: %s", e, exc_info=True)
-        return False
+        raise
 
 
 def parse_nuclei_output(

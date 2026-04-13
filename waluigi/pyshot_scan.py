@@ -397,7 +397,7 @@ def pyshot_scan_func(scan_input) -> bool:
     except Exception as e:
         logging.getLogger(__name__).error(
             "pyshot scan failed: %s", e, exc_info=True)
-        return False
+        raise
 
 
 def pyshot_import(scan_input) -> bool:
@@ -415,4 +415,4 @@ def pyshot_import(scan_input) -> bool:
     except Exception as e:
         logging.getLogger(__name__).error(
             "pyshot import failed: %s", e, exc_info=True)
-        return False
+        raise

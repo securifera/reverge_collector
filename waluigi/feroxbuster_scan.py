@@ -169,7 +169,7 @@ class Feroxbuster(data_model.WaluigiTool):
         except Exception as e:
             logging.getLogger(__name__).error(
                 "Feroxbuster scan failed: %s", e, exc_info=True)
-            return False
+            raise
 
     @staticmethod
     def feroxbuster_import(scan_input: Any) -> bool:
@@ -187,7 +187,7 @@ class Feroxbuster(data_model.WaluigiTool):
         except Exception as e:
             logging.getLogger(__name__).error(
                 "Feroxbuster import failed: %s", e, exc_info=True)
-            return False
+            raise
 
 
 def get_output_path(scan_input: Any) -> str:

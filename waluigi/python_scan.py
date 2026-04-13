@@ -92,7 +92,7 @@ class Python(data_model.WaluigiTool):
         except Exception as e:
             logging.getLogger(__name__).error(
                 "Python scan failed: %s", e, exc_info=True)
-            return False
+            raise
 
     @staticmethod
     def python_import(scan_input: data_model.ScheduledScan) -> bool:
@@ -114,7 +114,7 @@ class Python(data_model.WaluigiTool):
         except Exception as e:
             logging.getLogger(__name__).error(
                 "Python import failed: %s", e, exc_info=True)
-            return False
+            raise
 
 
 def get_output_path(scan_input: data_model.ScheduledScan) -> str:
