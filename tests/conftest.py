@@ -58,6 +58,7 @@ def recon_manager(mock_update_collector_and_session_key):
     mgr = None
     with patch.object(WaluigiTool, 'to_jsonable', patched_to_jsonable):
         mgr = ReconManager(token, manager_url)
+        mgr.register_with_server()
 
     return mgr
 

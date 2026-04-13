@@ -57,7 +57,7 @@ from threading import Event, Thread
 from waluigi import scan_cleanup
 from waluigi import data_model
 from waluigi.api_client import ApiClient
-from functools import partial
+from functools import partial, cmp_to_key
 
 import logging
 import netifaces
@@ -168,11 +168,11 @@ def tool_order_cmp(x: Any, y: Any) -> int:
 
     Example:
         >>> tools = [tool1, tool2, tool3]
-        >>> sorted_tools = sorted(tools, key=functools.cmp_to_key(tool_order_cmp))
+        >>> sorted_tools = sorted(tools, key=cmp_to_key(tool_order_cmp))
 
     Note:
         - Tools with scan_order=None are given highest priority (executed first)
-        - Used with functools.cmp_to_key() for Python 3 sorting compatibility
+        - Used with cmp_to_key() for Python 3 sorting compatibility
         - Essential for maintaining proper scanning workflow dependencies
     """
     # Tools without scan_order get highest priority (executed first)
@@ -333,7 +333,7 @@ class ScheduledScanThread(threading.Thread):
         # Sort tools by execution order for proper dependency handling
         collection_tools = scheduled_scan_obj.collection_tool_map.values()
         sorted_list = sorted(collection_tools,
-                             key=functools.cmp_to_key(tool_order_cmp))
+                     key=cmp_to_key(tool_order_cmp))
 
         # Establish connection to extender for scan status monitoring
         if self.connection_manager and self.connection_manager.connect_to_extender() == False:
@@ -773,8 +773,11 @@ def get_recon_manager(token: str, manager_url: str) -> 'ReconManager':
         - Global singleton pattern ensures consistent state across the application
     """
     global recon_mgr_inst
-    if recon_mgr_inst == None:
+    if recon_mgr_inst is None:
         recon_mgr_inst = ReconManager(token, manager_url)
+    # Register (or re-register) with the server.  Only does a network
+    # call — tool modules are already loaded inside __init__.
+    recon_mgr_inst.register_with_server()
     return recon_mgr_inst
 
 
@@ -836,11 +839,11 @@ class ReconManager:
 
         Initialization process:
         1. Store authentication credentials and server URL
-        2. Establish secure session with server (RSA key exchange)
-        3. Discover available network interfaces
-        4. Load and register available scanning tools
-        5. Send collector configuration to server
-        6. Map server tool IDs to local tool instances
+        2. Discover available network interfaces
+        3. Load and register available scanning tools locally
+
+        Server registration (RSA key exchange, tool ID mapping) is handled
+        separately by register_with_server(), called from get_recon_manager().
 
         Args:
             token (str): Authentication token for server communication
@@ -862,43 +865,70 @@ class ReconManager:
         self.token = token
         self.debug = False
         self.manager_url = manager_url
-        self._api_client = ApiClient(token, manager_url)
+        self._api_client = None
 
         # Discover available network interfaces
         self.network_ifaces = self.get_network_interfaces()
 
-        # Initialize tool management
+        # Initialize tool management — this is pure local work, done once
         self.waluigi_tool_map: Dict[str, Any] = {}
         tool_classes = data_model.get_tool_classes()
 
         # Create tool instances from available tool classes
-        tool_name_inst_map = {}
+        self._tool_name_inst_map: Dict[str, Any] = {}
         for tool_class in tool_classes:
             tool_inst = tool_class()
-            tool_name_inst_map[tool_inst.name] = tool_inst
+            self._tool_name_inst_map[tool_inst.name] = tool_inst
 
-        # Prepare collector data for server registration
-        collector_tools = []
-        for tool_obj in tool_name_inst_map.values():
-            collector_tools.append(tool_obj.to_jsonable())
+        # Serialize tool descriptors once — calls modules_func() per tool
+        # (fingerprinting, version checks, module enumeration) which is
+        # expensive.  Cached here so retries don't repeat the work.
+        self._collector_tools: List[Dict[str, Any]] = [
+            tool_obj.to_jsonable()
+            for tool_obj in self._tool_name_inst_map.values()
+        ]
+
+    def register_with_server(self) -> None:
+        """
+        Register collector with the management server and map tool IDs.
+
+        Creates (or re-creates) the API client, sends the collector's network
+        interfaces and tool list to the server, receives back the server-assigned
+        tool ID mapping, and populates waluigi_tool_map.  Can be called again
+        on reconnect without re-importing tool modules.
+
+        Raises:
+            SessionException: If the server doesn't return a valid tool mapping
+        """
+        # Create / re-create API client (performs RSA key exchange)
+        try:
+            self._api_client = ApiClient(self.token, self.manager_url)
+        except Exception as e:
+            raise SessionException(
+                "Failed to establish session with server: %s" % e) from e
 
         collector_data = {
             'interfaces': self.network_ifaces,
-            'tools': collector_tools
+            'tools': self._collector_tools,
         }
 
         # Register collector with server and get tool mappings
-        ret_obj = self._api_client.update_collector(collector_data)
+        try:
+            ret_obj = self._api_client.update_collector(collector_data)
+        except Exception as e:
+            raise SessionException(
+                "Failed to register collector with server: %s" % e) from e
         if ret_obj:
             if 'tool_name_id_map' in ret_obj:
                 tool_name_id_map = ret_obj['tool_name_id_map']
                 if len(tool_name_id_map) > 0:
                     # Map server tool IDs to local tool instances
+                    self.waluigi_tool_map = {}
                     for tool_name in tool_name_id_map:
                         tool_id = tool_name_id_map[tool_name]
                         tool_id_hex = format(int(tool_id), 'x')
-                        if tool_name in tool_name_inst_map:
-                            self.waluigi_tool_map[tool_id_hex] = tool_name_inst_map[tool_name]
+                        if tool_name in self._tool_name_inst_map:
+                            self.waluigi_tool_map[tool_id_hex] = self._tool_name_inst_map[tool_name]
                         else:
                             logging.getLogger(__name__).debug(
                                 "%s tool not found in tool name instance map." % tool_name)
