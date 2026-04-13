@@ -54,10 +54,7 @@ import random
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 # Global URL tracking set to prevent duplicate scanning
 url_set: Set[str] = set()
@@ -66,103 +63,35 @@ url_set: Set[str] = set()
 SQLMAP_PATH = "/opt/sqlmap/sqlmap.py"
 
 
-class Sqlmap(data_model.WaluigiTool):
-    """
-    SQLMap SQL injection scanner integration for the Waluigi framework.
+class Sqlmap(ToolSpec):
 
-    This class provides integration with SQLMap, a powerful open-source
-    penetration testing tool that automates the detection and exploitation
-    of SQL injection flaws. It implements the WaluigiTool interface to provide
-    SQL injection testing capabilities within the reconnaissance workflow.
+    name = 'sqlmap'
+    description = (
+        'SQLMap is an open source penetration testing tool that automates '
+        'the process of detecting and exploiting SQL injection flaws and '
+        'taking over database servers'
+    )
+    project_url = 'https://sqlmap.org/'
+    tags = ['vuln-scan']
+    collector_type = data_model.CollectorType.ACTIVE.value
+    scan_order = 12
+    args = '--batch --level=1 --risk=1 --crawl=2'
+    input_records = [
+        data_model.ServerRecordType.PORT,
+        data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+    ]
+    output_records = [
+        data_model.ServerRecordType.VULNERABILITY,
+    ]
 
-    Attributes:
-        name (str): The tool identifier ('sqlmap')
-        description (str): Human-readable description of the tool's purpose
-        project_url (str): URL to the SQLMap project repository
-        collector_type (int): Identifies this as an active scanning tool
-        scan_order (int): Execution priority within the scanning workflow (12)
-        args (str): Default command-line arguments for automated scanning
-        scan_func (callable): Static method for executing scan operations
-        import_func (callable): Static method for importing scan results
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
 
-    Methods:
-        sqlmap_scan_func: Executes SQL injection scanning operations
-        sqlmap_import: Imports and processes scan results
-
-    Example:
-        >>> tool = Sqlmap()
-        >>> print(tool.name)
-        sqlmap
-
-        >>> # Execute scan through the framework
-        >>> success = tool.scan_func(scan_input_obj)
-        >>> if success:
-        ...     imported = tool.import_func(scan_input_obj)
-
-    Note:
-        Default arguments use --batch for non-interactive mode with level 1
-        and risk 1 for safe, automated scanning behaviour.
-        The scan_order of 12 positions this tool after FeroxBuster (10) so
-        that discovered endpoints can also be tested for SQL injection.
-    """
-
-    def __init__(self) -> None:
-        """
-        Initialize the SQLMap tool with default configuration.
-
-        Sets up the tool with safe default parameters for SQL injection scanning,
-        including non-interactive batch mode and conservative testing levels to
-        ensure effective and responsible scanning behaviour.
-        """
-        super().__init__()
-        self.name = 'sqlmap'
-        self.description = (
-            'SQLMap is an open source penetration testing tool that automates '
-            'the process of detecting and exploiting SQL injection flaws and '
-            'taking over database servers'
+    def parse_output(self, output_path: str, scan_input) -> list:
+        return parse_sqlmap_output(
+            output_path,
+            scan_input.current_tool_instance_id,
         )
-        self.project_url = "https://sqlmap.org/"
-        self.tags = ['vuln-scan']
-        self.collector_type = data_model.CollectorType.ACTIVE.value
-        self.scan_order = 12
-        self.args = "--batch --level=1 --risk=1 --crawl=2"
-        self.scan_func = Sqlmap.sqlmap_scan_func
-        self.import_func = Sqlmap.sqlmap_import
-        self.input_records = [
-            data_model.ServerRecordType.PORT,
-            data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
-        ]
-        self.output_records = [
-            data_model.ServerRecordType.VULNERABILITY,
-        ]
-
-    @staticmethod
-    def sqlmap_scan_func(scan_input: Any) -> bool:
-        try:
-            execute_scan(scan_input)
-            return True
-        except Exception as e:
-            logging.getLogger(__name__).error(
-                "SQLMap scan failed: %s", e, exc_info=True)
-            raise
-
-    @staticmethod
-    def sqlmap_import(scan_input: Any) -> bool:
-        try:
-            output_path = get_output_path(scan_input)
-            if not os.path.exists(output_path):
-                return True
-            if _import_already_done(scan_input, output_path):
-                return True
-            scheduled_scan_obj = scan_input
-            tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-            ret_arr = parse_sqlmap_output(output_path, tool_instance_id)
-            _import_results(scan_input, ret_arr, output_path)
-            return True
-        except Exception as e:
-            logging.getLogger(__name__).error(
-                "SQLMap import failed: %s", e, exc_info=True)
-            raise
 
 
 def get_output_path(scan_input: Any) -> str:
@@ -357,4 +286,3 @@ def parse_sqlmap_output(
             ret_arr.append(vuln_obj)
 
     return ret_arr
-

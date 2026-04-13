@@ -58,99 +58,55 @@ import hashlib
 import base64
 import logging
 import asyncio
+import math
 import shlex
-import time
 from typing import Dict, Tuple, Any, Optional, List
 
 from waluigi import scan_utils
 from waluigi import data_model
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 # Global future mapping for screenshot target management and deduplication
 future_map: Dict[str, Tuple[int, Optional[int], Optional[str], str]] = {}
 
 
-class Webcap(data_model.WaluigiTool):
-    """
-    Webcap Chrome-based screenshot capture integration for the Waluigi framework.
+class Webcap(ToolSpec):
 
-    This class provides integration with Webcap, a modern Python library that uses
-    Chrome/Chromium for automated web page screenshot capture. It implements the
-    WaluigiTool interface to provide high-quality visual reconnaissance capabilities
-    within the security scanning workflow.
+    name = 'webcap'
+    description = 'A python library that can be used for taking screenshots of web pages using Chrome and Webcap. Currently only the timeout and threads options can be set.'
+    project_url = 'https://github.com/blacklanternsecurity/webcap'
+    tags = ['screenshot', 'load-balancer-compatible']
+    collector_type = data_model.CollectorType.ACTIVE.value
+    scan_order = 8
+    args = '--timeout 5 --threads 5 --quality 20 --format jpeg'
+    input_records = [data_model.ServerRecordType.PORT,
+                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+    output_records = [
+        data_model.ServerRecordType.SCREENSHOT,
+        data_model.ServerRecordType.DOMAIN,
+        data_model.ServerRecordType.LIST_ITEM,
+        data_model.ServerRecordType.HTTP_ENDPOINT,
+        data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+    ]
 
-    Webcap offers several advantages over PhantomJS-based solutions:
-        - Modern Chrome rendering engine for accurate page representation
-        - Asynchronous processing for superior performance
-        - Configurable quality, timeout, and concurrency settings
-        - Better JavaScript execution and modern web standard support
-        - Robust error handling with automatic browser restart capabilities
-
-    Attributes:
-        name (str): The tool identifier ('webcap')
-        description (str): Human-readable description of the tool's capabilities
-        project_url (str): URL to the official Webcap project repository
-        collector_type (int): Identifies this as an active scanning tool
-        scan_order (int): Execution priority within the scanning workflow (8)
-        args (str): Default command-line arguments for optimal performance
-        scan_func (callable): Static method for executing screenshot operations
-        import_func (callable): Static method for importing screenshot results
-
-    Methods:
-        webcap_scan_func: Executes Chrome-based screenshot capture operations
-        webcap_import: Imports and processes screenshot results
-
-    Example:
-        >>> tool = Webcap()
-        >>> print(tool.name)
-        webcap
-
-        >>> # Execute screenshot capture through the framework
-        >>> success = tool.scan_func(scan_input_obj)
-        >>> if success:
-        ...     imported = tool.import_func(scan_input_obj)
-
-    Note:
-        Default arguments include 5-second timeout, 5 concurrent threads, and 100%
-        quality for optimal balance of performance and output quality. The scan_order
-        of 8 positions this tool to run after endpoint discovery phases.
-    """
-
-    def __init__(self) -> None:
-        """
-        Initialize the Webcap tool with default configuration.
-
-        Sets up the tool with optimized parameters for Chrome-based screenshot
-        capture, including performance tuning and logging configuration to
-        reduce verbose websocket output.
-        """
+    def __init__(self):
         super().__init__()
-        self.name = 'webcap'
-        self.description = 'A python library that can be used for taking screenshots of web pages using Chrome and Webcap. Currently only the timeout and threads options can be set.'
-        self.project_url = 'https://github.com/blacklanternsecurity/webcap'
-        self.tags = ['screenshot', 'load-balancer-compatible']
-        self.collector_type = data_model.CollectorType.ACTIVE.value
-        self.scan_order = 8
-        self.args = "--timeout 5 --threads 5 --quality 20 --format jpeg"
-        self.input_records = [data_model.ServerRecordType.PORT,
-                              data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
-        self.output_records = [
-            data_model.ServerRecordType.SCREENSHOT,
-            data_model.ServerRecordType.DOMAIN,
-            data_model.ServerRecordType.LIST_ITEM,
-            data_model.ServerRecordType.HTTP_ENDPOINT,
-            data_model.ServerRecordType.HTTP_ENDPOINT_DATA
-        ]
-        self.scan_func = webcap_scan_func
-        self.import_func = webcap_import
+        # Suppress verbose websocket/httpcore output
+        logging.getLogger('websockets.client').setLevel(logging.WARNING)
+        logging.getLogger('httpcore.http11').setLevel(logging.WARNING)
+        logging.getLogger('httpcore.connection').setLevel(logging.WARNING)
 
-        # Set logging higher for websockets and httpcore to avoid too much output
-        logging.getLogger("websockets.client").setLevel(logging.WARNING)
-        logging.getLogger("httpcore.http11").setLevel(logging.WARNING)
-        logging.getLogger("httpcore.connection").setLevel(logging.WARNING)
+    def get_output_path(self, scan_input) -> str:
+        return get_output_path(scan_input)
+
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
+
+    def parse_output(self, output_path: str, scan_input) -> list:
+        return parse_webcap_output(
+            output_path,
+            scan_input.current_tool_instance_id,
+        ) or []
 
 
 def parse_args(args_str: str) -> Tuple[int, int, int]:
@@ -275,29 +231,40 @@ async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
                 url_entry = {'port_id': port_id,
                              'http_endpoint_data_id': http_endpoint_data_id, 'path': path, 'domain': domain_str}
 
-                # take a screenshot
-                webscreenshot = None
-                try:
-                    webscreenshot = await browser.screenshot(url)
-                except WebCapError as e:
-                    # stop the browser properly
+                async def _restart_browser():
+                    nonlocal browser
                     try:
                         await browser.stop()
                     except Exception:
-                        pass  # Ignore cleanup errors
-                    logging.getLogger(__name__).error(
-                        f"WebCapError, restarting browser: {str(e)}")
-                    # Restart the browser
+                        pass
                     browser = Browser(timeout=timeout, threads=threads,
                                       image_format=image_format, quality=quality)
                     await browser.start()
-                    continue
-                except Exception as e:
-                    logging.getLogger(__name__).error(
-                        f"Error taking screenshot for {url}: {str(e)}")
-                    logging.getLogger(__name__).debug(traceback.format_exc())
-                    # Don't break here - continue with remaining URLs
-                    continue
+                    # Brief pause to let Chrome fully initialise before the
+                    # next request
+                    await asyncio.sleep(1)
+
+                # Take a screenshot, retrying once if the browser session is
+                # broken (WebCapError).  Using a retry avoids silently
+                # dropping the URL that triggered the restart.
+                webscreenshot = None
+                for _attempt in range(2):
+                    try:
+                        webscreenshot = await browser.screenshot(url)
+                        break
+                    except WebCapError as e:
+                        logging.getLogger(__name__).error(
+                            f"WebCapError (attempt {_attempt + 1}), restarting browser: {str(e)}")
+                        await _restart_browser()
+                        if _attempt == 1:
+                            logging.getLogger(__name__).warning(
+                                f"Skipping {url} after two browser restart attempts")
+                    except Exception as e:
+                        logging.getLogger(__name__).error(
+                            f"Error taking screenshot for {url}: {str(e)}")
+                        logging.getLogger(__name__).debug(
+                            traceback.format_exc())
+                        break
 
                 if webscreenshot and webscreenshot.status_code != 0:
                     url_entry['url'] = url
@@ -317,19 +284,9 @@ async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
                         f"Failed to take screenshot for {url}")
 
                 if browser.orphaned_session:
-                    # stop the browser properly
-                    try:
-                        await browser.stop()
-                    except Exception:
-                        pass  # Ignore cleanup errors
-                    time.sleep(3)
                     logging.getLogger(__name__).debug(
-                        f"Orphaned session detected. Restarting")
-                    # Restart the browser
-                    browser = Browser(timeout=timeout, threads=threads,
-                                      image_format=image_format, quality=quality)
-                    await browser.start()
-                    continue
+                        "Orphaned session detected. Restarting")
+                    await _restart_browser()
 
     finally:
         # Ensure browser is always stopped, even if there are errors
@@ -406,7 +363,21 @@ def execute_scan(scan_input) -> None:
     scheduled_scan_obj.register_tool_executor(
         scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
-    future_inst.result()
+    # Derive a wall-clock timeout so we never hang indefinitely.
+    # Formula: ceil(urls / threads) * per_page_timeout * 3  (3× overhead for
+    # browser startup / slow pages), with a minimum of 60 s.
+    per_page_timeout, threads, _, _ = parse_args(webcap_scan_args)
+    url_count = len(future_map)
+    batches = math.ceil(url_count / threads) if url_count and threads else 1
+    wall_timeout = max(batches * per_page_timeout * 3, 60)
+
+    try:
+        future_inst.result(timeout=wall_timeout)
+    except TimeoutError:
+        logging.getLogger(__name__).warning(
+            "WebcapScan timed out after %ds (%d URLs, %d threads, %ds/page)",
+            wall_timeout, url_count, threads, per_page_timeout,
+        )
 
 
 def parse_webcap_output(meta_file, tool_instance_id):
@@ -497,31 +468,3 @@ def parse_webcap_output(meta_file, tool_instance_id):
             ret_arr.append(http_endpoint_data_obj)
 
     return ret_arr
-
-
-def webcap_scan_func(scan_input) -> bool:
-    try:
-        execute_scan(scan_input)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "webcap scan failed: %s", e, exc_info=True)
-        raise
-
-
-def webcap_import(scan_input) -> bool:
-    try:
-        output_path = get_output_path(scan_input)
-        if not os.path.exists(output_path):
-            return True
-        if _import_already_done(scan_input, output_path):
-            return True
-        tool_instance_id = scan_input.current_tool_instance_id
-        ret_arr = parse_webcap_output(output_path, tool_instance_id)
-        if ret_arr:
-            _import_results(scan_input, ret_arr, output_path)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "webcap import failed: %s", e, exc_info=True)
-        raise

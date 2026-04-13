@@ -57,86 +57,42 @@ from typing import Dict, Tuple, Any, Optional, List
 from waluigi import scan_utils
 from os.path import exists
 from waluigi import data_model
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 # Global future mapping for screenshot target management and deduplication
 future_map: Dict[str, Tuple[Optional[int], Tuple]] = {}
 
 
-class Pyshot(data_model.WaluigiTool):
-    """
-    Pyshot web page screenshot capture integration for the Waluigi framework.
+class Pyshot(ToolSpec):
 
-    This class provides integration with Pyshot, a Python library that uses PhantomJS
-    for automated web page screenshot capture. It implements the WaluigiTool interface
-    to provide visual reconnaissance capabilities within the security scanning workflow.
+    name = 'pyshot'
+    description = 'A python library that can be used for taking screenshots of web pages using PhantomJS.'
+    project_url = 'https://github.com/securifera/pyshot'
+    tags = ['screenshot', 'load-balancer-incompatible']
+    collector_type = data_model.CollectorType.ACTIVE.value
+    scan_order = 8
+    args = ''
+    input_records = [data_model.ServerRecordType.PORT,
+                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+    output_records = [
+        data_model.ServerRecordType.SCREENSHOT,
+        data_model.ServerRecordType.DOMAIN,
+        data_model.ServerRecordType.LIST_ITEM,
+        data_model.ServerRecordType.HTTP_ENDPOINT,
+        data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+    ]
 
-    Pyshot is particularly useful for:
-        - Visual confirmation of discovered web endpoints
-        - Documentation of web application interfaces
-        - Identification of interesting login pages or admin panels
-        - Evidence collection for security assessments
+    def get_output_path(self, scan_input) -> str:
+        return get_output_path(scan_input)
 
-    Attributes:
-        name (str): The tool identifier ('pyshot')
-        description (str): Human-readable description of the tool's purpose
-        project_url (str): URL to the official Pyshot project repository
-        collector_type (int): Identifies this as an active scanning tool
-        scan_order (int): Execution priority within the scanning workflow (8)
-        args (str): Command-line arguments (empty for this tool)
-        scan_func (callable): Static method for executing screenshot operations
-        import_func (callable): Static method for importing screenshot results
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
 
-    Methods:
-        pyshot_scan_func: Executes screenshot capture operations
-        pyshot_import: Imports and processes screenshot results
-
-    Example:
-        >>> tool = Pyshot()
-        >>> print(tool.name)
-        pyshot
-
-        >>> # Execute screenshot capture through the framework
-        >>> success = tool.scan_func(scan_input_obj)
-        >>> if success:
-        ...     imported = tool.import_func(scan_input_obj)
-
-    Note:
-        The scan_order of 8 positions this tool to run after endpoint discovery
-        but before final reporting phases. PhantomJS must be installed and
-        accessible in the system PATH for proper operation.
-    """
-
-    def __init__(self) -> None:
-        """
-        Initialize the Pyshot tool with default configuration.
-
-        Sets up the tool with appropriate parameters for web page screenshot
-        capture, including integration points for the scanning and import
-        workflow phases.
-        """
-        super().__init__()
-        self.name = 'pyshot'
-        self.description = 'A python library that can be used for taking screenshots of web pages using PhantomJS.'
-        self.project_url = 'https://github.com/securifera/pyshot'
-        self.tags = ['screenshot', 'load-balancer-incompatible']
-        self.collector_type = data_model.CollectorType.ACTIVE.value
-        self.scan_order = 8
-        self.args = ""
-        self.scan_func = pyshot_scan_func
-        self.import_func = pyshot_import
-        self.input_records = [data_model.ServerRecordType.PORT,
-                              data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
-        self.output_records = [
-            data_model.ServerRecordType.SCREENSHOT,
-            data_model.ServerRecordType.DOMAIN,
-            data_model.ServerRecordType.LIST_ITEM,
-            data_model.ServerRecordType.HTTP_ENDPOINT,
-            data_model.ServerRecordType.HTTP_ENDPOINT_DATA
-        ]
+    def parse_output(self, output_path: str, scan_input) -> list:
+        return parse_pyshot_output(
+            output_path,
+            scan_input.current_tool_instance_id,
+        ) or []
 
 
 def pyshot_wrapper(ip_addr: str, port: str, dir_path: str, ssl_val: bool, port_id: int,

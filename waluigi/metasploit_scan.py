@@ -35,10 +35,7 @@ import logging
 
 from waluigi import scan_utils
 from waluigi import data_model
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 
 def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: str,
@@ -238,65 +235,223 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
     return console_output
 
 
-class Metasploit(data_model.WaluigiTool):
-    """
-    Metasploit network scanner tool configuration.
+class Metasploit(ToolSpec):
 
-    This class configures the Metasploit Framework for integration with the
-    Waluigi framework. Metasploit is the industry-standard penetration testing
-    platform that can perform exploitation, post-exploitation, and security
-    assessment via the msfrpc daemon interface.
+    name = 'metasploit'
+    description = 'Metasploit Framework is a penetration testing platform that interfaces with the msfrpc daemon to execute exploits, auxiliary modules, and post-exploitation tasks on a computer network.'
+    project_url = 'https://github.com/rapid7/metasploit-framework'
+    tags = ['vuln-scan', 'authenticated', 'service-detection', 'exploitation']
+    collector_type = data_model.CollectorType.ACTIVE.value
+    scan_order = 6
+    args = ''
+    input_records = [
+        data_model.ServerRecordType.SUBNET,
+        data_model.ServerRecordType.HOST,
+        data_model.ServerRecordType.PORT,
+    ]
+    output_records = [
+        data_model.ServerRecordType.COLLECTION_MODULE,
+        data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
+        data_model.ServerRecordType.DOMAIN,
+        data_model.ServerRecordType.PORT,
+        data_model.ServerRecordType.HOST,
+    ]
 
-    The tool is configured for comprehensive network exploitation with module
-    execution and payload delivery capabilities.
-
-    Attributes:
-        name (str): Tool identifier name
-        description (str): Human-readable tool description
-        project_url (str): Official project URL
-        collector_type (str): Type of collection (ACTIVE)
-        scan_order (int): Execution order in scan chain
-        args (str): Default command line arguments
-        scan_func (callable): Function to execute scans
-        import_func (callable): Function to import results
-
-    Example:
-        >>> metasploit_tool = Metasploit()
-        >>> print(metasploit_tool.name)
-        'metasploit'
-        >>> metasploit_tool.scan_func(scan_input)
-        True
-    """
-
-    def __init__(self) -> None:
-        """
-        Initialize Metasploit tool configuration.
-
-        Sets up the tool with default parameters for comprehensive penetration
-        testing including exploitation, post-exploitation, and security assessment
-        via msfrpc daemon interface.
-        """
+    def __init__(self):
         super().__init__()
-        self.name: str = 'metasploit'
-        self.description: str = 'Metasploit Framework is a penetration testing platform that interfaces with the msfrpc daemon to execute exploits, auxiliary modules, and post-exploitation tasks on a computer network.'
-        self.project_url: str = "https://github.com/rapid7/metasploit-framework"
-        self.tags = ['vuln-scan', 'authenticated',
-                     'service-detection', 'exploitation']
-        self.collector_type: str = data_model.CollectorType.ACTIVE.value
-        self.scan_order: int = 6
-        self.args: str = ""
-        self.scan_func = metasploit_scan_func
-        self.import_func = metasploit_import
         self.modules_func = Metasploit.metasploit_modules
-        self.input_records = [
-            data_model.ServerRecordType.SUBNET, data_model.ServerRecordType.HOST, data_model.ServerRecordType.PORT]
-        self.output_records = [
-            data_model.ServerRecordType.COLLECTION_MODULE,
-            data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
-            data_model.ServerRecordType.DOMAIN,
-            data_model.ServerRecordType.PORT,
-            data_model.ServerRecordType.HOST
-        ]
+
+    def get_output_path(self, scan_input) -> str:
+        return get_output_path(scan_input)
+
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
+
+    def parse_output(self, output_path: str, scan_input) -> list:
+        ret_arr: List[Any] = []
+        module_id_map: Dict[str, str] = {}
+
+        tool_instance_id = scan_input.current_tool_instance_id
+        scope_obj = scan_input.scan_data
+        tool_id = scan_input.current_tool.id
+
+        if not os.path.exists(output_path):
+            return ret_arr
+
+        with open(output_path) as file_fd:
+            json_input = file_fd.read()
+
+        if not json_input:
+            return ret_arr
+
+        metasploit_scan_obj = json.loads(json_input)
+        for metasploit_scan_entry in metasploit_scan_obj.get('metasploit_scan_list', []):
+            metasploit_out = metasploit_scan_entry['output_file']
+            protocol = metasploit_scan_entry['protocol']
+            if not (os.path.exists(metasploit_out) and os.path.getsize(metasploit_out) > 0):
+                continue
+            try:
+                with open(metasploit_out, 'r') as output_file:
+                    all_output = output_file.read()
+
+                ip_lines_map: Dict[str, List[str]] = {}
+                ip_port_map_local: Dict[str, str] = {}
+                current_ip: Optional[str] = None
+
+                for line in all_output.split('\n'):
+                    stripped = line.strip()
+                    if stripped.startswith('[*]') or stripped.startswith('[+]') or \
+                            stripped.startswith('[-]') or stripped.startswith('[!]'):
+                        content = stripped[3:].strip()
+                        ip_match = re.match(
+                            r'^(\d+\.\d+\.\d+\.\d+):(\d+)\s+-\s+', content)
+                        if ip_match:
+                            ip = ip_match.group(1)
+                            port = ip_match.group(2)
+                            current_ip = ip
+                            if ip not in ip_lines_map:
+                                ip_lines_map[ip] = []
+                                ip_port_map_local[ip] = port
+                            ip_lines_map[ip].append(stripped)
+                        else:
+                            ip_match = re.match(
+                                r'^(\d+\.\d+\.\d+\.\d+)\s+-\s+', content)
+                            if ip_match:
+                                ip = ip_match.group(1)
+                                current_ip = ip
+                                if ip not in ip_lines_map:
+                                    ip_lines_map[ip] = []
+                                    ip_port_map_local[ip] = str(
+                                        metasploit_scan_entry.get('port', '0'))
+                                ip_lines_map[ip].append(stripped)
+                    elif stripped and current_ip is not None:
+                        ip_lines_map[current_ip].append(stripped)
+
+                module_key = protocol
+                if module_key not in module_id_map:
+                    module_obj = data_model.CollectionModule(parent_id=tool_id)
+                    module_obj.collection_tool_instance_id = tool_instance_id
+                    module_obj.name = module_key.lower()
+                    ret_arr.append(module_obj)
+                    module_id_map[module_key] = module_obj.id
+                temp_module_id = module_id_map[module_key]
+
+                host_id_map: Dict[str, str] = {}
+                port_id_map: Dict[tuple, str] = {}
+                domain_id_map: Dict[str, str] = {}
+                host_os_map: Dict[str, tuple] = {}
+
+                for ip_address, ip_lines in ip_lines_map.items():
+                    port_str = ip_port_map_local.get(
+                        ip_address,
+                        str(metasploit_scan_entry.get('port', '0')))
+                    hostname = ip_address
+                    server_os = None
+
+                    for ln in ip_lines:
+                        if ln.startswith('['):
+                            msg = ln[3:].strip()
+                            os_match = re.search(
+                                r'Host is running (.+?)(?:\s+\(build:|\s*$)', msg)
+                            if os_match:
+                                server_os = os_match.group(1).strip()
+                                break
+                        else:
+                            tbl = re.match(r'^(os\.\w+)\s{2,}(\S[^\s]*)$', ln)
+                            if tbl:
+                                key, value = tbl.group(1), tbl.group(2).strip()
+                                if key == 'os.product' and not server_os:
+                                    server_os = value
+                                elif key == 'os.family' and not server_os:
+                                    server_os = value
+
+                    host_id: Optional[str] = None
+                    port_id: Optional[str] = None
+                    host_key = '%s:%s' % (ip_address, port_str)
+                    if host_key in scope_obj.host_port_obj_map:
+                        host_port_dict = scope_obj.host_port_obj_map[host_key]
+                        port_id = host_port_dict['port_obj'].id
+                        host_id = host_port_dict['host_obj'].id
+                    elif ip_address in scope_obj.host_ip_id_map:
+                        host_id = scope_obj.host_ip_id_map[ip_address]
+
+                    if ip_address not in host_id_map:
+                        ip_object = netaddr.IPAddress(ip_address)
+                        host_obj = data_model.Host(id=host_id)
+                        host_obj.collection_tool_instance_id = tool_instance_id
+                        if ip_object.version == 4:
+                            host_obj.ipv4_addr = str(ip_object)
+                        elif ip_object.version == 6:
+                            host_obj.ipv6_addr = str(ip_object)
+                        host_id = host_obj.id
+                        host_id_map[ip_address] = host_id
+                        ret_arr.append(host_obj)
+                    else:
+                        host_id = host_id_map[ip_address]
+
+                    port_key = (host_id, port_str)
+                    if port_key not in port_id_map:
+                        port_obj = data_model.Port(
+                            parent_id=host_id, id=port_id)
+                        port_obj.collection_tool_instance_id = tool_instance_id
+                        port_obj.proto = 0
+                        port_obj.port = port_str
+                        port_id = port_obj.id
+                        port_id_map[port_key] = port_id
+                        ret_arr.append(port_obj)
+                    else:
+                        port_id = port_id_map[port_key]
+
+                    ip_output_obj = data_model.CollectionModuleOutput(
+                        parent_id=temp_module_id)
+                    ip_output_obj.collection_tool_instance_id = tool_instance_id
+                    ip_output_obj.output = '\n'.join(ip_lines)
+                    ip_output_obj.port_id = port_id
+                    ret_arr.append(ip_output_obj)
+
+                    if server_os:
+                        os_name = server_os
+                        os_version = ''
+                        parts = server_os.strip().split()
+                        if len(parts) > 1 and re.match(r'^\d+(\.\d+)*$', parts[-1]):
+                            os_version = parts[-1]
+                            os_name = ' '.join(parts[:-1])
+
+                        should_create_os = False
+                        if host_id not in host_os_map:
+                            should_create_os = True
+                        else:
+                            existing_os_name, existing_os_obj = host_os_map[host_id]
+                            if ' or ' in existing_os_name.lower() and \
+                                    ' or ' not in os_name.lower():
+                                should_create_os = True
+                                ret_arr.remove(existing_os_obj)
+
+                        if should_create_os:
+                            os_obj = data_model.OperatingSystem(
+                                parent_id=host_id)
+                            os_obj.collection_tool_instance_id = tool_instance_id
+                            os_obj.name = os_name
+                            if os_version:
+                                os_obj.version = os_version
+                            ret_arr.append(os_obj)
+                            host_os_map[host_id] = (os_name, os_obj)
+
+                    if ip_address != hostname:
+                        if hostname not in domain_id_map:
+                            domain_obj = data_model.Domain(parent_id=host_id)
+                            domain_obj.collection_tool_instance_id = tool_instance_id
+                            domain_obj.name = hostname
+                            domain_id_map[hostname] = domain_obj.id
+                            ret_arr.append(domain_obj)
+
+            except Exception as e:
+                logging.getLogger(__name__).error(
+                    'Error processing metasploit output file %s: %s',
+                    metasploit_out, str(e))
+                traceback.print_exc()
+
+        return ret_arr
 
     @staticmethod
     def metasploit_modules() -> List:
@@ -699,227 +854,3 @@ def execute_scan(scan_input) -> None:
     if metasploit_scan_data:
         with open(meta_file_path, 'w') as meta_file_fd:
             meta_file_fd.write(json.dumps(metasploit_scan_data))
-
-
-def metasploit_scan_func(scan_input) -> bool:
-    try:
-        execute_scan(scan_input)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "metasploit scan failed: %s", e, exc_info=True)
-        raise
-
-
-def metasploit_import(scan_input) -> bool:
-    try:
-        output_path = get_output_path(scan_input)
-        if not os.path.exists(output_path):
-            return True
-        if _import_already_done(scan_input, output_path):
-            return True
-
-        scheduled_scan_obj = scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        scope_obj = scheduled_scan_obj.scan_data
-        tool_obj = scheduled_scan_obj.current_tool
-        tool_id = tool_obj.id
-
-        ret_arr: List[Any] = []
-        module_id_map: Dict[str, str] = {}
-
-        meta_file = output_path
-        if os.path.exists(meta_file):
-
-            with open(meta_file) as file_fd:
-                json_input = file_fd.read()
-
-            if len(json_input) > 0:
-                metasploit_scan_obj = json.loads(json_input)
-                metasploit_json_arr = metasploit_scan_obj['metasploit_scan_list']
-
-                for metasploit_scan_entry in metasploit_json_arr:
-
-                    metasploit_out = metasploit_scan_entry['output_file']
-                    protocol = metasploit_scan_entry['protocol']
-                    if os.path.exists(metasploit_out) and os.path.getsize(metasploit_out) > 0:
-
-                        try:
-                            with open(metasploit_out, 'r') as output_file:
-                                all_output = output_file.read()
-
-                            logging.getLogger(__name__).debug(
-                                "Scan Output: \n%s" % all_output)
-
-                            ip_lines_map: Dict[str, List[str]] = {}
-                            ip_port_map_local: Dict[str, str] = {}
-                            current_ip: Optional[str] = None
-
-                            for line in all_output.split('\n'):
-                                stripped = line.strip()
-                                if stripped.startswith('[*]') or stripped.startswith('[+]') or \
-                                        stripped.startswith('[-]') or stripped.startswith('[!]'):
-                                    content = stripped[3:].strip()
-                                    ip_match = re.match(
-                                        r'^(\d+\.\d+\.\d+\.\d+):(\d+)\s+-\s+', content)
-                                    if ip_match:
-                                        ip = ip_match.group(1)
-                                        port = ip_match.group(2)
-                                        current_ip = ip
-                                        if ip not in ip_lines_map:
-                                            ip_lines_map[ip] = []
-                                            ip_port_map_local[ip] = port
-                                        ip_lines_map[ip].append(stripped)
-                                    else:
-                                        ip_match = re.match(
-                                            r'^(\d+\.\d+\.\d+\.\d+)\s+-\s+', content)
-                                        if ip_match:
-                                            ip = ip_match.group(1)
-                                            current_ip = ip
-                                            if ip not in ip_lines_map:
-                                                ip_lines_map[ip] = []
-                                                ip_port_map_local[ip] = str(
-                                                    metasploit_scan_entry.get('port', '0'))
-                                            ip_lines_map[ip].append(stripped)
-                                elif stripped and current_ip is not None:
-                                    ip_lines_map[current_ip].append(stripped)
-
-                            module_key = protocol
-                            if module_key not in module_id_map:
-                                module_obj = data_model.CollectionModule(
-                                    parent_id=tool_id)
-                                module_obj.collection_tool_instance_id = tool_instance_id
-                                module_obj.name = module_key.lower()
-                                ret_arr.append(module_obj)
-                                module_id_map[module_key] = module_obj.id
-                            temp_module_id = module_id_map[module_key]
-
-                            host_id_map: Dict[str, str] = {}
-                            port_id_map: Dict[tuple, str] = {}
-                            domain_id_map: Dict[str, str] = {}
-                            host_os_map: Dict[str, tuple] = {}
-
-                            for ip_address, ip_lines in ip_lines_map.items():
-                                port_str = ip_port_map_local.get(
-                                    ip_address,
-                                    str(metasploit_scan_entry.get('port', '0')))
-                                hostname = ip_address
-                                server_os = None
-
-                                for ln in ip_lines:
-                                    if ln.startswith('['):
-                                        msg = ln[3:].strip()
-                                        os_match = re.search(
-                                            r'Host is running (.+?)(?:\s+\(build:|\s*$)', msg)
-                                        if os_match:
-                                            server_os = os_match.group(
-                                                1).strip()
-                                            break
-                                    else:
-                                        tbl = re.match(
-                                            r'^(os\.\w+)\s{2,}(\S[^\s]*)$', ln)
-                                        if tbl:
-                                            key, value = tbl.group(
-                                                1), tbl.group(2).strip()
-                                            if key == 'os.product' and not server_os:
-                                                server_os = value
-                                            elif key == 'os.family' and not server_os:
-                                                server_os = value
-
-                                host_id: Optional[str] = None
-                                port_id: Optional[str] = None
-                                host_key = "%s:%s" % (ip_address, port_str)
-                                if host_key in scope_obj.host_port_obj_map:
-                                    host_port_dict = scope_obj.host_port_obj_map[host_key]
-                                    port_id = host_port_dict["port_obj"].id
-                                    host_id = host_port_dict["host_obj"].id
-                                elif ip_address in scope_obj.host_ip_id_map:
-                                    host_id = scope_obj.host_ip_id_map[ip_address]
-
-                                if ip_address not in host_id_map:
-                                    ip_object = netaddr.IPAddress(ip_address)
-                                    host_obj = data_model.Host(id=host_id)
-                                    host_obj.collection_tool_instance_id = tool_instance_id
-                                    if ip_object.version == 4:
-                                        host_obj.ipv4_addr = str(ip_object)
-                                    elif ip_object.version == 6:
-                                        host_obj.ipv6_addr = str(ip_object)
-                                    host_id = host_obj.id
-                                    host_id_map[ip_address] = host_id
-                                    ret_arr.append(host_obj)
-                                else:
-                                    host_id = host_id_map[ip_address]
-
-                                port_key = (host_id, port_str)
-                                if port_key not in port_id_map:
-                                    port_obj = data_model.Port(
-                                        parent_id=host_id, id=port_id)
-                                    port_obj.collection_tool_instance_id = tool_instance_id
-                                    port_obj.proto = 0
-                                    port_obj.port = port_str
-                                    port_id = port_obj.id
-                                    port_id_map[port_key] = port_id
-                                    ret_arr.append(port_obj)
-                                else:
-                                    port_id = port_id_map[port_key]
-
-                                ip_output_obj = data_model.CollectionModuleOutput(
-                                    parent_id=temp_module_id)
-                                ip_output_obj.collection_tool_instance_id = tool_instance_id
-                                ip_output_obj.output = '\n'.join(ip_lines)
-                                ip_output_obj.port_id = port_id
-                                ret_arr.append(ip_output_obj)
-
-                                if server_os:
-                                    os_name = server_os
-                                    os_version = ''
-                                    parts = server_os.strip().split()
-                                    if len(parts) > 1 and re.match(r'^\d+(\.\d+)*$', parts[-1]):
-                                        os_version = parts[-1]
-                                        os_name = ' '.join(parts[:-1])
-
-                                    should_create_os = False
-                                    if host_id not in host_os_map:
-                                        should_create_os = True
-                                    else:
-                                        existing_os_name, existing_os_obj = host_os_map[host_id]
-                                        if ' or ' in existing_os_name.lower() and \
-                                                ' or ' not in os_name.lower():
-                                            should_create_os = True
-                                            ret_arr.remove(existing_os_obj)
-
-                                    if should_create_os:
-                                        os_obj = data_model.OperatingSystem(
-                                            parent_id=host_id)
-                                        os_obj.collection_tool_instance_id = tool_instance_id
-                                        os_obj.name = os_name
-                                        if os_version:
-                                            os_obj.version = os_version
-                                        ret_arr.append(os_obj)
-                                        host_os_map[host_id] = (
-                                            os_name, os_obj)
-
-                                if ip_address != hostname:
-                                    if hostname not in domain_id_map:
-                                        domain_obj = data_model.Domain(
-                                            parent_id=host_id)
-                                        domain_obj.collection_tool_instance_id = tool_instance_id
-                                        domain_obj.name = hostname
-                                        domain_id = domain_obj.id
-                                        domain_id_map[hostname] = domain_id
-                                        ret_arr.append(domain_obj)
-                                    else:
-                                        domain_id = domain_id_map[hostname]
-
-                        except Exception as e:
-                            logging.getLogger(__name__).error(
-                                "Error processing metasploit output file %s: %s" % (metasploit_out, str(e)))
-                            traceback.print_exc()
-
-        if ret_arr:
-            _import_results(scan_input, ret_arr, output_path)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "metasploit import failed: %s", e, exc_info=True)
-        raise

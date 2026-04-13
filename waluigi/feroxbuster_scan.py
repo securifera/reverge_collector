@@ -58,136 +58,41 @@ from waluigi import scan_utils
 from urllib.parse import urlparse
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 # Global URL tracking set to prevent duplicate scanning
 url_set: Set[str] = set()
 
 
-class Feroxbuster(data_model.WaluigiTool):
-    """
-    Feroxbuster web directory scanner integration for the Waluigi framework.
+class Feroxbuster(ToolSpec):
 
-    This class provides integration with Feroxbuster, a fast, simple, and flexible
-    web directory scanner written in Rust. It implements the WaluigiTool interface
-    to provide directory brute-forcing capabilities within the reconnaissance workflow.
+    name = 'feroxbuster'
+    description = 'Feroxbuster is a fast, simple, and flexible web directory scanner written in Rust'
+    project_url = 'https://github.com/epi052/feroxbuster'
+    tags = ['http-crawl']
+    collector_type = data_model.CollectorType.ACTIVE.value
+    scan_order = 10
+    args = '--rate-limit 50 -s 200 -n --auto-bail'
+    input_records = [data_model.ServerRecordType.PORT,
+                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+    output_records = [
+        data_model.ServerRecordType.DOMAIN,
+        data_model.ServerRecordType.LIST_ITEM,
+        data_model.ServerRecordType.HTTP_ENDPOINT,
+        data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+    ]
 
-    Feroxbuster is particularly effective for discovering hidden directories and files
-    on web servers through dictionary-based brute-force attacks with high performance
-    and reliability.
+    def get_output_path(self, scan_input) -> str:
+        return get_output_path(scan_input)
 
-    Attributes:
-        name (str): The tool identifier ('feroxbuster')
-        description (str): Human-readable description of the tool's purpose
-        project_url (str): URL to the official Feroxbuster project repository
-        collector_type (int): Identifies this as an active scanning tool
-        scan_order (int): Execution priority within the scanning workflow (10)
-        args (str): Default command-line arguments for optimal scanning
-        scan_func (callable): Static method for executing scan operations
-        import_func (callable): Static method for importing scan results
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
 
-    Methods:
-        feroxbuster_scan_func: Executes directory scanning operations
-        feroxbuster_import: Imports and processes scan results
-
-    Example:
-        >>> tool = Feroxbuster()
-        >>> print(tool.name)
-        feroxbuster
-
-        >>> # Execute scan through the framework
-        >>> success = tool.scan_func(scan_input_obj)
-        >>> if success:
-        ...     imported = tool.import_func(scan_input_obj)
-
-    Note:
-        Default arguments include rate limiting (50 req/s), filtering for 200 status
-        codes, and no recursion to balance performance with target server load.
-        The scan_order of 10 positions this tool appropriately in the workflow.
-    """
-
-    def __init__(self) -> None:
-        """
-        Initialize the Feroxbuster tool with default configuration.
-
-        Sets up the tool with optimized default parameters for web directory
-        scanning, including rate limiting and response filtering to ensure
-        effective and responsible scanning behavior.
-        """
-        super().__init__()
-        self.name = 'feroxbuster'
-        self.description = 'Feroxbuster is a fast, simple, and flexible web directory scanner written in Rust'
-        self.project_url = "https://github.com/epi052/feroxbuster"
-        self.tags = ['http-crawl']
-        self.collector_type = data_model.CollectorType.ACTIVE.value
-        self.scan_order = 10
-        self.args = "--rate-limit 50 -s 200 -n --auto-bail"
-        self.scan_func = Feroxbuster.feroxbuster_scan_func
-        self.import_func = Feroxbuster.feroxbuster_import
-        self.input_records = [data_model.ServerRecordType.PORT,
-                              data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
-        self.output_records = [
-            data_model.ServerRecordType.DOMAIN,
-            data_model.ServerRecordType.LIST_ITEM,
-            data_model.ServerRecordType.HTTP_ENDPOINT,
-            data_model.ServerRecordType.HTTP_ENDPOINT_DATA
-        ]
-
-    @staticmethod
-    def feroxbuster_scan_func(scan_input: Any) -> bool:
-        """
-        Execute Feroxbuster directory scanning operations.
-
-        This static method serves as the entry point for executing Feroxbuster scans
-        within the Waluigi framework. It builds and runs the FeroxScan Luigi task
-        with the provided scan input configuration.
-
-        Args:
-            scan_input (Any): The scan input object containing target information,
-                            tool configuration, and execution parameters
-
-        Returns:
-            bool: True if the scan completed successfully, False otherwise
-
-        Example:
-            >>> scan_obj = create_scan_input(...)  # Configure scan
-            >>> success = Feroxbuster.feroxbuster_scan_func(scan_obj)
-            >>> print(f"Scan successful: {success}")
-
-        Note:
-            Uses Luigi's local scheduler for task execution and provides detailed
-            summary information for debugging and monitoring purposes.
-        """
-    @staticmethod
-    def feroxbuster_scan_func(scan_input: Any) -> bool:
-        try:
-            execute_scan(scan_input)
-            return True
-        except Exception as e:
-            logging.getLogger(__name__).error(
-                "Feroxbuster scan failed: %s", e, exc_info=True)
-            raise
-
-    @staticmethod
-    def feroxbuster_import(scan_input: Any) -> bool:
-        try:
-            output_path = get_output_path(scan_input)
-            if not os.path.exists(output_path):
-                return True
-            if _import_already_done(scan_input, output_path):
-                return True
-            scheduled_scan_obj = scan_input
-            tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-            ret_arr = parse_feroxbuster_output(output_path, tool_instance_id)
-            _import_results(scan_input, ret_arr, output_path)
-            return True
-        except Exception as e:
-            logging.getLogger(__name__).error(
-                "Feroxbuster import failed: %s", e, exc_info=True)
-            raise
+    def parse_output(self, output_path: str, scan_input) -> list:
+        return parse_feroxbuster_output(
+            output_path,
+            scan_input.current_tool_instance_id,
+        )
 
 
 def get_output_path(scan_input: Any) -> str:

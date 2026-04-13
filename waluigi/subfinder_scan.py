@@ -41,91 +41,35 @@ from typing import List, Dict, Set, Optional, Any, Tuple
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 
-class Subfinder(data_model.WaluigiTool):
-    """
-    Subfinder tool integration for passive subdomain discovery.
+class Subfinder(ToolSpec):
 
-    This class integrates the Subfinder tool into the Waluigi framework, providing
-    passive subdomain enumeration capabilities using various online sources and APIs.
-    Subfinder is optimized for speed and uses a modular architecture.
+    name = 'subfinder'
+    description = 'subfinder is a subdomain discovery tool that returns valid subdomains for websites, using passive online sources. It has a simple, modular architecture and is optimized for speed.'
+    project_url = 'https://github.com/projectdiscovery/subfinder'
+    tags = ['passive', 'dns-enum']
+    collector_type = data_model.CollectorType.PASSIVE.value
+    scan_order = 1
+    args = '-all'
+    input_records = [data_model.ServerRecordType.DOMAIN]
+    output_records = [
+        data_model.ServerRecordType.HOST,
+        data_model.ServerRecordType.DOMAIN,
+    ]
 
-    The tool supports multiple data sources including:
-    - Certificate Transparency logs
-    - Search engines (Google, Bing, Yahoo)
-    - DNS aggregators and databases
-    - Security vendors APIs (Shodan, SecurityTrails, Chaos)
+    def get_output_path(self, scan_input) -> str:
+        return get_output_path(scan_input)
 
-    Attributes:
-        name (str): Tool name identifier
-        description (str): Detailed tool description
-        project_url (str): URL to the Subfinder project
-        collector_type (int): Type of collection (PASSIVE)
-        scan_order (int): Execution order in scan workflow
-        args (str): Default command-line arguments
-        scan_func (callable): Function to execute subdomain scans
-        import_func (callable): Function to import scan results
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
 
-    Example:
-        >>> subfinder = Subfinder()
-        >>> print(subfinder.name)  # "subfinder"
-        >>> print(subfinder.collector_type)  # PASSIVE collection type
-    """
-
-    def __init__(self) -> None:
-        """
-        Initialize the Subfinder tool configuration.
-
-        Sets up the tool with default parameters, scan functions, and metadata
-        required for integration with the Waluigi scanning framework.
-        """
-        super().__init__()
-        self.name = 'subfinder'
-        self.description = 'subfinder is a subdomain discovery tool that returns valid subdomains for websites, using passive online sources. It has a simple, modular architecture and is optimized for speed.'
-        self.project_url = 'https://github.com/projectdiscovery/subfinder'
-        self.tags = ['passive', 'dns-enum']
-        self.collector_type = data_model.CollectorType.PASSIVE.value
-        self.scan_order = 1
-        self.args = "-all"
-        self.input_records = [data_model.ServerRecordType.DOMAIN]
-        self.output_records = [
-            data_model.ServerRecordType.HOST, data_model.ServerRecordType.DOMAIN]
-        self.scan_func = Subfinder.subfinder_lookup
-        self.import_func = Subfinder.subfinder_import
-
-    @staticmethod
-    @staticmethod
-    def subfinder_lookup(scan_input: Any) -> bool:
-        try:
-            execute_scan(scan_input)
-            return True
-        except Exception as e:
-            logging.getLogger(__name__).error(
-                "Subfinder scan failed: %s", e, exc_info=True)
-            raise
-
-    @staticmethod
-    def subfinder_import(scan_input: Any) -> bool:
-        try:
-            output_path = get_output_path(scan_input)
-            if not os.path.exists(output_path):
-                return True
-            if _import_already_done(scan_input, output_path):
-                return True
-            scheduled_scan_obj = scan_input
-            tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-            ret_arr = parse_subfinder_output(output_path, tool_instance_id)
-            _import_results(scan_input, ret_arr, output_path)
-            return True
-        except Exception as e:
-            logging.getLogger(__name__).error(
-                "Subfinder import failed: %s", e, exc_info=True)
-            raise
+    def parse_output(self, output_path: str, scan_input) -> list:
+        return parse_subfinder_output(
+            output_path,
+            scan_input.current_tool_instance_id,
+        )
 
 
 def subfinder_wrapper(scheduled_scan_obj: Any, scan_output_file_path: str,

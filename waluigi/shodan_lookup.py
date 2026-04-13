@@ -48,72 +48,49 @@ from waluigi import scan_utils
 from waluigi import data_model
 from datetime import datetime
 from urllib.parse import urlsplit, urlunsplit
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 
-class Shodan(data_model.WaluigiTool):
-    """
-    Shodan tool integration for passive network reconnaissance.
+class Shodan(ToolSpec):
 
-    This class integrates the Shodan search engine into the Waluigi framework,
-    providing passive reconnaissance capabilities for Internet-connected devices.
-    Shodan maintains a database of services, banners, and device information
-    collected through continuous Internet scanning.
+    name = 'shodan'
+    description = 'Shodan is a search engine for Internet-connected devices'
+    project_url = 'https://www.shodan.io/'
+    tags = ['passive', 'port-scan', 'service-detection']
+    collector_type = data_model.CollectorType.PASSIVE.value
+    scan_order = 3
+    args = ''
+    input_records = [
+        data_model.ServerRecordType.HOST,
+        data_model.ServerRecordType.SUBNET,
+    ]
+    output_records = [
+        data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+        data_model.ServerRecordType.HTTP_ENDPOINT,
+        data_model.ServerRecordType.LIST_ITEM,
+        data_model.ServerRecordType.DOMAIN,
+        data_model.ServerRecordType.CERTIFICATE,
+        data_model.ServerRecordType.WEB_COMPONENT,
+        data_model.ServerRecordType.PORT,
+        data_model.ServerRecordType.HOST,
+    ]
 
-    The tool provides access to:
-    - Host and service information
-    - Banner grabbing data
-    - SSL/TLS certificate details
-    - Web technology fingerprinting
-    - Vulnerability information
-    - Geographic and organizational data
+    def get_output_path(self, scan_input) -> str:
+        return get_output_path(scan_input)
 
-    Attributes:
-        name (str): Tool name identifier
-        description (str): Detailed tool description
-        project_url (str): URL to the Shodan website
-        collector_type (int): Type of collection (PASSIVE)
-        scan_order (int): Execution order in scan workflow
-        args (str): Command-line arguments (empty for API-based tool)
-        import_func (callable): Function to import scan results
+    def _run_import(self, scan_input) -> bool:
+        # Passive tool: execute_scan is called as part of import
+        execute_scan(scan_input)
+        return super()._run_import(scan_input)
 
-    Example:
-        >>> shodan_tool = Shodan()
-        >>> print(shodan_tool.name)  # "shodan"
-        >>> print(shodan_tool.collector_type)  # PASSIVE collection type
-    """
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
 
-    def __init__(self) -> None:
-        """
-        Initialize the Shodan tool configuration.
-
-        Sets up the tool with default parameters and metadata required for
-        integration with the Waluigi scanning framework.
-        """
-        super().__init__()
-        self.name = 'shodan'
-        self.description = "Shodan is a search engine for Internet-connected devices"
-        self.project_url = 'https://www.shodan.io/'
-        self.tags = ['passive', 'port-scan', 'service-detection']
-        self.collector_type = data_model.CollectorType.PASSIVE.value
-        self.scan_order = 3
-        self.args = ""
-        self.import_func = shodan_import
-        self.input_records = [
-            data_model.ServerRecordType.HOST, data_model.ServerRecordType.SUBNET]
-        self.output_records = [
-            data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
-            data_model.ServerRecordType.HTTP_ENDPOINT,
-            data_model.ServerRecordType.LIST_ITEM,
-            data_model.ServerRecordType.DOMAIN,
-            data_model.ServerRecordType.CERTIFICATE,
-            data_model.ServerRecordType.WEB_COMPONENT,
-            data_model.ServerRecordType.PORT,
-            data_model.ServerRecordType.HOST
-        ]
+    def parse_output(self, output_path: str, scan_input) -> list:
+        return parse_shodan_output(
+            output_path,
+            scan_input.current_tool_instance_id,
+        )
 
 
 def _prepare_shodan_scope(scheduled_scan_obj) -> str:
@@ -206,24 +183,6 @@ def execute_scan(scan_input) -> None:
     output_data = {"data": output_arr}
     with open(output_file_path, 'w') as f:
         f.write(json.dumps(output_data))
-
-
-def shodan_import(scan_input) -> bool:
-    try:
-        execute_scan(scan_input)
-        output_path = get_output_path(scan_input)
-        if not os.path.exists(output_path):
-            return True
-        if _import_already_done(scan_input, output_path):
-            return True
-        tool_instance_id = scan_input.current_tool_instance_id
-        ret_arr = parse_shodan_output(output_path, tool_instance_id)
-        _import_results(scan_input, ret_arr, output_path)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "shodan import failed: %s", e, exc_info=True)
-        raise
 
 
 def shodan_dns_query(api: shodan.Shodan, domain: str) -> List[str]:

@@ -36,7 +36,8 @@ from waluigi.process_handle import ProcessHandle
 from waluigi.record_store import RecordStore
 
 # Configuration: Available security scanning tools
-# Each tuple contains (module_name, class_name) for dynamic tool loading
+# Each entry is a (module_path, class_name) pair for lazy loading.
+# get_tool_classes() imports them on first call, keeping module-load fast.
 waluigi_tools: List[Tuple[str, str]] = [
     ('waluigi.masscan', 'Masscan'),          # Port scanner
     ('waluigi.nmap_scan', 'Nmap'),           # Network mapper and port scanner
@@ -47,7 +48,6 @@ waluigi_tools: List[Tuple[str, str]] = [
     ('waluigi.shodan_lookup', 'Shodan'),     # Shodan API integration
     ('waluigi.httpx_scan', 'Httpx'),         # HTTP toolkit
     # ('waluigi.sectrails_ip_lookup', 'Sectrails'), # SecurityTrails API
-    # ('waluigi.module_scan', 'Module'),       # Custom module execution
     ('waluigi.crapsecrets_scan', 'Crapsecrets'),  # Secret detection
     ('waluigi.webcap_scan', 'Webcap'),        # Web capture and analysis
     ('waluigi.gau_scan', 'Gau'),        # Web endpoint crawling results
@@ -70,28 +70,34 @@ def get_tool_classes() -> List[Any]:
     """
     Dynamically load and return all available Waluigi security scanning tool classes.
 
-    This function imports each tool module specified in the waluigi_tools configuration
-    and retrieves the corresponding class objects for tool instantiation.
+    Tool classes are loaded once from the ``waluigi_tools`` registry on first
+    call and cached for subsequent invocations.  Each entry in the registry is
+    a ``(module_path, class_name)`` pair that gets resolved via
+    ``importlib.import_module``.
 
     Returns:
-        List[Any]: A list of tool class objects that can be instantiated for scanning
+        List[Any]: A list of tool class objects (ToolSpec subclasses)
 
     Raises:
         ImportError: If a specified module cannot be imported
         AttributeError: If a specified class cannot be found in the module
-
-    Example:
-        >>> tools = get_tool_classes()
-        >>> for tool_class in tools:
-        ...     tool_instance = tool_class()
     """
+    # Return cached result if available
+    if get_tool_classes._cache is not None:
+        return get_tool_classes._cache
+
     tool_classes: List[Any] = []
 
     for module_name, class_name in waluigi_tools:
         module = importlib.import_module(module_name)
         tool_class = getattr(module, class_name)
         tool_classes.append(tool_class)
+
+    get_tool_classes._cache = tool_classes
     return tool_classes
+
+
+get_tool_classes._cache = None
 
 
 def update_host_port_obj_map(scan_data: 'ScanData', port_id: str, host_port_obj_map: Dict[str, Dict[str, Any]]) -> None:
@@ -507,7 +513,8 @@ class ScheduledScan():
             for future in thread_future_array:
                 tool_executor_map_main.add_future(future)
                 future.add_done_callback(
-                    lambda _f, tool_id=tool_id: self._cleanup_tool_executor(tool_id)
+                    lambda _f, tool_id=tool_id: self._cleanup_tool_executor(
+                        tool_id)
                 )
 
             for pid in proc_pids:
@@ -1765,6 +1772,10 @@ class Record:
         >>> json_data = record.to_jsonable()
     """
 
+    # Subclasses override this with a list of (store_attr, key_func, mode)
+    # tuples describing how the record is indexed in RecordStore.
+    _indices = []
+
     def __init__(self, id: Optional[str] = None, parent: Optional['Record'] = None,
                  collection_tool_instance_id: Optional[str] = None) -> None:
         """
@@ -1967,6 +1978,10 @@ class Subnet(Record):
         >>> subnet.mask = "24"
     """
 
+    _indices = [
+        ('subnet_map', lambda r: r.id, 'map'),
+    ]
+
     def __init__(self, id: Optional[str] = None) -> None:
         """
         Initialize a Subnet record.
@@ -2012,6 +2027,19 @@ class Host(Record):
         >>> host.ipv4_addr = "192.168.1.100"
         >>> host.tags.add(RecordTag.SCOPE.value)
     """
+
+    _indices = [
+        ('host_ip_id_map', lambda r: r.ipv4_addr, 'map_id'),
+        ('host_map', lambda r: r.id,        'map'),
+    ]
+
+    def _pre_index(self, store) -> None:
+        """Preserve credential from any previous Host with the same IP."""
+        host_ip = self.ipv4_addr
+        if host_ip and host_ip in store.host_ip_id_map:
+            old_host_id = store.host_ip_id_map[host_ip]
+            if old_host_id in store.host_map:
+                self.credential = store.host_map[old_host_id].credential
 
     def __init__(self, id: Optional[str] = None) -> None:
         """
@@ -2087,6 +2115,12 @@ class Port(Record):
         >>> port.proto = 6  # TCP
         >>> port.secure = True
     """
+
+    _indices = [
+        ('host_id_port_map', lambda r: r.parent.id,                  'list'),
+        ('port_host_map', lambda r: (r.port, r.parent.id) if r.port else None, 'set'),
+        ('port_map', lambda r: r.id,                         'map'),
+    ]
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
         """
@@ -2205,6 +2239,12 @@ class Domain(Record):
         >>> domain.tags.add(RecordTag.SCOPE.value)
     """
 
+    _indices = [
+        ('domain_host_id_map', lambda r: r.parent.id, 'list'),
+        ('domain_name_map', lambda r: r.name,      'map'),
+        ('domain_map', lambda r: r.id,        'map'),
+    ]
+
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
         """
         Initialize a Domain record.
@@ -2267,6 +2307,22 @@ class WebComponent(Record):
         >>> component.version = "2.4.41"
     """
 
+    _indices = [
+        ('component_port_id_map', lambda r: r.parent.id,                     'list'),
+        ('component_name_port_id_map',
+         lambda r: WebComponent._component_name_key(r), 'list_value'),
+        ('component_map', lambda r: r.id,                            'map'),
+    ]
+
+    @staticmethod
+    def _component_name_key(r):
+        if not r.name:
+            return None
+        key = r.name
+        if r.version:
+            key += ":" + r.version
+        return (key, r.parent.id)
+
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
         """
         Initialize a WebComponent record.
@@ -2326,6 +2382,8 @@ class OperatingSystem(Record):
         >>> os.name = "Linux"
         >>> os.version = "5.10.0"
     """
+
+    _indices = []  # OperatingSystem has no dedicated store indices
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
         """
@@ -2388,6 +2446,11 @@ class Vuln(Record):
         >>> vuln.vuln_details = "Log4Shell vulnerability in Apache Log4j"
     """
 
+    _indices = [
+        ('vulnerability_name_id_map', lambda r: r.name, 'list'),
+        ('vulnerability_map', lambda r: r.id,   'map'),
+    ]
+
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
         """
         Initialize a Vuln record.
@@ -2434,6 +2497,11 @@ class Vuln(Record):
         except Exception as e:
             raise Exception('Invalid vuln object: %s' % str(e))
 
+    def remap_ids(self, id_updates: Dict[str, str]) -> None:
+        super().remap_ids(id_updates)
+        if self.endpoint_id and self.endpoint_id in id_updates:
+            self.endpoint_id = id_updates[self.endpoint_id]
+
 
 class ListItem(Record):
     """
@@ -2463,6 +2531,13 @@ class ListItem(Record):
         super().__init__(id=id)
         self.web_path: Optional[str] = None
         self.web_path_hash: Optional[str] = None
+
+    _indices = [
+        ('path_hash_id_map', lambda r: r.web_path_hash.upper()
+         if r.web_path_hash else None, 'list_id'),
+        ('path_map', lambda r: r.id,
+         'map'),
+    ]
 
     def _data_to_jsonable(self) -> Dict[str, str]:
         """
@@ -2520,6 +2595,13 @@ class Screenshot(Record):
         >>> screenshot.image_hash = "sha256_hash_of_image"
         >>> screenshot.screenshot = "base64_encoded_image_data"
     """
+
+    _indices = [
+        ('screenshot_hash_id_map', lambda r: r.image_hash.upper()
+         if r.image_hash else None, 'list_id'),
+        ('screenshot_map', lambda r: r.id,
+         'map'),
+    ]
 
     def __init__(self, id: Optional[str] = None) -> None:
         """
@@ -2579,6 +2661,12 @@ class HttpEndpoint(Record):
         >>> endpoint.web_path_id = "path_123"
         >>> url = endpoint.get_url()
     """
+
+    _indices = [
+        ('http_endpoint_path_id_map', lambda r: r.web_path_id, 'list'),
+        ('http_endpoint_port_id_map', lambda r: r.parent.id,   'list'),
+        ('http_endpoint_map', lambda r: r.id,          'map'),
+    ]
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
         """
@@ -2723,6 +2811,13 @@ class HttpEndpointData(Record):
         >>> data.status = "200"
         >>> data.screenshot_id = "screenshot_456"
     """
+
+    _indices = [
+        ('endpoint_data_endpoint_id_map', lambda r: r.parent.id,      'list'),
+        ('http_endpoint_data_screenshot_id_map',
+         lambda r: r.screenshot_id,  'list'),
+        ('http_endpoint_data_map', lambda r: r.id,             'map'),
+    ]
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
         """
@@ -2903,6 +2998,11 @@ class CollectionModule(Record):
         >>> module.bindings = ["web_component_1", "web_component_2"]
     """
 
+    _indices = [
+        ('module_name_id_map', lambda r: r.name, 'list'),
+        ('collection_module_map', lambda r: r.id,   'map'),
+    ]
+
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None):
         """
         Initialize a new CollectionModule.
@@ -3068,6 +3168,12 @@ class CollectionModuleOutput(Record):
         >>> output.port_id = "port_456"
     """
 
+    _indices = [
+        ('module_output_module_id_map', lambda r: r.parent.id, 'list'),
+        ('collection_module_output_port_id_map', lambda r: r.port_id,  'list'),
+        ('collection_module_output_map', lambda r: r.id,       'map'),
+    ]
+
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None):
         """
         Initialize a new CollectionModuleOutput.
@@ -3151,6 +3257,11 @@ class Certificate(Record):
         >>> cert.expires = 1640995200  # 2022-01-01
         >>> cert.fingerprint_hash = "a1b2c3d4e5f6..."
     """
+
+    _indices = [
+        ('certificate_port_id_map', lambda r: r.parent.id, 'list'),
+        ('certificate_map', lambda r: r.id,        'map'),
+    ]
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None):
         """
@@ -3279,6 +3390,10 @@ class Certificate(Record):
 
 class Credential(Record):
 
+    _indices = [
+        ('credential_map', lambda r: r.id, 'map'),
+    ]
+
     def __init__(self, id: Optional[str] = None) -> None:
 
         super().__init__(id=id, parent=None)
@@ -3313,19 +3428,19 @@ class Credential(Record):
 # chain and makes it trivial to register new types in the future.
 # ---------------------------------------------------------------------------
 RECORD_REGISTRY: Dict[str, Any] = {
-    'host':                  lambda id, parent_id: Host(id=id),
-    'subnet':                lambda id, parent_id: Subnet(id=id),
-    'port':                  lambda id, parent_id: Port(id=id, parent_id=parent_id),
-    'domain':                lambda id, parent_id: Domain(id=id, parent_id=parent_id),
-    'listitem':              lambda id, parent_id: ListItem(id=id),
-    'screenshot':            lambda id, parent_id: Screenshot(id=id),
-    'webcomponent':          lambda id, parent_id: WebComponent(id=id, parent_id=parent_id),
-    'operatingsystem':       lambda id, parent_id: OperatingSystem(id=id, parent_id=parent_id),
-    'vuln':                  lambda id, parent_id: Vuln(id=id, parent_id=parent_id),
-    'httpendpoint':          lambda id, parent_id: HttpEndpoint(id=id, parent_id=parent_id),
-    'httpendpointdata':      lambda id, parent_id: HttpEndpointData(id=id, parent_id=parent_id),
-    'collectionmodule':      lambda id, parent_id: CollectionModule(id=id, parent_id=parent_id),
+    'host': lambda id, parent_id: Host(id=id),
+    'subnet': lambda id, parent_id: Subnet(id=id),
+    'port': lambda id, parent_id: Port(id=id, parent_id=parent_id),
+    'domain': lambda id, parent_id: Domain(id=id, parent_id=parent_id),
+    'listitem': lambda id, parent_id: ListItem(id=id),
+    'screenshot': lambda id, parent_id: Screenshot(id=id),
+    'webcomponent': lambda id, parent_id: WebComponent(id=id, parent_id=parent_id),
+    'operatingsystem': lambda id, parent_id: OperatingSystem(id=id, parent_id=parent_id),
+    'vuln': lambda id, parent_id: Vuln(id=id, parent_id=parent_id),
+    'httpendpoint': lambda id, parent_id: HttpEndpoint(id=id, parent_id=parent_id),
+    'httpendpointdata': lambda id, parent_id: HttpEndpointData(id=id, parent_id=parent_id),
+    'collectionmodule': lambda id, parent_id: CollectionModule(id=id, parent_id=parent_id),
     'collectionmoduleoutput': lambda id, parent_id: CollectionModuleOutput(id=id, parent_id=parent_id),
-    'certificate':           lambda id, parent_id: Certificate(id=id, parent_id=parent_id),
-    'credential':            lambda id, parent_id: Credential(id=id),
+    'certificate': lambda id, parent_id: Certificate(id=id, parent_id=parent_id),
+    'credential': lambda id, parent_id: Credential(id=id),
 }

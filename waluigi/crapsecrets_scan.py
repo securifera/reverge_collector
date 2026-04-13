@@ -63,10 +63,7 @@ from typing import Dict, Set, List, Any, Optional, Union
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 # Global URL tracking set to prevent duplicate scanning
 url_set: Set[str] = set()
@@ -75,74 +72,31 @@ url_set: Set[str] = set()
 path_hash_map: Dict[str, Any] = {}
 
 
-class Crapsecrets(data_model.WaluigiTool):
-    """
-    CrapSecrets cryptographic vulnerability scanner integration for the Waluigi framework.
+class Crapsecrets(ToolSpec):
 
-    This class provides integration with CrapSecrets, a pure Python library designed
-    to identify the use of known or very weak cryptographic secrets across various
-    web application platforms. It implements the WaluigiTool interface to provide
-    comprehensive cryptographic security analysis within the reconnaissance workflow.
+    name = 'crapsecrets'
+    description = 'A pure python library for identifying the use of known or very weak cryptographic secrets across a variety of web application platforms.'
+    project_url = 'https://github.com/irsdl/crapsecrets'
+    tags = ['vuln-scan']
+    collector_type = data_model.CollectorType.ACTIVE.value
+    scan_order = 10
+    args = '-nh -t 3 -mrd 5 -avsk -fvsp'
+    input_records = [data_model.ServerRecordType.PORT,
+                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+    output_records = [data_model.ServerRecordType.VULNERABILITY]
 
-    CrapSecrets specializes in detecting:
-        - Weak or default JWT signing keys
-        - Known API tokens and secrets
-        - Framework-specific cryptographic vulnerabilities
-        - Default encryption keys in web applications
-        - Predictable or hardcoded cryptographic material
-        - Common cryptographic implementation flaws
+    def get_output_path(self, scan_input) -> str:
+        return get_output_path(scan_input)
 
-    Attributes:
-        name (str): The tool identifier ('crapsecrets')
-        description (str): Human-readable description of the tool's capabilities
-        project_url (str): URL to the official CrapSecrets project repository
-        collector_type (int): Identifies this as an active scanning tool
-        scan_order (int): Execution priority within the scanning workflow (10)
-        args (str): Command-line arguments (empty for this tool)
-        scan_func (callable): Static method for executing vulnerability scanning
-        import_func (callable): Static method for importing scan results
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
 
-    Methods:
-        crapsecrets_scan_func: Executes cryptographic vulnerability scanning operations
-        crapsecrets_import: Imports and processes vulnerability scan results
-
-    Example:
-        >>> tool = Crapsecrets()
-        >>> print(tool.name)
-        crapsecrets
-
-        >>> # Execute cryptographic vulnerability scanning through the framework
-        >>> success = tool.scan_func(scan_input_obj)
-        >>> if success:
-        ...     imported = tool.import_func(scan_input_obj)
-
-    Note:
-        The scan_order of 10 positions this tool to run after endpoint discovery
-        and initial reconnaissance phases. The tool performs active HTTP requests
-        to analyze cryptographic implementations and identify vulnerabilities.
-    """
-
-    def __init__(self) -> None:
-        """
-        Initialize the CrapSecrets tool with default configuration.
-
-        Sets up the tool with appropriate parameters for cryptographic vulnerability
-        scanning, including integration points for the scanning and import
-        workflow phases.
-        """
-        super().__init__()
-        self.name = 'crapsecrets'
-        self.collector_type = data_model.CollectorType.ACTIVE.value
-        self.scan_order = 10
-        self.args = "-nh -t 3 -mrd 5 -avsk -fvsp"  # No hashcat
-        self.description = 'A pure python library for identifying the use of known or very weak cryptographic secrets across a variety of web application platforms.'
-        self.project_url = "https://github.com/irsdl/crapsecrets"
-        self.tags = ['vuln-scan']
-        self.input_records = [data_model.ServerRecordType.PORT,
-                              data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
-        self.output_records = [data_model.ServerRecordType.VULNERABILITY]
-        self.scan_func = crapsecrets_scan_func
-        self.import_func = crapsecrets_import
+    def parse_output(self, output_path: str, scan_input) -> list:
+        return parse_crapsecrets_output(
+            output_path,
+            scan_input.current_tool_instance_id,
+            scan_input.current_tool.id,
+        )
 
 
 def queue_scan(url_dict: Dict[str, Any]) -> Optional[Any]:
@@ -355,36 +309,6 @@ def execute_scan(scan_input) -> None:
     results_dict = {'output_list': output_file_list}
     with open(output_file_path, 'w') as file_fd:
         file_fd.write(json.dumps(results_dict))
-
-
-def crapsecrets_scan_func(scan_input) -> bool:
-    try:
-        execute_scan(scan_input)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "crapsecrets scan failed: %s", e, exc_info=True)
-        raise
-
-
-def crapsecrets_import(scan_input) -> bool:
-    try:
-        output_path = get_output_path(scan_input)
-        if not os.path.exists(output_path):
-            return True
-        if _import_already_done(scan_input, output_path):
-            return True
-        scheduled_scan_obj = scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        tool_id = scheduled_scan_obj.current_tool.id
-        ret_arr = parse_crapsecrets_output(
-            output_path, tool_instance_id, tool_id)
-        _import_results(scan_input, ret_arr, output_path)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "crapsecrets import failed: %s", e, exc_info=True)
-        raise
 
 
 def parse_crapsecrets_output(output_file, tool_instance_id, tool_id):

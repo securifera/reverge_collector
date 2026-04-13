@@ -34,79 +34,54 @@ from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
 from urllib.parse import urlparse
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 
-class Httpx(data_model.WaluigiTool):
-    """
-    HTTPX web scanner tool configuration.
+class Httpx(ToolSpec):
 
-    This class configures the HTTPX web scanner for integration with the
-    Waluigi framework. HTTPX is a fast and multi-purpose HTTP toolkit that
-    enables parallel web application discovery, technology detection, and
-    comprehensive web asset enumeration.
+    name = 'httpx'
+    description = 'HTTPX is a fast and multi-purpose HTTP toolkit that allows you to run multiple requests in parallel.'
+    project_url = 'https://github.com/projectdiscovery/httpx'
+    tags = ['http-crawl', 'service-detection', 'fast']
+    collector_type = data_model.CollectorType.ACTIVE.value
+    scan_order = 4
+    args = '-favicon -td -t 50 -timeout 3 -maxhr 5 -rstr 10000 -tls-grab'
+    input_records = [
+        data_model.ServerRecordType.HOST,
+        data_model.ServerRecordType.PORT,
+        data_model.ServerRecordType.DOMAIN,
+        data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+    ]
+    output_records = [
+        data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+        data_model.ServerRecordType.HTTP_ENDPOINT,
+        data_model.ServerRecordType.COLLECTION_MODULE,
+        data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
+        data_model.ServerRecordType.WEB_COMPONENT,
+        data_model.ServerRecordType.DOMAIN,
+        data_model.ServerRecordType.CERTIFICATE,
+        data_model.ServerRecordType.SCREENSHOT,
+        data_model.ServerRecordType.LIST_ITEM,
+        data_model.ServerRecordType.PORT,
+        data_model.ServerRecordType.HOST,
+    ]
 
-    The tool is configured for high-performance scanning with favicon analysis,
-    technology detection, TLS certificate grabbing, and response analysis.
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
 
-    Attributes:
-        name (str): Tool identifier name
-        description (str): Human-readable tool description
-        project_url (str): Official project URL
-        collector_type (str): Type of collection (ACTIVE)
-        scan_order (int): Execution order in scan chain
-        args (str): Default command line arguments
-        scan_func (callable): Function to execute scans
-        import_func (callable): Function to import results
-
-    Example:
-        >>> httpx_tool = Httpx()
-        >>> print(httpx_tool.name)
-        'httpx'
-        >>> httpx_tool.scan_func(scan_input)
-        True
-    """
-
-    def __init__(self) -> None:
-        """
-        Initialize HTTPX tool configuration.
-
-        Sets up the tool with default parameters for web scanning including
-        favicon analysis, technology detection, parallel processing, and
-        TLS certificate analysis.
-        """
-        super().__init__()
-        self.name: str = 'httpx'
-        self.description: str = 'HTTPX is a fast and multi-purpose HTTP toolkit that allows you to run multiple requests in parallel.'
-        self.project_url: str = "https://github.com/projectdiscovery/httpx"
-        self.tags = ['http-crawl', 'service-detection', 'fast']
-        self.collector_type: str = data_model.CollectorType.ACTIVE.value
-        self.scan_order: int = 4
-        self.args: str = "-favicon -td -t 50 -timeout 3 -maxhr 5 -rstr 10000 -tls-grab"
-        self.input_records = [
-            data_model.ServerRecordType.HOST,
-            data_model.ServerRecordType.PORT,
-            data_model.ServerRecordType.DOMAIN,
-            data_model.ServerRecordType.HTTP_ENDPOINT_DATA
-        ]
-        self.output_records = [
-            data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
-            data_model.ServerRecordType.HTTP_ENDPOINT,
-            data_model.ServerRecordType.COLLECTION_MODULE,
-            data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
-            data_model.ServerRecordType.WEB_COMPONENT,
-            data_model.ServerRecordType.DOMAIN,
-            data_model.ServerRecordType.CERTIFICATE,
-            data_model.ServerRecordType.SCREENSHOT,
-            data_model.ServerRecordType.LIST_ITEM,
-            data_model.ServerRecordType.PORT,
-            data_model.ServerRecordType.HOST
-        ]
-        self.scan_func = httpx_scan_func
-        self.import_func = httpx_import
+    def parse_output(self, output_path: str, scan_input) -> list:
+        with open(output_path, 'r') as f:
+            data = f.read()
+        if not data:
+            return []
+        scan_data_dict = json.loads(data)
+        output_file_list = scan_data_dict['output_file_list']
+        return parse_httpx_output(
+            output_file_list,
+            scan_input.current_tool_instance_id,
+            scan_input.current_tool.id,
+            scan_input.scan_data,
+        )
 
 
 def get_output_path(scan_input) -> str:
@@ -262,45 +237,6 @@ def execute_scan(scan_input) -> None:
     results_dict = {'output_file_list': output_file_list}
     with open(output_file_path, 'w') as file_fd:
         file_fd.write(json.dumps(results_dict))
-
-
-def httpx_scan_func(scan_input) -> bool:
-    try:
-        execute_scan(scan_input)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "httpx scan failed: %s", e, exc_info=True)
-        raise
-
-
-def httpx_import(scan_input) -> bool:
-    try:
-        output_path = get_output_path(scan_input)
-        if not os.path.exists(output_path):
-            return True
-        if _import_already_done(scan_input, output_path):
-            return True
-        scheduled_scan_obj = scan_input
-        scope_obj = scheduled_scan_obj.scan_data
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        tool_id = scheduled_scan_obj.current_tool.id
-        with open(output_path, 'r') as file_fd:
-            data = file_fd.read()
-        if len(data) == 0:
-            logging.getLogger(__name__).error(
-                "Httpx scan output file is empty")
-            return True
-        scan_data_dict = json.loads(data)
-        output_file_list = scan_data_dict['output_file_list']
-        ret_arr = parse_httpx_output(
-            output_file_list, tool_instance_id, tool_id, scope_obj)
-        _import_results(scan_input, ret_arr, output_path)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "httpx import failed: %s", e, exc_info=True)
-        raise
 
 
 def parse_httpx_output(

@@ -52,80 +52,44 @@ from typing import Dict, Set, List, Any, Optional, Union
 
 from waluigi import scan_utils
 from waluigi import data_model
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 # Global proxy configuration for IP THC API requests
 proxies: Optional[Dict[str, str]] = None
 
 
-class IPThc(data_model.WaluigiTool):
-    """
-    IP THC threat intelligence platform integration for the Waluigi framework.
+class IPThc(ToolSpec):
 
-    This class provides integration with IP THC, a comprehensive threat-intelligence
-    platform specializing in DNS and domain data collection. It implements the WaluigiTool
-    interface to provide passive DNS reconnaissance capabilities within the security
-    reconnaissance workflow.
+    name = 'ipthc'
+    description = "IP THC is a threat-intelligence platform specializing in DNS and domain data. It continuously collects both current and historical DNS records, WHOIS information, and passive-DNS data to give users a comprehensive view of any domain's evolution over time"
+    project_url = 'https://ip.thc.org/'
+    tags = ['passive', 'dns-enum']
+    collector_type = data_model.CollectorType.PASSIVE.value
+    scan_order = 5
+    args = ''
+    input_records = [
+        data_model.ServerRecordType.HOST,
+        data_model.ServerRecordType.SUBNET,
+        data_model.ServerRecordType.DOMAIN,
+    ]
+    output_records = [data_model.ServerRecordType.DOMAIN]
 
-    IP THC offers extensive capabilities including:
-        - Current and historical DNS record collection
-        - Passive DNS data for comprehensive domain analysis
-        - WHOIS information and domain registration data
-        - IP-to-domain resolution with historical context
-        - Subdomain discovery and enumeration
-        - DNS infrastructure analysis and mapping
+    def get_output_path(self, scan_input) -> str:
+        return get_output_path(scan_input)
 
-    Attributes:
-        name (str): The tool identifier ('ipthc')
-        description (str): Human-readable description of the platform's capabilities
-        project_url (str): URL to the official IP THC website
-        collector_type (int): Identifies this as a passive reconnaissance tool
-        scan_order (int): Execution priority within the reconnaissance workflow (5)
-        args (str): Command-line arguments (empty for API-based tools)
-        import_func (callable): Static method for importing lookup results
+    def _run_import(self, scan_input) -> bool:
+        # Passive tool: execute_scan is called as part of import
+        execute_scan(scan_input)
+        return super()._run_import(scan_input)
 
-    Methods:
-        import_ip_thc_ip_lookup: Imports and processes IP THC lookup results
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
 
-    Example:
-        >>> tool = IPThc()
-        >>> print(tool.name)
-        ip_thc
-
-        >>> # Execute IP lookup through the framework (requires API key)
-        >>> success = tool.import_func(scan_input_obj)
-        >>> if success:
-        ...     print("IP THC lookup completed successfully")
-
-    Note:
-        The scan_order of 5 positions this tool early in the reconnaissance workflow
-        to provide domain intelligence for subsequent active scanning phases.
-        Requires a valid IP THC API key for operation.
-    """
-
-    def __init__(self) -> None:
-        """
-        Initialize the IP THC tool with default configuration.
-
-        Sets up the tool with appropriate parameters for passive DNS reconnaissance,
-        including API integration points and workflow positioning for optimal
-        intelligence gathering sequence.
-        """
-        super().__init__()
-        self.name = 'ipthc'
-        self.description = 'IP THC is a threat-intelligence platform specializing in DNS and domain data. It continuously collects both current and historical DNS records, WHOIS information, and passive-DNS data to give users a comprehensive view of any domain\'s evolution over time'
-        self.project_url = 'https://ip.thc.org/'
-        self.tags = ['passive', 'dns-enum']
-        self.collector_type = data_model.CollectorType.PASSIVE.value
-        self.scan_order = 5
-        self.args = ""
-        self.import_func = ip_thc_import
-        self.input_records = [data_model.ServerRecordType.HOST,
-                              data_model.ServerRecordType.SUBNET, data_model.ServerRecordType.DOMAIN]
-        self.output_records = [data_model.ServerRecordType.DOMAIN]
+    def parse_output(self, output_path: str, scan_input) -> list:
+        return parse_ip_thc_output(
+            output_path,
+            scan_input.current_tool_instance_id,
+        )
 
 
 def process_response(data):
@@ -505,25 +469,6 @@ def execute_scan(scan_input) -> None:
     results_dict = {'ip_to_host_dict_map': serializable_map}
     with open(output_file_path, 'w') as file_fd:
         file_fd.write(json.dumps(results_dict))
-
-
-def ip_thc_import(scan_input) -> bool:
-    try:
-        execute_scan(scan_input)
-        output_path = get_output_path(scan_input)
-        if not os.path.exists(output_path):
-            return True
-        if _import_already_done(scan_input, output_path):
-            return True
-        tool_instance_id = scan_input.current_tool_instance_id
-        ret_arr = parse_ip_thc_output(output_path, tool_instance_id)
-        if len(ret_arr) > 0:
-            _import_results(scan_input, ret_arr, output_path)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "ip_thc import failed: %s", e, exc_info=True)
-        raise
 
 
 def parse_ip_thc_output(

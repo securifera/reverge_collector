@@ -32,77 +32,54 @@ import logging
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 netexec_protocol_map = {'21': 'ftp', '22': 'ssh', '111': 'nfs', '135': 'wmi', '389': 'ldap', '445': 'smb',
                         '3306': 'mysql', '3389': 'rdp', '5900': 'vnc', '5985': 'winrm'}
 
 
-class Netexec(data_model.WaluigiTool):
-    """
-    Netexec network scanner tool configuration.
+class Netexec(ToolSpec):
 
-    This class configures the Netexec network scanner for integration with the
-    Waluigi framework. Netexec is the industry-standard network discovery and
-    security auditing tool that can perform port scanning, service detection,
-    OS detection, and script-based vulnerability scanning.
+    name = 'netexec'
+    description = 'Netexec is a network scanning tool used to discover hosts and services on a computer network. It can be used to perform port scanning, service detection, and OS detection.'
+    project_url = 'https://github.com/Pennyw0rth/NetExec'
+    tags = ['service-detection', 'authenticated',
+            'vuln-scan', 'exploitation', 'os-detection']
+    collector_type = data_model.CollectorType.ACTIVE.value
+    scan_order = 6
+    args = ''
+    input_records = [
+        data_model.ServerRecordType.SUBNET,
+        data_model.ServerRecordType.HOST,
+        data_model.ServerRecordType.PORT,
+    ]
+    output_records = [
+        data_model.ServerRecordType.COLLECTION_MODULE,
+        data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
+        data_model.ServerRecordType.WEB_COMPONENT,
+        data_model.ServerRecordType.DOMAIN,
+        data_model.ServerRecordType.CERTIFICATE,
+        data_model.ServerRecordType.LIST_ITEM,
+        data_model.ServerRecordType.PORT,
+        data_model.ServerRecordType.HOST,
+    ]
 
-    The tool is configured for comprehensive TCP scanning with service version
-    detection and SSL certificate analysis capabilities.
-
-    Attributes:
-        name (str): Tool identifier name
-        description (str): Human-readable tool description  
-        project_url (str): Official project URL
-        collector_type (str): Type of collection (ACTIVE)
-        scan_order (int): Execution order in scan chain
-        args (str): Default command line arguments
-        scan_func (callable): Function to execute scans
-        import_func (callable): Function to import results
-
-    Example:
-        >>> netexec_tool = Netexec()
-        >>> print(netexec_tool.name)
-        'netexec'
-        >>> netexec_tool.scan_func(scan_input)
-        True
-    """
-
-    def __init__(self) -> None:
-        """
-        Initialize Netexec tool configuration.
-
-        Sets up the tool with default parameters for comprehensive network
-        scanning including service version detection and SSL certificate
-        analysis with script execution.
-        """
+    def __init__(self):
         super().__init__()
-        self.name: str = 'netexec'
-        self.description: str = 'Netexec is a network scanning tool used to discover hosts and services on a computer network. It can be used to perform port scanning, service detection, and OS detection.'
-        self.project_url: str = "https://github.com/Pennyw0rth/NetExec"
-        self.tags = ['service-detection',
-                     'authenticated', 'vuln-scan', 'exploitation', 'os-detection']
-        self.collector_type: str = data_model.CollectorType.ACTIVE.value
-        self.scan_order: int = 6
-        self.args: str = ""
-        self.scan_func = netexec_scan_func
-        self.import_func = netexec_import
         self.modules_func = Netexec.netexec_modules
-        self.input_records = [
-            data_model.ServerRecordType.SUBNET, data_model.ServerRecordType.HOST, data_model.ServerRecordType.PORT]
-        self.output_records = [
-            data_model.ServerRecordType.COLLECTION_MODULE,
-            data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
-            data_model.ServerRecordType.WEB_COMPONENT,
-            data_model.ServerRecordType.DOMAIN,
-            data_model.ServerRecordType.CERTIFICATE,
-            data_model.ServerRecordType.LIST_ITEM,
-            data_model.ServerRecordType.PORT,
-            data_model.ServerRecordType.HOST
-        ]
+
+    def get_output_path(self, scan_input) -> str:
+        return get_output_path(scan_input)
+
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
+
+    def parse_output(self, output_path: str, scan_input) -> list:
+        return parse_netexec_output(
+            output_path,
+            scan_input.current_tool_instance_id,
+            scan_input.current_tool.id,
+        )
 
     @staticmethod
     def netexec_modules() -> List:
@@ -741,32 +718,3 @@ def parse_netexec_output(output_file, tool_instance_id, tool_id):
                         traceback.print_exc()
 
     return ret_arr
-
-
-def netexec_scan_func(scan_input) -> bool:
-    try:
-        execute_scan(scan_input)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "netexec scan failed: %s", e, exc_info=True)
-        raise
-
-
-def netexec_import(scan_input) -> bool:
-    try:
-        output_path = get_output_path(scan_input)
-        if not os.path.exists(output_path):
-            return True
-        if _import_already_done(scan_input, output_path):
-            return True
-        tool_instance_id = scan_input.current_tool_instance_id
-        tool_id = scan_input.current_tool.id
-        ret_arr = parse_netexec_output(output_path, tool_instance_id, tool_id)
-        if ret_arr:
-            _import_results(scan_input, ret_arr, output_path)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "netexec import failed: %s", e, exc_info=True)
-        raise

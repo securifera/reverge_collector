@@ -6,61 +6,34 @@ from typing import Dict, Any, List, Set, Optional
 from waluigi import scan_utils
 from waluigi import data_model
 from iis_shortname_scan import Scanner
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 
-class IISShortnameScanner(data_model.WaluigiTool):
+class IISShortnameScanner(ToolSpec):
 
-    def __init__(self) -> None:
+    name = 'iis_short_scan'
+    description = 'IIS Shortname Scanner is a tool for discovering short filenames on IIS servers.'
+    project_url = 'https://github.com/lijiejie/IIS_shortname_Scanner'
+    tags = ['vuln-scan', 'http-crawl']
+    collector_type = data_model.CollectorType.ACTIVE.value
+    scan_order = 8
+    args = ""
+    input_records = [data_model.ServerRecordType.PORT,
+                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+    output_records = [
+        data_model.ServerRecordType.COLLECTION_MODULE,
+        data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
+    ]
 
-        super().__init__()
-        self.name: str = 'iis_short_scan'
-        self.description: str = 'IIS Shortname Scanner is a tool for discovering short filenames on IIS servers.'
-        self.project_url: str = 'https://github.com/lijiejie/IIS_shortname_Scanner'
-        self.tags = ['vuln-scan', 'http-crawl']
-        self.collector_type: str = data_model.CollectorType.ACTIVE.value
-        self.scan_order: int = 8
-        self.args: str = ""
-        self.input_records = [data_model.ServerRecordType.PORT,
-                              data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
-        self.output_records = [
-            data_model.ServerRecordType.COLLECTION_MODULE,
-            data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
-        ]
-        self.scan_func = IISShortnameScanner.iis_short_scan_func
-        self.import_func = IISShortnameScanner.iis_short_scan_import
+    def execute_scan(self, scan_input: data_model.ScheduledScan) -> None:
+        execute_scan(scan_input)
 
-    @staticmethod
-    def iis_short_scan_func(scan_input: data_model.ScheduledScan) -> bool:
-        try:
-            execute_scan(scan_input)
-            return True
-        except Exception as e:
-            logging.getLogger(__name__).error(
-                "IIS short scan failed: %s", e, exc_info=True)
-            raise
-
-    @staticmethod
-    def iis_short_scan_import(scan_input: data_model.ScheduledScan) -> bool:
-        try:
-            output_path = get_output_path(scan_input)
-            if not os.path.exists(output_path):
-                return True
-            if _import_already_done(scan_input, output_path):
-                return True
-            scheduled_scan_obj = scan_input
-            tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-            tool_id = scheduled_scan_obj.current_tool.id
-            ret_arr = parse_iis_short_scan_output(output_path, tool_instance_id, tool_id)
-            _import_results(scan_input, ret_arr, output_path)
-            return True
-        except Exception as e:
-            logging.getLogger(__name__).error(
-                "IIS short scan import failed: %s", e, exc_info=True)
-            raise
+    def parse_output(self, output_path: str, scan_input: data_model.ScheduledScan) -> list:
+        return parse_iis_short_scan_output(
+            output_path,
+            scan_input.current_tool_instance_id,
+            scan_input.current_tool.id,
+        )
 
 
 def iis_short_scan_wrap(target_url_list: List[str]) -> List[Dict[str, Any]]:
@@ -245,4 +218,3 @@ def parse_iis_short_scan_output(
                 ret_arr.append(module_output_obj)
 
     return ret_arr
-

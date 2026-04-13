@@ -31,67 +31,51 @@ from urllib.parse import urlparse
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 
-class Nuclei(data_model.WaluigiTool):
-    """
-    Nuclei vulnerability scanner tool configuration.
+class Nuclei(ToolSpec):
 
-    This class configures the Nuclei vulnerability scanner for integration with the
-    Waluigi framework. Nuclei is a fast and flexible vulnerability scanner that uses
-    YAML-based templates to identify security issues in web applications and services.
+    name = 'nuclei'
+    description = 'Nuclei is a fast and flexible vulnerability scanner based on simple YAML based DSL. It allows users to create custom templates for scanning various protocols and services.'
+    project_url = 'https://github.com/projectdiscovery/nuclei'
+    tags = ['vuln-scan', 'slow']
+    collector_type = data_model.CollectorType.ACTIVE.value
+    scan_order = 7
+    args = '-ni -pt http -rl 50 -t http/technologies/fingerprinthub-web-fingerprints.yaml'
+    input_records = [data_model.ServerRecordType.PORT,
+                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+    output_records = [
+        data_model.ServerRecordType.COLLECTION_MODULE,
+        data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
+        data_model.ServerRecordType.WEB_COMPONENT,
+        data_model.ServerRecordType.VULNERABILITY,
+    ]
 
-    The tool is configured for active scanning with HTTP technology fingerprinting
-    and vulnerability detection capabilities.
-
-    Attributes:
-        name (str): Tool identifier name
-        description (str): Human-readable tool description
-        project_url (str): Official project URL
-        collector_type (str): Type of collection (ACTIVE)
-        scan_order (int): Execution order in scan chain
-        args (str): Default command line arguments
-        scan_func (callable): Function to execute scans
-        import_func (callable): Function to import results
-
-    Example:
-        >>> nuclei_tool = Nuclei()
-        >>> print(nuclei_tool.name)
-        'nuclei'
-        >>> nuclei_tool.scan_func(scan_input)
-        True
-    """
-
-    def __init__(self) -> None:
-        """
-        Initialize Nuclei tool configuration.
-
-        Sets up the tool with default parameters for vulnerability scanning,
-        including fingerprinting templates and rate limiting.
-        """
+    def __init__(self):
         super().__init__()
-        self.name: str = 'nuclei'
-        self.description: str = 'Nuclei is a fast and flexible vulnerability scanner based on simple YAML based DSL. It allows users to create custom templates for scanning various protocols and services.'
-        self.project_url: str = 'https://github.com/projectdiscovery/nuclei'
-        self.tags = ['vuln-scan', 'slow']
-        self.collector_type: str = data_model.CollectorType.ACTIVE.value
-        self.scan_order: int = 7
-        self.args: str = "-ni -pt http -rl 50 -t http/technologies/fingerprinthub-web-fingerprints.yaml"
-        self.input_records = [data_model.ServerRecordType.PORT,
-                              data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
-        self.output_records = [
-            data_model.ServerRecordType.COLLECTION_MODULE,
-            data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
-            data_model.ServerRecordType.WEB_COMPONENT,
-            data_model.ServerRecordType.VULNERABILITY
-        ]
-        self.scan_func = nuclei_scan_func
-        self.import_func = nuclei_import
         self.modules_func = Nuclei.nuclei_modules
+
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
+
+    def parse_output(self, output_path: str, scan_input) -> list:
+        with open(output_path, 'r') as f:
+            data = f.read()
+        if not data:
+            return []
+        scan_data_dict = json.loads(data)
+        endpoint_port_obj_map = scan_data_dict['endpoint_port_obj_map']
+        output_file_path = scan_data_dict.get('output_file_path')
+        if output_file_path:
+            return parse_nuclei_output(
+                output_file_path,
+                endpoint_port_obj_map,
+                scan_input.current_tool_instance_id,
+                scan_input.current_tool.id,
+                scan_input.scan_data,
+            )
+        return []
 
     @staticmethod
     def nuclei_modules() -> List:
@@ -358,46 +342,6 @@ def execute_scan(scan_input) -> None:
     }
     with open(output_file_path, 'w') as file_fd:
         file_fd.write(json.dumps(results_dict))
-
-
-def nuclei_scan_func(scan_input) -> bool:
-    try:
-        execute_scan(scan_input)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "nuclei scan failed: %s", e, exc_info=True)
-        raise
-
-
-def nuclei_import(scan_input) -> bool:
-    try:
-        output_path = get_output_path(scan_input)
-        if not os.path.exists(output_path):
-            return True
-        if _import_already_done(scan_input, output_path):
-            return True
-        scheduled_scan_obj = scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        scope_obj = scheduled_scan_obj.scan_data
-        tool_id = scheduled_scan_obj.current_tool.id
-        with open(output_path, 'r') as file_fd:
-            data = file_fd.read()
-        ret_arr: List[Any] = []
-        if len(data) > 0:
-            scan_data_dict = json.loads(data)
-            endpoint_port_obj_map = scan_data_dict['endpoint_port_obj_map']
-            output_file_path = scan_data_dict.get('output_file_path')
-            if output_file_path:
-                ret_arr = parse_nuclei_output(
-                    output_file_path, endpoint_port_obj_map,
-                    tool_instance_id, tool_id, scope_obj)
-        _import_results(scan_input, ret_arr, output_path)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "nuclei import failed: %s", e, exc_info=True)
-        raise
 
 
 def parse_nuclei_output(

@@ -63,90 +63,43 @@ from waluigi import scan_utils
 from waluigi import data_model
 from urllib.parse import urlparse
 from waluigi.proc_utils import process_wrapper
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 
-class Gau(data_model.WaluigiTool):
-    """
-    Gau Tool Class for Passive URL Enumeration.
+class Gau(ToolSpec):
 
-    This class implements the interface for the Gau (getallurls) tool within the Waluigi framework.
-    It provides configuration, metadata, and scan/import function bindings for passive URL enumeration
-    using public data sources. The Gau tool fetches known URLs for domains, supporting asset discovery
-    and historical analysis.
+    name = 'gau'
+    description = "getallurls (gau) fetches known URLs from AlienVault's Open Threat Exchange, the Wayback Machine, Common Crawl, and URLScan for any given domain. Inspired by Tomnomnom's waybackurls."
+    project_url = 'https://github.com/lc/gau'
+    tags = ['passive', 'http-crawl']
+    collector_type = data_model.CollectorType.PASSIVE.value
+    scan_order = 1
+    args = '--retries 3 --timeout 5'
+    input_records = [
+        data_model.ServerRecordType.DOMAIN,
+        data_model.ServerRecordType.PORT,
+        data_model.ServerRecordType.HTTP_ENDPOINT,
+    ]
+    output_records = [
+        data_model.ServerRecordType.PORT,
+        data_model.ServerRecordType.HOST,
+        data_model.ServerRecordType.DOMAIN,
+        data_model.ServerRecordType.LIST_ITEM,
+        data_model.ServerRecordType.HTTP_ENDPOINT,
+        data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+    ]
 
-    Attributes:
-        name (str): Tool name identifier ('gau').
-        description (str): Description of the tool and its data sources.
-        project_url (str): URL to the Gau project repository.
-        collector_type (str): Collector type (PASSIVE).
-        scan_order (int): Execution order for scanning.
-        args (str): Default command-line arguments for Gau execution.
-        input_records (List): Types of input records accepted (DOMAIN).
-        output_records (List): Types of output records produced (DOMAIN, LIST_ITEM, HTTP_ENDPOINT, HTTP_ENDPOINT_DATA).
-        scan_func (Callable): Bound function for scan execution.
-        import_func (Callable): Bound function for import execution.
-    """
+    def get_output_path(self, scan_input) -> str:
+        return get_output_path(scan_input)
 
-    def __init__(self) -> None:
-        """
-        Initialize the Gau tool class with default configuration and metadata.
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
 
-        Sets up tool name, description, project URL, collector type, scan order, default arguments,
-        input/output record types, and binds scan/import functions for Luigi workflow integration.
-        """
-        super().__init__()
-        self.name = 'gau'
-        self.description = "getallurls (gau) fetches known URLs from AlienVault's Open Threat Exchange, the Wayback Machine, Common Crawl, and URLScan for any given domain. Inspired by Tomnomnom's waybackurls."
-        self.project_url = 'https://github.com/lc/gau'
-        self.tags = ['passive', 'http-crawl']
-        self.collector_type = data_model.CollectorType.PASSIVE.value
-        self.scan_order = 1
-        # self.args = "--blacklist .png,.jpg,.gif,.ttf,.woff,.svg --retries 3 --timeout 5 --subs"
-        self.args = "--retries 3 --timeout 5"
-        self.input_records = [
-            data_model.ServerRecordType.DOMAIN, data_model.ServerRecordType.PORT, data_model.ServerRecordType.HTTP_ENDPOINT]
-        self.output_records = [
-            data_model.ServerRecordType.PORT,
-            data_model.ServerRecordType.HOST,
-            data_model.ServerRecordType.DOMAIN,
-            data_model.ServerRecordType.LIST_ITEM,
-            data_model.ServerRecordType.HTTP_ENDPOINT,
-            data_model.ServerRecordType.HTTP_ENDPOINT_DATA
-        ]
-        self.scan_func = Gau.gau_lookup
-        self.import_func = Gau.gau_import
-
-    @staticmethod
-    def gau_lookup(scan_input: Any) -> bool:
-        try:
-            execute_scan(scan_input)
-            return True
-        except Exception as e:
-            logging.getLogger(__name__).error(
-                "Gau scan failed: %s", e, exc_info=True)
-            raise
-
-    @staticmethod
-    def gau_import(scan_input: Any) -> bool:
-        try:
-            output_path = get_output_path(scan_input)
-            if not os.path.exists(output_path):
-                return True
-            if _import_already_done(scan_input, output_path):
-                return True
-            scheduled_scan_obj = scan_input
-            tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-            ret_arr = parse_gau_output(output_path, tool_instance_id)
-            _import_results(scan_input, ret_arr, output_path)
-            return True
-        except Exception as e:
-            logging.getLogger(__name__).error(
-                "Gau import failed: %s", e, exc_info=True)
-            raise
+    def parse_output(self, output_path: str, scan_input) -> list:
+        return parse_gau_output(
+            output_path,
+            scan_input.current_tool_instance_id,
+        )
 
 
 def get_output_path(scan_input: Any) -> str:

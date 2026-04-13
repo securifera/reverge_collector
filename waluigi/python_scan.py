@@ -42,79 +42,34 @@ import logging
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 
-class Python(data_model.WaluigiTool):
-    """
-    Main tool class for Python script execution within the Waluigi framework.
+class Python(ToolSpec):
 
-    Attributes:
-        name (str): Tool name identifier ('python').
-        description (str): Description of the tool's purpose.
-        project_url (str): Reference URL for Python.
-        collector_type (str): Collector type (active).
-        scan_order (int): Execution order in scan pipeline.
-        args (str): Custom arguments for script execution.
-        input_records (list): Expected input record types.
-        output_records (list): Output record types produced.
-        scan_func (callable): Function to execute scan.
-        import_func (callable): Function to import scan results.
-    """
+    name = 'python'
+    description = 'Python is a versatile programming language that enables rapid development and automation.'
+    project_url = 'https://www.python.org/'
+    tags = ['code-exec']
+    collector_type = data_model.CollectorType.ACTIVE.value
+    scan_order = 7
+    args = ""
+    input_records = [data_model.ServerRecordType.PORT]
+    output_records = [
+        data_model.ServerRecordType.COLLECTION_MODULE,
+        data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
+    ]
 
-    def __init__(self) -> None:
+    def execute_scan(self, scan_input: data_model.ScheduledScan) -> None:
+        execute_scan(scan_input)
 
-        super().__init__()
-        self.name: str = 'python'
-        self.description: str = 'Python is a versatile programming language that enables rapid development and automation.'
-        self.project_url: str = 'https://www.python.org/'
-        self.tags = ['code-exec']
-        self.collector_type: str = data_model.CollectorType.ACTIVE.value
-        self.scan_order: int = 7
-        self.args: str = ""
-        self.input_records = [data_model.ServerRecordType.PORT]
-        self.output_records = [
-            data_model.ServerRecordType.COLLECTION_MODULE,
-            data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
-        ]
-        self.scan_func = Python.python_scan_func
-        self.import_func = Python.python_import
-
-    @staticmethod
-    @staticmethod
-    def python_scan_func(scan_input: data_model.ScheduledScan) -> bool:
-        try:
-            execute_scan(scan_input)
-            return True
-        except Exception as e:
-            logging.getLogger(__name__).error(
-                "Python scan failed: %s", e, exc_info=True)
-            raise
-
-    @staticmethod
-    def python_import(scan_input: data_model.ScheduledScan) -> bool:
-        try:
-            output_path = get_output_path(scan_input)
-            if not os.path.exists(output_path):
-                return True
-            if _import_already_done(scan_input, output_path):
-                return True
-            scheduled_scan_obj = scan_input
-            ret_arr = parse_python_scan_output(
-                output_path,
-                scheduled_scan_obj.current_tool_instance_id,
-                scheduled_scan_obj.current_tool.id,
-                scheduled_scan_obj.scan_data.host_port_obj_map,
-            )
-            _import_results(scan_input, ret_arr, output_path)
-            return True
-        except Exception as e:
-            logging.getLogger(__name__).error(
-                "Python import failed: %s", e, exc_info=True)
-            raise
+    def parse_output(self, output_path: str, scan_input: data_model.ScheduledScan) -> list:
+        return parse_python_scan_output(
+            output_path,
+            scan_input.current_tool_instance_id,
+            scan_input.current_tool.id,
+            scan_input.scan_data.host_port_obj_map,
+        )
 
 
 def get_output_path(scan_input: data_model.ScheduledScan) -> str:
@@ -212,4 +167,3 @@ def parse_python_scan_output(output_file, tool_instance_id, tool_id, target_map=
                     ret_arr.append(module_output_obj)
 
     return ret_arr
-

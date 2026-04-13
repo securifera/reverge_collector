@@ -45,69 +45,42 @@ from typing import List, Dict, Set, Optional, Any, Union
 from waluigi import scan_utils
 from waluigi import data_model
 from waluigi.proc_utils import process_wrapper
-from waluigi.tool_runner import (
-    import_already_done as _import_already_done,
-    import_results as _import_results,
-)
+from waluigi.tool_spec import ToolSpec
 
 # Protocol constants for network scanning
 TCP: str = 'tcp'  # TCP protocol identifier
 UDP: str = 'udp'  # UDP protocol identifier
 
 
-class Masscan(data_model.WaluigiTool):
-    """
-    Masscan tool integration for high-speed port scanning.
+class Masscan(ToolSpec):
 
-    This class integrates the Masscan port scanner into the Waluigi framework,
-    providing high-speed network reconnaissance capabilities. Masscan is designed
-    for scanning large IP ranges quickly and efficiently, using its own TCP/IP
-    stack implementation to achieve maximum performance.
+    name = 'masscan'
+    description = 'Masscan is a fast port scanner that can scan the entire Internet in under 6 minutes, transmitting 10 million packets per second. It is designed to be used for large-scale network scanning and is capable of scanning large ranges of IP addresses quickly.'
+    project_url = 'https://github.com/robertdavidgraham/masscan'
+    tags = ['port-scan', 'fast']
+    collector_type = data_model.CollectorType.ACTIVE.value
+    scan_order = 2
+    args = '--rate 1000'
+    input_records = [
+        data_model.ServerRecordType.SUBNET,
+        data_model.ServerRecordType.HOST,
+    ]
+    output_records = [
+        data_model.ServerRecordType.HOST,
+        data_model.ServerRecordType.PORT,
+    ]
 
-    Masscan capabilities include:
-    - Extremely fast port scanning (10M packets/second)
-    - Large-scale network range scanning
-    - Custom TCP/IP stack for performance
-    - Configurable scan rates and interfaces
-    - XML output format for structured results
+    def get_output_path(self, scan_input) -> str:
+        return get_output_path(scan_input)
 
-    Attributes:
-        name (str): Tool name identifier
-        description (str): Detailed tool description
-        project_url (str): URL to the Masscan project
-        collector_type (int): Type of collection (ACTIVE)
-        scan_order (int): Execution order in scan workflow
-        args (str): Default command-line arguments for scan rate
-        scan_func (callable): Function to execute port scans
-        import_func (callable): Function to import scan results
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
 
-    Example:
-        >>> masscan = Masscan()
-        >>> print(masscan.name)  # "masscan"
-        >>> print(masscan.collector_type)  # ACTIVE collection type
-    """
-
-    def __init__(self) -> None:
-        """
-        Initialize the Masscan tool configuration.
-
-        Sets up the tool with default parameters, scan functions, and metadata
-        required for integration with the Waluigi scanning framework.
-        """
-        super().__init__()
-        self.name = 'masscan'
-        self.description = 'Masscan is a fast port scanner that can scan the entire Internet in under 6 minutes, transmitting 10 million packets per second. It is designed to be used for large-scale network scanning and is capable of scanning large ranges of IP addresses quickly.'
-        self.project_url = "https://github.com/robertdavidgraham/masscan"
-        self.tags = ['port-scan', 'fast']
-        self.collector_type = data_model.CollectorType.ACTIVE.value
-        self.scan_order = 2
-        self.args = "--rate 1000"
-        self.input_records = [
-            data_model.ServerRecordType.SUBNET, data_model.ServerRecordType.HOST]
-        self.output_records = [
-            data_model.ServerRecordType.HOST, data_model.ServerRecordType.PORT]
-        self.scan_func = masscan_scan_func
-        self.import_func = masscan_import
+    def parse_output(self, output_path: str, scan_input) -> list:
+        return parse_masscan_xml(
+            output_path,
+            scan_input.current_tool_instance_id,
+        )
 
 
 def get_mac_address(ip_address: str) -> Optional[str]:
@@ -367,34 +340,6 @@ def execute_scan(scan_input) -> None:
             pass
 
 
-def masscan_scan_func(scan_input) -> bool:
-    try:
-        execute_scan(scan_input)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "masscan scan failed: %s", e, exc_info=True)
-        raise
-
-
-def masscan_import(scan_input) -> bool:
-    try:
-        output_path = get_output_path(scan_input)
-        if not os.path.exists(output_path):
-            return True
-        if _import_already_done(scan_input, output_path):
-            return True
-        scheduled_scan_obj = scan_input
-        tool_instance_id = scheduled_scan_obj.current_tool_instance_id
-        obj_arr = parse_masscan_xml(output_path, tool_instance_id)
-        _import_results(scan_input, obj_arr, output_path)
-        return True
-    except Exception as e:
-        logging.getLogger(__name__).error(
-            "masscan import failed: %s", e, exc_info=True)
-        raise
-
-
 def parse_masscan_xml(
     xml_path: str,
     tool_instance_id: Optional[str] = None,
@@ -456,5 +401,3 @@ def parse_masscan_xml(
         raise
 
     return obj_arr
-
-
