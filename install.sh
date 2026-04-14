@@ -96,6 +96,7 @@ python3 -m pip install --upgrade requests
 # Build and install reverge_collector
 poetry build
 python3 -m pip install dist/reverge_collector*.whl
+sudo mkdir -p /opt/collector
 sudo cp ./reverge_collector/scan_poller.py /opt/collector/
 sudo cp ./reverge_collector/mcp_server.py /opt/collector/
 
