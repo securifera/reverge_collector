@@ -49,7 +49,6 @@ import os
 from typing import Dict, Any, Set, Optional, List, Union
 import netaddr
 import traceback
-import random
 import hashlib
 import binascii
 import logging
@@ -72,7 +71,7 @@ class Feroxbuster(ToolSpec):
     tags = ['http-crawl']
     collector_type = data_model.CollectorType.ACTIVE.value
     scan_order = 10
-    args = '--rate-limit 50 -s 200 -n --auto-bail'
+    args = '--rate-limit 50 -s 200 -n --auto-bail --parallel 10 --scan-limit 10'
     input_records = [data_model.ServerRecordType.PORT,
                      data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
     output_records = [
@@ -138,38 +137,39 @@ def execute_scan(scan_input: Any) -> None:
 
         if url_str and url_str not in url_set:
             url_set.add(url_str)
-            rand_str = str(random.randint(1000000, 2000000))
-
-            # Add to url_to_id_map
-            scan_output_file_path = output_dir + os.path.sep + "ferox_out_" + rand_str
             url_to_id_map[url_str] = {
                 'port_id': port_id,
                 'host_id': host_id,
-                'output_file': scan_output_file_path
             }
 
-    futures = []
-    for target_url in url_to_id_map:
+    ferox_scan_output_file_path = None
 
-        # Get output file
-        scan_output_file_path = url_to_id_map[target_url]['output_file']
+    if url_to_id_map:
+        # Write all target URLs to a single input file
+        ferox_scan_input_file_path = output_dir + os.path.sep + "ferox_scan_in"
+        with open(ferox_scan_input_file_path, 'w') as file_fd:
+            for url_str in url_to_id_map:
+                file_fd.write(url_str + '\n')
+
+        # Read the file contents to feed via stdin
+        with open(ferox_scan_input_file_path, 'r') as file_fd:
+            stdin_content = file_fd.read()
+
+        ferox_scan_output_file_path = output_dir + os.path.sep + "ferox_scan_out"
 
         command = []
         if os.name != 'nt':
             command.append("sudo")
 
-        command_arr = [
+        command.extend([
             "feroxbuster",
+            "--stdin",
             "--json",
             "-k",  # Disable cert validation
             "-A",  # Random User Agent
-            "-u",
-            target_url,
             "-o",
-            scan_output_file_path
-        ]
-
-        command.extend(command_arr)
+            ferox_scan_output_file_path,
+        ])
 
         # Add optional arguments
         if tool_args and len(tool_args) > 0:
@@ -182,22 +182,24 @@ def execute_scan(scan_input: Any) -> None:
         callback_with_tool_id = partial(
             scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
 
-        futures.append(scan_utils.executor.submit(
-            process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id))
+        future = scan_utils.executor.submit(
+            process_wrapper, cmd_args=command, stdin_data=stdin_content, pid_callback=callback_with_tool_id)
 
-    # Register futures
-    scan_proc_inst = data_model.ToolExecutor(futures)
-    scheduled_scan_obj.register_tool_executor(
-        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+        # Register executor
+        scan_proc_inst = data_model.ToolExecutor([future])
+        scheduled_scan_obj.register_tool_executor(
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
 
-    results_dict = {'url_to_id_map': url_to_id_map}
+        results_dict = {
+            'url_to_id_map': url_to_id_map,
+            'output_file': ferox_scan_output_file_path,
+        }
 
-    # Write output file
-    with open(output_file_path, 'w') as file_fd:
-        file_fd.write(json.dumps(results_dict))
+        # Write metadata output file
+        with open(output_file_path, 'w') as file_fd:
+            file_fd.write(json.dumps(results_dict))
 
-    # Wait for the tasks to complete and retrieve results
-    for future in futures:
+        # Wait for the task to complete
         ret_dict = future.result()
         if ret_dict and 'exit_code' in ret_dict:
             exit_code = ret_dict['exit_code']
@@ -209,6 +211,14 @@ def execute_scan(scan_input: Any) -> None:
                     "Feroxbuster scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
                 raise RuntimeError("Feroxbuster scan for scan ID %s exited with code %d: %s" % (
                     scheduled_scan_obj.id, exit_code, err_msg))
+    else:
+        # No targets — write an empty metadata file
+        results_dict = {
+            'url_to_id_map': {},
+            'output_file': None,
+        }
+        with open(output_file_path, 'w') as file_fd:
+            file_fd.write(json.dumps(results_dict))
 
 
 def parse_feroxbuster_output(
@@ -229,89 +239,97 @@ def parse_feroxbuster_output(
         scan_data_dict = json.loads(data)
 
         url_to_id_map = scan_data_dict['url_to_id_map']
-        for url_str in url_to_id_map:
-            obj_data = url_to_id_map[url_str]
-            scan_output_file = obj_data['output_file']
-            port_id = obj_data['port_id']
-            host_id = obj_data['host_id']
+        ferox_output_file = scan_data_dict.get('output_file')
 
-            obj_arr = scan_utils.parse_json_blob_file(scan_output_file)
-            for web_result in obj_arr:
-                if 'type' in web_result:
-                    result_type = web_result['type']
+        if not ferox_output_file or not os.path.exists(ferox_output_file):
+            return ret_arr
 
-                    if result_type == "response":
-                        if 'status' in web_result:
-                            status_code = web_result['status']
-                            endpoint_url = None
+        obj_arr = scan_utils.parse_json_blob_file(ferox_output_file)
+        for web_result in obj_arr:
+            if 'type' in web_result:
+                result_type = web_result['type']
 
-                            if 'url' in web_result:
-                                endpoint_url = web_result['url']
+                if result_type == "response":
+                    if 'status' in web_result:
+                        status_code = web_result['status']
+                        endpoint_url = None
 
-                                u = urlparse(endpoint_url)
-                                web_path_str = u.path
-                                if web_path_str and len(web_path_str) > 0:
-                                    hashobj = hash_alg()
-                                    hashobj.update(web_path_str.encode())
-                                    path_hash = hashobj.digest()
-                                    web_path_hash = binascii.hexlify(
-                                        path_hash).decode()
+                        if 'url' in web_result:
+                            endpoint_url = web_result['url']
 
-                                host = u.netloc
-                                if ":" in host:
-                                    host_arr = host.split(":")
-                                    domain_str = host_arr[0].lower()
+                            # Find the base URL entry this response belongs to
+                            port_id = None
+                            host_id = None
+                            for base_url, obj_data in url_to_id_map.items():
+                                if endpoint_url.startswith(base_url):
+                                    port_id = obj_data['port_id']
+                                    host_id = obj_data['host_id']
+                                    break
+
+                            u = urlparse(endpoint_url)
+                            web_path_str = u.path
+                            if web_path_str and len(web_path_str) > 0:
+                                hashobj = hash_alg()
+                                hashobj.update(web_path_str.encode())
+                                path_hash = hashobj.digest()
+                                web_path_hash = binascii.hexlify(
+                                    path_hash).decode()
+
+                            host = u.netloc
+                            if ":" in host:
+                                host_arr = host.split(":")
+                                domain_str = host_arr[0].lower()
+                            else:
+                                domain_str = host.lower()
+
+                            endpoint_domain_id = None
+                            try:
+                                netaddr.IPAddress(domain_str)
+                            except Exception as e:
+                                if domain_str in domain_name_id_map:
+                                    endpoint_domain_id = domain_name_id_map[domain_str]
                                 else:
-                                    domain_str = host.lower()
+                                    domain_obj = data_model.Domain(
+                                        parent_id=host_id)
+                                    domain_obj.collection_tool_instance_id = tool_instance_id
+                                    domain_obj.name = domain_str
 
-                                endpoint_domain_id = None
-                                try:
-                                    netaddr.IPAddress(domain_str)
-                                except Exception as e:
-                                    if domain_str in domain_name_id_map:
-                                        endpoint_domain_id = domain_name_id_map[domain_str]
-                                    else:
-                                        domain_obj = data_model.Domain(
-                                            parent_id=host_id)
-                                        domain_obj.collection_tool_instance_id = tool_instance_id
-                                        domain_obj.name = domain_str
+                                    ret_arr.append(domain_obj)
+                                    endpoint_domain_id = domain_obj.id
+                                    domain_name_id_map[domain_str] = endpoint_domain_id
 
-                                        ret_arr.append(domain_obj)
-                                        endpoint_domain_id = domain_obj.id
-                                        domain_name_id_map[domain_str] = endpoint_domain_id
+                                    ret_arr.append(domain_obj)
 
-                                        ret_arr.append(domain_obj)
+                            if web_path_hash in path_hash_map:
+                                path_obj = path_hash_map[web_path_hash]
+                            else:
+                                path_obj = data_model.ListItem()
+                                path_obj.collection_tool_instance_id = tool_instance_id
+                                path_obj.web_path = web_path_str
+                                path_obj.web_path_hash = web_path_hash
+                                path_hash_map[web_path_hash] = path_obj
+                                ret_arr.append(path_obj)
 
-                                if web_path_hash in path_hash_map:
-                                    path_obj = path_hash_map[web_path_hash]
-                                else:
-                                    path_obj = data_model.ListItem()
-                                    path_obj.collection_tool_instance_id = tool_instance_id
-                                    path_obj.web_path = web_path_str
-                                    path_obj.web_path_hash = web_path_hash
-                                    path_hash_map[web_path_hash] = path_obj
-                                    ret_arr.append(path_obj)
+                            web_path_id = path_obj.id
 
-                                web_path_id = path_obj.id
+                            http_endpoint_obj = data_model.HttpEndpoint(
+                                parent_id=port_id)
+                            http_endpoint_obj.collection_tool_instance_id = tool_instance_id
+                            http_endpoint_obj.web_path_id = web_path_id
 
-                                http_endpoint_obj = data_model.HttpEndpoint(
-                                    parent_id=port_id)
-                                http_endpoint_obj.collection_tool_instance_id = tool_instance_id
-                                http_endpoint_obj.web_path_id = web_path_id
+                            ret_arr.append(http_endpoint_obj)
 
-                                ret_arr.append(http_endpoint_obj)
+                            content_length = None
+                            if 'content_length' in web_result:
+                                content_length = web_result['content_length']
 
-                                content_length = None
-                                if 'content_length' in web_result:
-                                    content_length = web_result['content_length']
+                            http_endpoint_data_obj = data_model.HttpEndpointData(
+                                parent_id=http_endpoint_obj.id)
+                            http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
+                            http_endpoint_data_obj.domain_id = endpoint_domain_id
+                            http_endpoint_data_obj.status = status_code
+                            http_endpoint_data_obj.content_length = content_length
 
-                                http_endpoint_data_obj = data_model.HttpEndpointData(
-                                    parent_id=http_endpoint_obj.id)
-                                http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
-                                http_endpoint_data_obj.domain_id = endpoint_domain_id
-                                http_endpoint_data_obj.status = status_code
-                                http_endpoint_data_obj.content_length = content_length
-
-                                ret_arr.append(http_endpoint_data_obj)
+                            ret_arr.append(http_endpoint_data_obj)
 
     return ret_arr

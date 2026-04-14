@@ -359,7 +359,7 @@ def execute_scan(scan_input) -> None:
         nmap_scan_inst: Dict[str, Any] = {}
         script_args: Optional[List[str]] = scan_obj.get('tool_args')
         port_list: List[str] = scan_obj['port_list']
-        port_comma_list: str = ','.join(port_list)
+        port_comma_list: str = tool_utils.consolidate_ports(port_list)
         ip_list_path: str = dir_path + os.path.sep + "nmap_in_" + str(counter)
         ip_list: Union[Set[str], List[str]] = scan_obj['ip_set']
         if len(ip_list) == 0:

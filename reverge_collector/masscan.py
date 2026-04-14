@@ -44,6 +44,7 @@ from typing import List, Dict, Set, Optional, Any, Union
 
 from reverge_collector import scan_utils
 from reverge_collector import data_model
+from reverge_collector import tool_utils
 from reverge_collector.proc_utils import process_wrapper
 from reverge_collector.tool_spec import ToolSpec
 
@@ -246,10 +247,8 @@ def get_masscan_input(scheduled_scan_obj: Any) -> Dict[str, Any]:
         logging.getLogger(__name__).error("Target list is empty")
 
     # Construct ports conf line
-    port_line = "ports = "
-    for port in scan_port_list:
-        port_line += str(port) + ','
-    port_line.strip(',')
+    port_line = "ports = " + \
+        tool_utils.consolidate_ports([str(p) for p in scan_port_list])
 
     # Write ports to config file
     with open(masscan_config_file, 'w') as mass_scan_conf:

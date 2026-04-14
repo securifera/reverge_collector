@@ -85,14 +85,12 @@ class TestFeroxbusterScan:
 
                     # Get data and map
                     url_to_id_map = scan_data_dict['url_to_id_map']
-                    for url_str in url_to_id_map:
-
-                        obj_data = url_to_id_map[url_str]
-                        output_file = obj_data['output_file']
-                        assert os.path.exists(output_file) == True
-                        with open(output_file, 'r') as f:
-                            file_contents = f.read()
-                            assert len(file_contents) > 0
+                    output_file = scan_data_dict.get('output_file')
+                    assert output_file is not None
+                    assert os.path.exists(output_file) == True
+                    with open(output_file, 'r') as f:
+                        file_contents = f.read()
+                        assert len(file_contents) > 0
 
     def test_feroxbuster_import_success(self, recon_manager):
 
