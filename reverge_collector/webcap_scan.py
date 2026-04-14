@@ -3,7 +3,7 @@ Webcap Screenshot Capture Module.
 
 This module provides comprehensive web page screenshot capabilities using Webcap,
 a Python library that leverages Chrome/Chromium for automated web page rendering
-and high-quality image capture. It integrates with the Waluigi framework to perform
+and high-quality image capture. It integrates with the reverge_collector framework to perform
 automated screenshot collection of discovered web endpoints with advanced features.
 
 The module supports:
@@ -31,7 +31,7 @@ Global Variables:
     future_map: Thread-safe mapping for tracking queued screenshot targets
 
 Example:
-    Basic usage through the Waluigi framework::
+    Basic usage through the reverge_collector framework::
     
         # Initialize the tool
         webcap = Webcap()
@@ -62,9 +62,9 @@ import math
 import shlex
 from typing import Dict, Tuple, Any, Optional, List
 
-from waluigi import scan_utils
-from waluigi import data_model
-from waluigi.tool_spec import ToolSpec
+from reverge_collector import scan_utils
+from reverge_collector import data_model
+from reverge_collector.tool_spec import ToolSpec
 
 # Global future mapping for screenshot target management and deduplication
 future_map: Dict[str, Tuple[int, Optional[int], Optional[str], str]] = {}

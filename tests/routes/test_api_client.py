@@ -1,5 +1,5 @@
 """
-Tests for waluigi.api_client.ApiClient
+Tests for reverge_collector.api_client.ApiClient
 
 All tests mock the network layer (requests.get / requests.post) and the
 encryption/decryption helpers so that no real server is required.
@@ -9,8 +9,8 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from waluigi.api_client import ApiClient, ScheduledScanResponse
-from waluigi.recon_manager import ScanNotFoundException
+from reverge_collector.api_client import ApiClient, ScheduledScanResponse
+from reverge_collector.recon_manager import ScanNotFoundException
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +355,7 @@ class TestDecrypt:
 
     def test_decrypt_returns_decrypted_bytes(self):
         expected = b'{"key": "val"}'
-        with patch("waluigi.tool_utils.decrypt_data", return_value=expected):
+        with patch("reverge_collector.tool_utils.decrypt_data", return_value=expected):
             result = self.client._decrypt({"data": "b64stuff"})
         assert result == expected
 
@@ -372,7 +372,7 @@ class TestDecrypt:
             self.client.session_key = refreshed_key
             return refreshed_key
 
-        with patch("waluigi.tool_utils.decrypt_data", side_effect=fake_decrypt), \
+        with patch("reverge_collector.tool_utils.decrypt_data", side_effect=fake_decrypt), \
             patch.object(self.client, "_refresh_session_key", side_effect=fake_refresh) as mock_refresh:
             result = self.client._decrypt({"data": "b64stuff"})
 
@@ -380,7 +380,7 @@ class TestDecrypt:
         mock_refresh.assert_called_once()
 
     def test_decrypt_returns_none_when_all_attempts_fail(self):
-        with patch("waluigi.tool_utils.decrypt_data", side_effect=Exception("bad")), \
+        with patch("reverge_collector.tool_utils.decrypt_data", side_effect=Exception("bad")), \
              patch.object(self.client, "_refresh_session_key"):
             result = self.client._decrypt({"data": "b64stuff"})
         assert result is None

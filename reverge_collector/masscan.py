@@ -1,7 +1,7 @@
 """
-Waluigi Masscan Integration Module
+reverge_collector Masscan Integration Module
 
-This module integrates Masscan, a high-speed port scanner, into the Waluigi
+This module integrates Masscan, a high-speed port scanner, into the reverge_collector
 security scanning framework. Masscan is designed for large-scale network
 scanning and can scan the entire Internet in under 6 minutes, transmitting
 10 million packets per second.
@@ -15,7 +15,7 @@ The module includes:
 - High-speed port scanning across large network ranges
 - XML output parsing and result processing
 - Network interface and routing configuration
-- Luigi task orchestration for scan workflows
+- direct tool execution for scan workflows
 - MAC address resolution for optimal scanning
 
 Classes:
@@ -42,10 +42,10 @@ import xml.etree.ElementTree as ET
 import logging
 from typing import List, Dict, Set, Optional, Any, Union
 
-from waluigi import scan_utils
-from waluigi import data_model
-from waluigi.proc_utils import process_wrapper
-from waluigi.tool_spec import ToolSpec
+from reverge_collector import scan_utils
+from reverge_collector import data_model
+from reverge_collector.proc_utils import process_wrapper
+from reverge_collector.tool_spec import ToolSpec
 
 # Protocol constants for network scanning
 TCP: str = 'tcp'  # TCP protocol identifier

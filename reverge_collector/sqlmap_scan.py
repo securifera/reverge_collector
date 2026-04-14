@@ -4,7 +4,7 @@ SQLMap SQL Injection Scanner Module.
 This module provides SQL injection scanning capabilities using SQLMap,
 a powerful open-source penetration testing tool that automates the process
 of detecting and exploiting SQL injection flaws and taking over database servers.
-It integrates with the Waluigi framework to perform automated SQL injection
+It integrates with the reverge_collector framework to perform automated SQL injection
 testing against web targets.
 
 The module supports:
@@ -27,7 +27,7 @@ Global Variables:
     SQLMAP_PATH: File system path to the SQLMap Python script
 
 Example:
-    Basic usage through the Waluigi framework::
+    Basic usage through the reverge_collector framework::
 
         # Initialize the tool
         sqlmap = Sqlmap()
@@ -51,10 +51,10 @@ from typing import Dict, Any, Set, Optional, List
 import logging
 import random
 
-from waluigi import scan_utils
-from waluigi import data_model
-from waluigi.proc_utils import process_wrapper
-from waluigi.tool_spec import ToolSpec
+from reverge_collector import scan_utils
+from reverge_collector import data_model
+from reverge_collector.proc_utils import process_wrapper
+from reverge_collector.tool_spec import ToolSpec
 
 # Global URL tracking set to prevent duplicate scanning
 url_set: Set[str] = set()

@@ -1,8 +1,8 @@
 """
-Waluigi Reconnaissance Manager Module
+reverge_collector Reconnaissance Manager Module
 
 This module provides the core scanning orchestration and management functionality
-for the Waluigi security scanning framework. It handles the complete lifecycle
+for the reverge_collector security scanning framework. It handles the complete lifecycle
 of security scans including scheduling, execution, monitoring, and result
 collection across multiple scanning tools and targets.
 
@@ -54,9 +54,9 @@ Constants:
 
 from types import SimpleNamespace
 from threading import Event, Thread
-from waluigi import scan_cleanup
-from waluigi import data_model
-from waluigi.api_client import ApiClient
+from reverge_collector import scan_cleanup
+from reverge_collector import data_model
+from reverge_collector.api_client import ApiClient
 from functools import partial, cmp_to_key
 
 import logging
@@ -823,7 +823,7 @@ class ReconManager:
     """
     Central manager for reconnaissance operations and server communication.
 
-    This class serves as the primary interface between the Waluigi scanning
+    This class serves as the primary interface between the reverge_collector scanning
     framework and the backend management server. It handles all aspects of
     scan orchestration, secure communication, tool management, and data
     exchange with the server infrastructure.
@@ -852,7 +852,7 @@ class ReconManager:
         headers (Dict): HTTP headers including authentication
         session_key (bytes): AES session key for encrypted communication
         network_ifaces (Dict): Discovered network interfaces and configurations
-        waluigi_tool_map (Dict): Map of tool IDs to tool instances
+        tool_map (Dict): Map of tool IDs to tool instances
 
     Example:
         >>> manager = ReconManager("auth-token", "https://server.com")
@@ -909,7 +909,7 @@ class ReconManager:
         self.network_ifaces = self.get_network_interfaces()
 
         # Initialize tool management — this is pure local work, done once
-        self.waluigi_tool_map: Dict[str, Any] = {}
+        self.tool_map: Dict[str, Any] = {}
         tool_classes = data_model.get_tool_classes()
 
         # Create tool instances from available tool classes
@@ -932,7 +932,7 @@ class ReconManager:
 
         Creates (or re-creates) the API client, sends the collector's network
         interfaces and tool list to the server, receives back the server-assigned
-        tool ID mapping, and populates waluigi_tool_map.  Can be called again
+        tool ID mapping, and populates tool_map.  Can be called again
         on reconnect without re-importing tool modules.
 
         Raises:
@@ -961,12 +961,12 @@ class ReconManager:
                 tool_name_id_map = ret_obj['tool_name_id_map']
                 if len(tool_name_id_map) > 0:
                     # Map server tool IDs to local tool instances
-                    self.waluigi_tool_map = {}
+                    self.tool_map = {}
                     for tool_name in tool_name_id_map:
                         tool_id = tool_name_id_map[tool_name]
                         tool_id_hex = format(int(tool_id), 'x')
                         if tool_name in self._tool_name_inst_map:
-                            self.waluigi_tool_map[tool_id_hex] = self._tool_name_inst_map[tool_name]
+                            self.tool_map[tool_id_hex] = self._tool_name_inst_map[tool_name]
                         else:
                             logging.getLogger(__name__).debug(
                                 "%s tool not found in tool name instance map." % tool_name)
@@ -986,7 +986,7 @@ class ReconManager:
             >>> tool_map = manager.get_tool_map()
             >>> nmap_tool = tool_map.get("a1b2c3")
         """
-        return self.waluigi_tool_map
+        return self.tool_map
 
     def scan_func(self, scan_input: data_model.ScheduledScan) -> bool:
         """
@@ -1007,7 +1007,7 @@ class ReconManager:
             ...     print("Scan execution failed")
 
         Note:
-            - Tool must be registered in waluigi_tool_map
+            - Tool must be registered in tool_map
             - Current tool is set in scan_input.current_tool
             - Tool-specific scan_func() method is called
         """
@@ -1015,8 +1015,8 @@ class ReconManager:
         ret_val = False
         tool_id = scan_input.current_tool.id
 
-        if tool_id in self.waluigi_tool_map:
-            tool_inst = self.waluigi_tool_map[tool_id]
+        if tool_id in self.tool_map:
+            tool_inst = self.tool_map[tool_id]
             # Delegate to tool-specific scan function
             ret_val = tool_inst.scan_func(scan_input)
         else:
@@ -1044,15 +1044,15 @@ class ReconManager:
             ...     print("Result import failed")
 
         Note:
-            - Tool must be registered in waluigi_tool_map
+            - Tool must be registered in tool_map
             - Current tool is set in scan_input.current_tool
             - Tool-specific import_func() method is called
         """
         ret_val = False
         tool_id = scan_input.current_tool.id
 
-        if tool_id in self.waluigi_tool_map:
-            tool_inst = self.waluigi_tool_map[tool_id]
+        if tool_id in self.tool_map:
+            tool_inst = self.tool_map[tool_id]
             # Delegate to tool-specific import function
             ret_val = tool_inst.import_func(scan_input)
         else:

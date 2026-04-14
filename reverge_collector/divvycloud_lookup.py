@@ -11,8 +11,8 @@
 # from luigi.util import inherits
 # from tqdm import tqdm
 # from multiprocessing.pool import ThreadPool
-# from waluigi import scan_utils
-# from waluigi import data_model
+# from reverge_collector import scan_utils
+# from reverge_collector import data_model
 
 # proxies = None
 # requests.packages.urllib3.disable_warnings()
@@ -20,7 +20,7 @@
 # # Get Resources
 
 
-# class Divvycloud(data_model.WaluigiTool):
+# class Divvycloud(data_model.RevergeTool):
 
 #     def __init__(self):
 #         self.name = 'divvycloud'

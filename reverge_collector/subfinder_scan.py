@@ -1,7 +1,7 @@
 """
-Waluigi Subfinder Scan Module
+Subfinder Scan Module
 
-This module integrates Subfinder, a subdomain discovery tool, into the Waluigi
+This module integrates Subfinder, a subdomain discovery tool, into the reverge_collector
 security scanning framework. It provides passive subdomain enumeration using
 various online sources and APIs.
 
@@ -13,7 +13,7 @@ The module includes:
 - Subfinder tool integration and configuration
 - Subdomain discovery and DNS resolution
 - API key management for enhanced results
-- Luigi task orchestration for scan workflows
+- direct tool execution for scan workflows
 - Domain-to-IP mapping and data processing
 
 Classes:
@@ -38,10 +38,10 @@ import yaml
 import logging
 from typing import List, Dict, Set, Optional, Any, Tuple
 
-from waluigi import scan_utils
-from waluigi import data_model
-from waluigi.proc_utils import process_wrapper
-from waluigi.tool_spec import ToolSpec
+from reverge_collector import scan_utils
+from reverge_collector import data_model
+from reverge_collector.proc_utils import process_wrapper
+from reverge_collector.tool_spec import ToolSpec
 
 
 class Subfinder(ToolSpec):

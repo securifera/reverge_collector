@@ -1,5 +1,5 @@
 """
-Netexec network scanning module for the Waluigi framework.
+Netexec network scanning module for the reverge_collector framework.
 
 This module provides comprehensive network scanning capabilities using Netexec, a post-exploitation
 framework used for network reconnaissance and security assessment. It implements protocol-specific
@@ -29,10 +29,10 @@ import netaddr
 import traceback
 import logging
 
-from waluigi import scan_utils
-from waluigi import data_model
-from waluigi.proc_utils import process_wrapper
-from waluigi.tool_spec import ToolSpec
+from reverge_collector import scan_utils
+from reverge_collector import data_model
+from reverge_collector.proc_utils import process_wrapper
+from reverge_collector.tool_spec import ToolSpec
 
 netexec_protocol_map = {'21': 'ftp', '22': 'ssh', '111': 'nfs', '135': 'wmi', '389': 'ldap', '445': 'smb',
                         '3306': 'mysql', '3389': 'rdp', '5900': 'vnc', '5985': 'winrm'}
@@ -103,7 +103,7 @@ class Netexec(ToolSpec):
             >>> for module in modules:
             ...     print(f"{module.name}: {module.args}")
         """
-        from waluigi.module_cache import get_cached_modules
+        from reverge_collector.module_cache import get_cached_modules
         return get_cached_modules('netexec', Netexec._fingerprint,
                                   Netexec._generate_netexec_modules)
 

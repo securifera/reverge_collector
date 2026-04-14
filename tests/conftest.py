@@ -1,9 +1,9 @@
 import pytest
 from unittest.mock import patch
 
-from waluigi.data_model import WaluigiTool
-from waluigi.recon_manager import ReconManager
-from waluigi.api_client import ApiClient
+from reverge_collector.data_model import RevergeTool
+from reverge_collector.recon_manager import ReconManager
+from reverge_collector.api_client import ApiClient
 
 
 @pytest.fixture(autouse=True)
@@ -56,7 +56,7 @@ def recon_manager(mock_update_collector_and_session_key):
         return ret_dict
 
     mgr = None
-    with patch.object(WaluigiTool, 'to_jsonable', patched_to_jsonable):
+    with patch.object(RevergeTool, 'to_jsonable', patched_to_jsonable):
         mgr = ReconManager(token, manager_url)
         mgr.register_with_server()
 

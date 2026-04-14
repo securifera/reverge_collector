@@ -1,5 +1,5 @@
 """
-Metasploit network scanning module for the Waluigi framework.
+Metasploit network scanning module for the reverge_collector framework.
 
 This module provides network scanning capabilities using Metasploit Framework via the msfrpc
 daemon. The Metasploit module to execute is specified in the tool's args field as the first
@@ -33,9 +33,9 @@ import requests
 import traceback
 import logging
 
-from waluigi import scan_utils
-from waluigi import data_model
-from waluigi.tool_spec import ToolSpec
+from reverge_collector import scan_utils
+from reverge_collector import data_model
+from reverge_collector.tool_spec import ToolSpec
 
 
 def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: str,
@@ -475,7 +475,7 @@ class Metasploit(ToolSpec):
             >>> for module in modules:
             ...     print(f"{module.name}: {module.args}")
         """
-        from waluigi.module_cache import get_cached_modules
+        from reverge_collector.module_cache import get_cached_modules
 
         msf_host = os.environ.get("MSF_JSON_RPC_HOST", "127.0.0.1")
         msf_port = int(os.environ.get("MSF_JSON_RPC_PORT", "8081"))
@@ -519,7 +519,7 @@ class Metasploit(ToolSpec):
         not reachable.
         """
         import shutil as _shutil
-        from waluigi.module_cache import sha256_file
+        from reverge_collector.module_cache import sha256_file
         _log = logging.getLogger(__name__)
         scheme = "https" if use_ssl else "http"
         url = f"{scheme}://{msf_host}:{msf_port}/api/v1/json-rpc"

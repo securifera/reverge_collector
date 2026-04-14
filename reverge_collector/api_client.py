@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from waluigi import tool_utils
+from reverge_collector import tool_utils
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +239,7 @@ class ApiClient:
             "/api/scheduler/%s/" % schedule_scan_id, payload
         )
         if result is None:
-            from waluigi.recon_manager import ScanNotFoundException
+            from reverge_collector.recon_manager import ScanNotFoundException
             raise ScanNotFoundException(
                 "Scan %s not found on server" % schedule_scan_id
             )

@@ -4,7 +4,7 @@ IP THC IP Lookup Module.
 
 This module provides comprehensive passive DNS reconnaissance capabilities using
 IP THC, a threat-intelligence platform specializing in DNS and domain data.
-It integrates with the Waluigi framework to perform automated IP-to-domain resolution
+It integrates with the reverge_collector framework to perform automated IP-to-domain resolution
 and historical DNS data collection for security reconnaissance.
 
 The module supports:
@@ -14,7 +14,7 @@ The module supports:
     - WHOIS information gathering capabilities
     - Comprehensive domain discovery from IP addresses
     - API-based threat intelligence data collection
-    - Integration with the Waluigi passive reconnaissance workflow
+    - Integration with the reverge_collector passive reconnaissance workflow
 
 Classes:
     IPThc: Main tool class implementing the IP THC API interface
@@ -28,7 +28,7 @@ Global Variables:
     proxies: HTTP proxy configuration for API requests
 
 Example:
-    Basic usage through the Waluigi framework::
+    Basic usage through the reverge_collector framework::
 
         # Initialize the tool
         ip_thc = IPThc()
@@ -50,9 +50,9 @@ import logging
 import netaddr
 from typing import Dict, Set, List, Any, Optional, Union
 
-from waluigi import scan_utils
-from waluigi import data_model
-from waluigi.tool_spec import ToolSpec
+from reverge_collector import scan_utils
+from reverge_collector import data_model
+from reverge_collector.tool_spec import ToolSpec
 
 # Global proxy configuration for IP THC API requests
 proxies: Optional[Dict[str, str]] = None

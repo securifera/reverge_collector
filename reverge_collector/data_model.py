@@ -1,7 +1,7 @@
 """
-Waluigi Data Model Module
+reverge_collector Data Model Module
 
-This module provides the core data structures and classes for the Waluigi security scanning framework.
+This module provides the core data structures and classes for the reverge_collector security scanning framework.
 It defines various record types (hosts, ports, domains, vulnerabilities, etc.) and manages scan data
 throughout the collection and analysis process.
 
@@ -31,33 +31,38 @@ import validators
 import ipaddress
 
 from typing import List, Dict, Set, Optional, Union, Any, Tuple
-from waluigi.scan_utils import get_ports, construct_url
-from waluigi.process_handle import ProcessHandle
-from waluigi.record_store import RecordStore
+from reverge_collector.scan_utils import get_ports, construct_url
+from reverge_collector.process_handle import ProcessHandle
+from reverge_collector.record_store import RecordStore
 
 # Configuration: Available security scanning tools
 # Each entry is a (module_path, class_name) pair for lazy loading.
 # get_tool_classes() imports them on first call, keeping module-load fast.
-waluigi_tools: List[Tuple[str, str]] = [
-    ('waluigi.masscan', 'Masscan'),          # Port scanner
-    ('waluigi.nmap_scan', 'Nmap'),           # Network mapper and port scanner
-    ('waluigi.pyshot_scan', 'Pyshot'),       # Screenshot capture tool
-    ('waluigi.nuclei_scan', 'Nuclei'),       # Vulnerability scanner
-    ('waluigi.subfinder_scan', 'Subfinder'),  # Subdomain discovery
-    ('waluigi.feroxbuster_scan', 'Feroxbuster'),  # Directory/file brute forcer
-    ('waluigi.shodan_lookup', 'Shodan'),     # Shodan API integration
-    ('waluigi.httpx_scan', 'Httpx'),         # HTTP toolkit
-    # ('waluigi.sectrails_ip_lookup', 'Sectrails'), # SecurityTrails API
-    ('waluigi.crapsecrets_scan', 'Crapsecrets'),  # Secret detection
-    ('waluigi.webcap_scan', 'Webcap'),        # Web capture and analysis
-    ('waluigi.gau_scan', 'Gau'),        # Web endpoint crawling results
-    ('waluigi.python_scan', 'Python'),        # Python script execution
-    ('waluigi.iis_short_scan', 'IISShortnameScanner'),  # IIS Shortname Scanner
-    # ('waluigi.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
-    ('waluigi.ip_thc_lookup', 'IPThc'),  # IP THC API integration
-    ('waluigi.netexec_scan', 'Netexec'),  # Netexec network scanner integration
-    ('waluigi.metasploit_scan', 'Metasploit'),  # Metasploit integration
-    ('waluigi.sqlmap_scan', 'Sqlmap'),   # SQL injection scanner
+reverge_tools: List[Tuple[str, str]] = [
+    ('reverge_collector.masscan', 'Masscan'),          # Port scanner
+    # Network mapper and port scanner
+    ('reverge_collector.nmap_scan', 'Nmap'),
+    ('reverge_collector.pyshot_scan', 'Pyshot'),       # Screenshot capture tool
+    ('reverge_collector.nuclei_scan', 'Nuclei'),       # Vulnerability scanner
+    ('reverge_collector.subfinder_scan', 'Subfinder'),  # Subdomain discovery
+    # Directory/file brute forcer
+    ('reverge_collector.feroxbuster_scan', 'Feroxbuster'),
+    ('reverge_collector.shodan_lookup', 'Shodan'),     # Shodan API integration
+    ('reverge_collector.httpx_scan', 'Httpx'),         # HTTP toolkit
+    # ('reverge_collector.sectrails_ip_lookup', 'Sectrails'), # SecurityTrails API
+    ('reverge_collector.crapsecrets_scan', 'Crapsecrets'),  # Secret detection
+    ('reverge_collector.webcap_scan', 'Webcap'),        # Web capture and analysis
+    # Web endpoint crawling results
+    ('reverge_collector.gau_scan', 'Gau'),
+    ('reverge_collector.python_scan', 'Python'),        # Python script execution
+    ('reverge_collector.iis_short_scan',
+     'IISShortnameScanner'),  # IIS Shortname Scanner
+    # ('reverge_collector.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
+    ('reverge_collector.ip_thc_lookup', 'IPThc'),  # IP THC API integration
+    # Netexec network scanner integration
+    ('reverge_collector.netexec_scan', 'Netexec'),
+    ('reverge_collector.metasploit_scan', 'Metasploit'),  # Metasploit integration
+    ('reverge_collector.sqlmap_scan', 'Sqlmap'),   # SQL injection scanner
 ]
 
 # Global configuration: Wordlist storage path
@@ -68,9 +73,9 @@ if not os.path.exists(wordlist_path):
 
 def get_tool_classes() -> List[Any]:
     """
-    Dynamically load and return all available Waluigi security scanning tool classes.
+    Dynamically load and return all available security scanning tool classes.
 
-    Tool classes are loaded once from the ``waluigi_tools`` registry on first
+    Tool classes are loaded once from the ``reverge_tools`` registry on first
     call and cached for subsequent invocations.  Each entry in the registry is
     a ``(module_path, class_name)`` pair that gets resolved via
     ``importlib.import_module``.
@@ -88,7 +93,7 @@ def get_tool_classes() -> List[Any]:
 
     tool_classes: List[Any] = []
 
-    for module_name, class_name in waluigi_tools:
+    for module_name, class_name in reverge_tools:
         module = importlib.import_module(module_name)
         tool_class = getattr(module, class_name)
         tool_classes.append(tool_class)
@@ -796,9 +801,9 @@ class ServerRecordType(enum.Enum):
         return self.value
 
 
-class WaluigiTool:
+class RevergeTool:
     """
-    Base class representing a security scanning tool within the Waluigi framework.
+    Base class representing a security scanning tool within the reverge_collector framework.
 
     This class encapsulates the configuration and metadata for individual security
     scanning tools, including their execution parameters, description, and callback functions.
@@ -817,7 +822,7 @@ class WaluigiTool:
         import_func (callable): Function to import and process tool results
 
     Example:
-        >>> tool = WaluigiTool()
+        >>> tool = RevergeTool()
         >>> tool.name = "Nmap"
         >>> tool.collector_type = CollectorType.ACTIVE
         >>> tool.input_records = [RecordType.HOST]
@@ -827,7 +832,7 @@ class WaluigiTool:
 
     def __init__(self) -> None:
         """
-        Initialize a new WaluigiTool instance with default values.
+        Initialize a new RevergeTool instance with default values.
 
         All attributes are initialized to None and should be set by subclasses
         or during tool configuration.
@@ -857,7 +862,7 @@ class WaluigiTool:
             Dict[str, Any]: Dictionary containing tool configuration data
 
         Example:
-            >>> tool = WaluigiTool()
+            >>> tool = RevergeTool()
             >>> tool.name = "Nmap"
             >>> data = tool.to_jsonable()
             >>> print(data['name'])
@@ -1750,7 +1755,7 @@ class ScanData:
 
 class Record:
     """
-    Base class for all scan data records in the Waluigi framework.
+    Base class for all scan data records in the reverge_collector framework.
 
     This abstract base class provides common functionality for all types of scan data
     objects including ID management, parent-child relationships, tagging, and 

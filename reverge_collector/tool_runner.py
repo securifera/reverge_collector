@@ -26,7 +26,7 @@ Canonical pattern for every tool file
 --------------------------------------
 ::
 
-    from waluigi.tool_runner import (
+    from reverge_collector.tool_runner import (
         import_already_done as _import_already_done,
         import_results     as _import_results,
     )
@@ -139,7 +139,7 @@ def import_results(
             ``get_output_path()``.  Used to derive the marker location.
     """
     # Deferred import to avoid circular dependency at module load time.
-    from waluigi import data_model  # noqa: PLC0415
+    from reverge_collector import data_model  # noqa: PLC0415
 
     scan_id = scheduled_scan_obj.scan_id
     recon_manager = scheduled_scan_obj.scan_thread.recon_manager

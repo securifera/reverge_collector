@@ -1,9 +1,9 @@
 """
-Python Active Script Execution Module for the Waluigi Framework.
+Python Active Script Execution Module for the reverge_collector Framework.
 
 This module enables active execution of Python scripts against discovered network ports
-within the Waluigi framework. It is designed to automate custom Python-based scanning,
-analysis, or exploitation tasks, integrating results into the Waluigi data model for
+within the reverge_collector framework. It is designed to automate custom Python-based scanning,
+analysis, or exploitation tasks, integrating results into the reverge_collector data model for
 further processing and reporting.
 
 Features:
@@ -19,17 +19,17 @@ Classes:
     ImportPythonOutput: Luigi task for importing and processing Python scan results
 
 Example:
-    Basic usage through the Waluigi framework::
+    Basic usage through the reverge_collector framework::
         python_tool = Python()
         success = python_tool.scan_func(scan_input_obj)
         imported = python_tool.import_func(scan_input_obj)
 
 Note:
     This module requires valid Python scripts and appropriate arguments to be supplied
-    via the Waluigi framework. Ensure that all dependencies are installed and accessible
+    via the reverge_collector framework. Ensure that all dependencies are installed and accessible
     in the execution environment.
 
-.. moduleauthor:: Waluigi Framework Team
+.. moduleauthor:: reverge_collector Framework Team
 .. version:: 1.0.0
 """
 
@@ -39,10 +39,10 @@ import os
 from typing import Dict, Any, List, Set, Optional
 import logging
 
-from waluigi import scan_utils
-from waluigi import data_model
-from waluigi.proc_utils import process_wrapper
-from waluigi.tool_spec import ToolSpec
+from reverge_collector import scan_utils
+from reverge_collector import data_model
+from reverge_collector.proc_utils import process_wrapper
+from reverge_collector.tool_spec import ToolSpec
 
 
 class Python(ToolSpec):

@@ -2,11 +2,11 @@ import base64
 import os
 import shutil
 import uuid
-from waluigi.data_model import ScheduledScan, ScanData
-from waluigi.recon_manager import ReconManager, ScheduledScanThread
+from reverge_collector.data_model import ScheduledScan, ScanData
+from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
 from types import SimpleNamespace
 from unittest.mock import patch
-from waluigi.scan_utils import get_port_byte_array
+from reverge_collector.scan_utils import get_port_byte_array
 import json
 from tests.conftest import get_tool_id
 
@@ -67,7 +67,7 @@ class TestShodanScan:
             if first_tool.args_override:
                 scheduled_scan_obj.current_tool.args = first_tool.args_override
 
-            with patch('waluigi.shodan_lookup.shodan_wrapper', return_value=shodan_data):
+            with patch('reverge_collector.shodan_lookup.shodan_wrapper', return_value=shodan_data):
 
                 with patch.object(ReconManager, 'import_data', return_value={}):
 

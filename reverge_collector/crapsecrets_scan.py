@@ -3,7 +3,7 @@ CrapSecrets Cryptographic Vulnerability Scanner Module.
 
 This module provides comprehensive cryptographic security analysis using CrapSecrets,
 a pure Python library for identifying the use of known or very weak cryptographic
-secrets across a variety of web application platforms. It integrates with the Waluigi
+secrets across a variety of web application platforms. It integrates with the reverge_collector
 framework to perform automated detection of common cryptographic vulnerabilities.
 
 The module focuses on scanning base URLs (root paths) only, filtering out URLs with
@@ -17,7 +17,7 @@ The module supports:
     - Support for both discovered endpoints and custom URL lists
     - Concurrent processing for performance optimization
     - Comprehensive vulnerability reporting with details
-    - Integration with the Waluigi vulnerability management system
+    - Integration with the reverge_collector vulnerability management system
 
 Classes:
     Crapsecrets: Main tool class implementing the cryptographic scanner interface
@@ -34,7 +34,7 @@ Global Variables:
     path_hash_map: Mapping for web path deduplication across scans
 
 Example:
-    Basic usage through the Waluigi framework::
+    Basic usage through the reverge_collector framework::
     
         # Initialize the tool
         crapsecrets = Crapsecrets()
@@ -60,10 +60,10 @@ import time
 import logging
 from typing import Dict, Set, List, Any, Optional, Union
 
-from waluigi import scan_utils
-from waluigi import data_model
-from waluigi.proc_utils import process_wrapper
-from waluigi.tool_spec import ToolSpec
+from reverge_collector import scan_utils
+from reverge_collector import data_model
+from reverge_collector.proc_utils import process_wrapper
+from reverge_collector.tool_spec import ToolSpec
 
 # Global URL tracking set to prevent duplicate scanning
 url_set: Set[str] = set()

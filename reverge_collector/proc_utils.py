@@ -1,7 +1,7 @@
 """
 Process Utilities Module.
 
-This module provides process execution and monitoring utilities for the Waluigi framework.
+This module provides process execution and monitoring utilities for the reverge_collector framework.
 It includes subprocess wrappers, stream capture, and process management functionality.
 """
 
@@ -13,7 +13,7 @@ from queue import Queue
 from enum import Enum
 from typing import Dict, List, Any, Optional, Callable, Set
 
-from waluigi.data_model import ToolExecutor
+from reverge_collector.data_model import ToolExecutor
 
 
 class ProcessStreamReader(Thread):

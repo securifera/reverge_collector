@@ -3,7 +3,7 @@
 
 # This module provides comprehensive passive DNS reconnaissance capabilities using
 # SecurityTrails, a threat-intelligence platform specializing in DNS and domain data.
-# It integrates with the Waluigi framework to perform automated IP-to-domain resolution
+# It integrates with the reverge_collector framework to perform automated IP-to-domain resolution
 # and historical DNS data collection for security reconnaissance.
 
 # The module supports:
@@ -13,7 +13,7 @@
 #     - WHOIS information gathering capabilities
 #     - Comprehensive domain discovery from IP addresses
 #     - API-based threat intelligence data collection
-#     - Integration with the Waluigi passive reconnaissance workflow
+#     - Integration with the reverge_collector passive reconnaissance workflow
 
 # Classes:
 #     Sectrails: Main tool class implementing the SecurityTrails API interface
@@ -27,7 +27,7 @@
 #     proxies: HTTP proxy configuration for API requests
 
 # Example:
-#     Basic usage through the Waluigi framework::
+#     Basic usage through the reverge_collector framework::
 
 #         # Initialize the tool
 #         sectrails = Sectrails()
@@ -52,19 +52,19 @@
 # from typing import Dict, Set, List, Any, Optional, Union
 
 # from luigi.util import inherits
-# from waluigi import scan_utils
-# from waluigi import data_model
+# from reverge_collector import scan_utils
+# from reverge_collector import data_model
 
 # # Global proxy configuration for SecurityTrails API requests
 # proxies: Optional[Dict[str, str]] = None
 
 
-# class Sectrails(data_model.WaluigiTool):
+# class Sectrails(data_model.RevergeTool):
 #     """
-#     SecurityTrails threat intelligence platform integration for the Waluigi framework.
+#     SecurityTrails threat intelligence platform integration for the reverge_collector framework.
 
 #     This class provides integration with SecurityTrails, a comprehensive threat-intelligence
-#     platform specializing in DNS and domain data collection. It implements the WaluigiTool
+#     platform specializing in DNS and domain data collection. It implements the RevergeTool
 #     interface to provide passive DNS reconnaissance capabilities within the security
 #     reconnaissance workflow.
 
@@ -129,7 +129,7 @@
 #         Import and process SecurityTrails IP lookup results.
 
 #         This static method serves as the main entry point for executing SecurityTrails
-#         IP-to-domain lookups within the Waluigi framework. It creates and executes
+#         IP-to-domain lookups within the reverge_collector framework. It creates and executes
 #         a Luigi workflow to perform the API-based reconnaissance and import results
 #         into the framework's data model.
 
@@ -404,7 +404,7 @@
 #     Luigi task for importing and processing SecurityTrails IP lookup results.
 
 #     This task handles the import and integration of SecurityTrails lookup results
-#     into the Waluigi framework's data model. It reads the JSON output from the
+#     into the reverge_collector framework's data model. It reads the JSON output from the
 #     lookup scan, processes domain information, and creates appropriate data model
 #     objects for storage in the framework database.
 

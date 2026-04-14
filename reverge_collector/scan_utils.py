@@ -34,7 +34,7 @@ def is_cloud_domain(domain: str) -> bool:
 """
 Scan Utilities Module.
 
-This module provides essential utility classes and functions for the Waluigi framework's
+This module provides essential utility classes and functions for the reverge_collector framework's
 scanning operations. It includes thread pool management, process execution wrappers,
 network utilities, file parsing functions, and other common functionality needed
 across different scanning tools.
@@ -85,7 +85,7 @@ Example:
 
 Note:
     This module provides the core infrastructure for concurrent execution,
-    process management, and data processing across all Waluigi scanning tools.
+    process management, and data processing across all scanning tools.
     The global executor instance is shared across the framework for efficient
     resource management.
 

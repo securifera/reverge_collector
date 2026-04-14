@@ -3,10 +3,10 @@ import logging
 import json
 
 from typing import Dict, Any, List, Set, Optional
-from waluigi import scan_utils
-from waluigi import data_model
+from reverge_collector import scan_utils
+from reverge_collector import data_model
 from iis_shortname_scan import Scanner
-from waluigi.tool_spec import ToolSpec
+from reverge_collector.tool_spec import ToolSpec
 
 
 class IISShortnameScanner(ToolSpec):

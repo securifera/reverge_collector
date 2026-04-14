@@ -1,7 +1,7 @@
 """
-ToolSpec — abstract base class for all Waluigi tool definitions.
+ToolSpec — abstract base class for all tool definitions.
 
-Replaces the ``WaluigiTool`` boilerplate (``__init__`` assignments,
+Replaces the ``RevergeTool`` (``__init__`` assignments,
 identical static scan/import wrappers, duplicated ``get_output_path``
 module functions) with:
 
@@ -50,8 +50,8 @@ import os
 from abc import ABC, abstractmethod
 from typing import Any, List, Optional
 
-from waluigi import data_model, scan_utils
-from waluigi.tool_runner import (
+from reverge_collector import data_model, scan_utils
+from reverge_collector.tool_runner import (
     import_already_done as _import_already_done,
     import_results as _import_results,
 )
@@ -59,8 +59,8 @@ from waluigi.tool_runner import (
 logger = logging.getLogger(__name__)
 
 
-class ToolSpec(data_model.WaluigiTool, ABC):
-    """Abstract base class for Waluigi tool specifications.
+class ToolSpec(data_model.RevergeTool, ABC):
+    """Abstract base class for tool specifications.
 
     Subclasses declare metadata as *class-level* attributes and implement
     ``execute_scan()`` and ``parse_output()``.  Everything else —
@@ -86,7 +86,7 @@ class ToolSpec(data_model.WaluigiTool, ABC):
     # -----------------------------------------------------------------------
 
     def __init__(self) -> None:
-        # Deliberately do NOT call WaluigiTool.__init__(): that method would
+        # Deliberately do NOT call RevergeTool.__init__(): that method would
         # shadow all the class-level metadata attrs above with None.
         # The only instance attrs we need are the callables.
         self.scan_func = self._run_scan
@@ -122,7 +122,8 @@ class ToolSpec(data_model.WaluigiTool, ABC):
         tool_name: str = scan_input.current_tool.name
         scope_obj = scan_input.scan_data
 
-        dir_path: str = scan_utils.init_tool_folder(tool_name, 'inputs', scan_id)
+        dir_path: str = scan_utils.init_tool_folder(
+            tool_name, 'inputs', scan_id)
         input_file: str = f"{dir_path}{os.sep}{tool_name}_scan_input_{scan_id}.json"
 
         hosts = [h.ipv4_addr for h in scope_obj.get_hosts() if h.ipv4_addr]

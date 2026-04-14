@@ -1,5 +1,5 @@
 """
-Module discovery result cache for Waluigi security tool integration.
+Module discovery result cache for security tool integration.
 
 Tools that expose a ``modules_func()`` must enumerate their available
 scripts/templates/modules on every startup, which can be slow (nmap has 600+
@@ -27,7 +27,7 @@ methods on each tool's class (e.g. ``Nuclei._fingerprint``,
 
 Usage::
 
-    from waluigi.module_cache import get_cached_modules
+    from reverge_collector.module_cache import get_cached_modules
 
     def nmap_modules():
         def _generate():
@@ -96,7 +96,7 @@ def _write_cache(tool_name: str, fingerprint: str,
 def _modules_from_cache(raw: Dict[str, Any]) -> List[Any]:
     """Reconstruct CollectionModule objects from a cache dict."""
     # Import lazily to avoid circular imports
-    from waluigi import data_model
+    from reverge_collector import data_model
     modules = []
     for entry in raw.get("modules", []):
         m = data_model.CollectionModule()

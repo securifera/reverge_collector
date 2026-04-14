@@ -1,8 +1,8 @@
 """
-Waluigi Shodan Lookup Module
+reverge_collector Shodan Lookup Module
 
 This module integrates Shodan, a search engine for Internet-connected devices,
-into the Waluigi security scanning framework. It provides passive reconnaissance
+into the reverge_collector security scanning framework. It provides passive reconnaissance
 capabilities by querying Shodan's database for information about hosts, services,
 and vulnerabilities.
 
@@ -17,7 +17,7 @@ The module includes:
 - Service and technology fingerprinting
 - SSL/TLS certificate analysis
 - Web component identification
-- Luigi task orchestration for scan workflows
+- direct tool execution for scan workflows
 
 Classes:
     Shodan: Main tool class for Shodan integration
@@ -44,11 +44,11 @@ import binascii
 import logging
 from typing import List, Dict, Set, Optional, Any, Union
 
-from waluigi import scan_utils
-from waluigi import data_model
+from reverge_collector import scan_utils
+from reverge_collector import data_model
 from datetime import datetime
 from urllib.parse import urlsplit, urlunsplit
-from waluigi.tool_spec import ToolSpec
+from reverge_collector.tool_spec import ToolSpec
 
 
 class Shodan(ToolSpec):

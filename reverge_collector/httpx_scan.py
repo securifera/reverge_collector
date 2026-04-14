@@ -1,5 +1,5 @@
 """
-HTTPX web scanning module for the Waluigi framework.
+HTTPX web scanning module for the reverge_collector framework.
 
 This module provides comprehensive HTTP/HTTPS scanning capabilities using HTTPX,
 a fast and multi-purpose HTTP toolkit. It performs web application discovery,
@@ -30,11 +30,11 @@ import netaddr
 import time
 import logging
 
-from waluigi import scan_utils
-from waluigi import data_model
-from waluigi.proc_utils import process_wrapper
+from reverge_collector import scan_utils
+from reverge_collector import data_model
+from reverge_collector.proc_utils import process_wrapper
 from urllib.parse import urlparse
-from waluigi.tool_spec import ToolSpec
+from reverge_collector.tool_spec import ToolSpec
 
 
 class Httpx(ToolSpec):

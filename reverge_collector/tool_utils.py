@@ -1,5 +1,5 @@
 """
-Tool output parsing utilities for the Waluigi framework.
+Tool output parsing utilities for the reverge_collector framework.
 
 Provides standalone functions to parse security tool output files and convert
 them to Reverge-compatible data-model objects or JSON.  The same logic can
@@ -30,7 +30,7 @@ from Cryptodome.Cipher import AES
 from Cryptodome.Cipher import PKCS1_OAEP
 from Cryptodome.PublicKey import RSA
 
-from waluigi import data_model
+from reverge_collector import data_model
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ def parse_nmap_xml_to_jsonable(
     tool_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse a single nmap XML file and return JSON-serialisable dicts."""
-    from waluigi.nmap_scan import parse_nmap_xml
+    from reverge_collector.nmap_scan import parse_nmap_xml
     records = parse_nmap_xml(xml_path, scope_obj, tool_instance_id, tool_id)
     return [obj.to_jsonable() for obj in records]
 
@@ -78,7 +78,7 @@ def parse_nmap_xml_to_jsonable(
 # ---------------------------------------------------------------------------
 # Reverge session-key and encryption utilities
 # ---------------------------------------------------------------------------
-# Session key is stored adjacent to the waluigi package root.
+# Session key is stored adjacent to the reverge_collector package root.
 _SESSION_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "session"
 )
@@ -211,7 +211,7 @@ def parse_masscan_xml_to_jsonable(
     tool_instance_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse a Masscan XML output file and return JSON-serialisable dicts."""
-    from waluigi.masscan import parse_masscan_xml
+    from reverge_collector.masscan import parse_masscan_xml
     return [obj.to_jsonable() for obj in parse_masscan_xml(xml_path, tool_instance_id)]
 
 
@@ -221,7 +221,7 @@ def parse_httpx_output_to_jsonable(
     tool_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse an httpx JSON output file and return JSON-serialisable dicts."""
-    from waluigi.httpx_scan import parse_httpx_output
+    from reverge_collector.httpx_scan import parse_httpx_output
     return [obj.to_jsonable() for obj in parse_httpx_output(
         [output_file], tool_instance_id, tool_id)]
 
@@ -232,7 +232,7 @@ def parse_nuclei_output_to_jsonable(
     tool_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse a Nuclei JSON output file and return JSON-serialisable dicts."""
-    from waluigi.nuclei_scan import parse_nuclei_output
+    from reverge_collector.nuclei_scan import parse_nuclei_output
     return [obj.to_jsonable() for obj in parse_nuclei_output(
         output_file, None, tool_instance_id, tool_id)]
 
@@ -242,7 +242,7 @@ def parse_shodan_output_to_jsonable(
     tool_instance_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse a Shodan JSON output file and return JSON-serialisable dicts."""
-    from waluigi.shodan_lookup import parse_shodan_output
+    from reverge_collector.shodan_lookup import parse_shodan_output
     return [obj.to_jsonable() for obj in parse_shodan_output(output_file, tool_instance_id)]
 
 
@@ -251,7 +251,7 @@ def parse_feroxbuster_output_to_jsonable(
     tool_instance_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse a Feroxbuster JSON metadata output file and return JSON-serialisable dicts."""
-    from waluigi.feroxbuster_scan import parse_feroxbuster_output
+    from reverge_collector.feroxbuster_scan import parse_feroxbuster_output
     return [obj.to_jsonable() for obj in parse_feroxbuster_output(output_file, tool_instance_id)]
 
 
@@ -260,7 +260,7 @@ def parse_subfinder_output_to_jsonable(
     tool_instance_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse a Subfinder JSON output file and return JSON-serialisable dicts."""
-    from waluigi.subfinder_scan import parse_subfinder_output
+    from reverge_collector.subfinder_scan import parse_subfinder_output
     return [obj.to_jsonable() for obj in parse_subfinder_output(output_file, tool_instance_id)]
 
 
@@ -270,7 +270,7 @@ def parse_iis_short_scan_output_to_jsonable(
     tool_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse an IIS Shortname Scanner JSON output file and return JSON-serialisable dicts."""
-    from waluigi.iis_short_scan import parse_iis_short_scan_output
+    from reverge_collector.iis_short_scan import parse_iis_short_scan_output
     return [obj.to_jsonable() for obj in parse_iis_short_scan_output(output_file, tool_instance_id, tool_id)]
 
 
@@ -279,7 +279,7 @@ def parse_ip_thc_output_to_jsonable(
     tool_instance_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse an IP THC JSON output file and return JSON-serialisable dicts."""
-    from waluigi.ip_thc_lookup import parse_ip_thc_output
+    from reverge_collector.ip_thc_lookup import parse_ip_thc_output
     return [obj.to_jsonable() for obj in parse_ip_thc_output(output_file, tool_instance_id)]
 
 
@@ -288,7 +288,7 @@ def parse_gau_output_to_jsonable(
     tool_instance_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse a Gau JSON metadata output file and return JSON-serialisable dicts."""
-    from waluigi.gau_scan import parse_gau_output
+    from reverge_collector.gau_scan import parse_gau_output
     return [obj.to_jsonable() for obj in parse_gau_output(output_file, tool_instance_id)]
 
 
@@ -298,7 +298,7 @@ def parse_crapsecrets_output_to_jsonable(
     tool_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse a CrapSecrets JSON output file and return JSON-serialisable dicts."""
-    from waluigi.crapsecrets_scan import parse_crapsecrets_output
+    from reverge_collector.crapsecrets_scan import parse_crapsecrets_output
     return [obj.to_jsonable() for obj in parse_crapsecrets_output(output_file, tool_instance_id, tool_id)]
 
 
@@ -307,7 +307,7 @@ def parse_webcap_output_to_jsonable(
     tool_instance_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse a Webcap JSON-lines metadata file and return JSON-serialisable dicts."""
-    from waluigi.webcap_scan import parse_webcap_output
+    from reverge_collector.webcap_scan import parse_webcap_output
     return [obj.to_jsonable() for obj in parse_webcap_output(output_file, tool_instance_id)]
 
 
@@ -317,7 +317,7 @@ def parse_netexec_output_to_jsonable(
     tool_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse a Netexec JSON metadata output file and return JSON-serialisable dicts."""
-    from waluigi.netexec_scan import parse_netexec_output
+    from reverge_collector.netexec_scan import parse_netexec_output
     return [obj.to_jsonable() for obj in parse_netexec_output(output_file, tool_instance_id, tool_id)]
 
 
@@ -327,5 +327,5 @@ def parse_python_scan_output_to_jsonable(
     tool_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse a Python scan output file and return JSON-serialisable dicts."""
-    from waluigi.python_scan import parse_python_scan_output
+    from reverge_collector.python_scan import parse_python_scan_output
     return [obj.to_jsonable() for obj in parse_python_scan_output(output_file, tool_instance_id, tool_id)]

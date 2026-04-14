@@ -3,7 +3,7 @@ requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
-name = "waluigi"
+name = "reverge_collector"
 version = "1.2.0"
 description = "A scan automation pipeline tool written in Python"
 authors = ["Ryan Wincey (b0yd)"]

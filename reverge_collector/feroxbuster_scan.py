@@ -3,7 +3,7 @@ Feroxbuster Web Directory Scanner Module.
 
 This module provides comprehensive web directory scanning capabilities using Feroxbuster,
 a fast, simple, and flexible web directory scanner written in Rust. It integrates with
-the Waluigi framework to perform automated directory brute-forcing against web targets.
+the reverge_collector framework to perform automated directory brute-forcing against web targets.
 
 The module supports:
     - High-performance directory scanning with rate limiting
@@ -25,7 +25,7 @@ Global Variables:
     url_set: Thread-safe set tracking queued URLs to prevent duplicates
 
 Example:
-    Basic usage through the Waluigi framework::
+    Basic usage through the reverge_collector framework::
     
         # Initialize the tool
         ferox = Feroxbuster()
@@ -54,11 +54,11 @@ import hashlib
 import binascii
 import logging
 
-from waluigi import scan_utils
+from reverge_collector import scan_utils
 from urllib.parse import urlparse
-from waluigi import data_model
-from waluigi.proc_utils import process_wrapper
-from waluigi.tool_spec import ToolSpec
+from reverge_collector import data_model
+from reverge_collector.proc_utils import process_wrapper
+from reverge_collector.tool_spec import ToolSpec
 
 # Global URL tracking set to prevent duplicate scanning
 url_set: Set[str] = set()

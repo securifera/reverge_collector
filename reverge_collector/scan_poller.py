@@ -1,7 +1,7 @@
 """
-Waluigi Scan Poller Module
+reverge_collector Scan Poller Module
 
-This module provides the main entry point and interactive console for the Waluigi
+This module provides the main entry point and interactive console for the reverge_collector
 security scanning framework. It manages the scanning thread lifecycle, handles
 user interaction through a command-line interface, and provides real-time logging
 and debugging capabilities.
@@ -32,8 +32,8 @@ Constants:
     local_extender_port (int): Port for local backend communication
 """
 
-from waluigi import recon_manager
-from waluigi.version import __version__
+from reverge_collector import recon_manager
+from reverge_collector.version import __version__
 import traceback
 import argparse
 import time
@@ -306,7 +306,7 @@ def main(args) -> None:
 
 if __name__ == "__main__":
     """
-    Command-line entry point for the Waluigi scan poller application.
+    Command-line entry point for the reverge_collector scan poller application.
 
     This section handles command-line argument parsing and application initialization.
     It supports test mode for validation and requires an authentication token for
@@ -326,7 +326,7 @@ if __name__ == "__main__":
     """
     # Configure command-line argument parser
     parser = argparse.ArgumentParser(
-        description="Waluigi Security Scanning Framework - Interactive Console",
+        description="reverge_collector Security Scanning Framework - Interactive Console",
         epilog="Use 'h' command in interactive mode for runtime help"
     )
     parser.add_argument(
@@ -347,7 +347,7 @@ if __name__ == "__main__":
 
     # Handle version display
     if args.version:
-        print(f"[*] Waluigi scan poller version {__version__}")
+        print(f"[*] reverge_collector scan poller version {__version__}")
         sys.exit(0)
 
     # Start main application

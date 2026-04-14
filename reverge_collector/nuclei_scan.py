@@ -1,5 +1,5 @@
 """
-Nuclei vulnerability scanning module for the Waluigi framework.
+Nuclei vulnerability scanning module for the reverge_collector framework.
 
 This module provides vulnerability scanning capabilities using Nuclei, a fast and flexible
 vulnerability scanner based on YAML templates. It performs automated security scans on
@@ -28,10 +28,10 @@ import traceback
 import netaddr
 from functools import partial
 from urllib.parse import urlparse
-from waluigi import scan_utils
-from waluigi import data_model
-from waluigi.proc_utils import process_wrapper
-from waluigi.tool_spec import ToolSpec
+from reverge_collector import scan_utils
+from reverge_collector import data_model
+from reverge_collector.proc_utils import process_wrapper
+from reverge_collector.tool_spec import ToolSpec
 
 
 class Nuclei(ToolSpec):
@@ -100,14 +100,14 @@ class Nuclei(ToolSpec):
             >>> for module in modules:
             ...     print(f"{module.name}: {module.args}")
         """
-        from waluigi.module_cache import get_cached_modules
+        from reverge_collector.module_cache import get_cached_modules
         return get_cached_modules('nuclei', Nuclei._fingerprint,
                                   Nuclei._generate_nuclei_modules)
 
     @staticmethod
     def _fingerprint() -> Optional[str]:
         """Cache fingerprint: SHA-256 of the .templates-index file."""
-        from waluigi.module_cache import sha256_file
+        from reverge_collector.module_cache import sha256_file
         result = process_wrapper(cmd_args=['nuclei', '-tv'], store_output=True)
         if not result or result.get('exit_code', 1) != 0:
             return None

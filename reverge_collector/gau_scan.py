@@ -1,12 +1,12 @@
 """
-Gau (getallurls) Passive URL Enumeration Module for the Waluigi Framework.
+Gau (getallurls) Passive URL Enumeration Module for the reverge_collector Framework.
 
 This module provides passive URL enumeration capabilities using Gau (getallurls),
 a tool that fetches known URLs from sources such as AlienVault's Open Threat Exchange,
 the Wayback Machine, Common Crawl, and URLScan for any given domain. Gau is inspired
 by Tomnomnom's waybackurls and is designed for large-scale web asset discovery.
 
-The module integrates with the Waluigi framework to automate the collection of historical
+The module integrates with the reverge_collector framework to automate the collection of historical
 and public URLs for scoped domains, supporting both scanning and import workflows.
 
 Features:
@@ -28,7 +28,7 @@ Global Variables:
     None (all state is managed within Luigi tasks and tool classes)
 
 Example:
-    Basic usage through the Waluigi framework::
+    Basic usage through the reverge_collector framework::
         
         # Initialize the tool
         gau = Gau()
@@ -59,11 +59,11 @@ import binascii
 
 from typing import List, Dict, Set, Optional, Any, Tuple
 from functools import partial
-from waluigi import scan_utils
-from waluigi import data_model
+from reverge_collector import scan_utils
+from reverge_collector import data_model
 from urllib.parse import urlparse
-from waluigi.proc_utils import process_wrapper
-from waluigi.tool_spec import ToolSpec
+from reverge_collector.proc_utils import process_wrapper
+from reverge_collector.tool_spec import ToolSpec
 
 
 class Gau(ToolSpec):

@@ -269,15 +269,15 @@ async def list_directory(path: str = ".") -> str:
 
 
 # ---------------------------------------------------------------------------
-# Optional Waluigi / Reverge API integration
+# Optional Reverge API integration
 # ---------------------------------------------------------------------------
 try:
     import requests as _requests
-    from waluigi import tool_utils as _tool_utils
+    from reverge_collector import tool_utils as _tool_utils
 
-    _WALUIGI_AVAILABLE = True
+    _COLLECTOR_AVAILABLE = True
 except ImportError as _import_err:
-    _WALUIGI_AVAILABLE = False
+    _COLLECTOR_AVAILABLE = False
     _import_err_msg = str(_import_err)
 
 
@@ -317,9 +317,9 @@ async def import_to_reverge(
         reverge_token:    API bearer token for the Reverge server.  Defaults to
                           the ``REVERGE_API_TOKEN`` environment variable.
     """
-    if not _WALUIGI_AVAILABLE:
+    if not _COLLECTOR_AVAILABLE:
         return json.dumps(
-            {"error": "Waluigi integration not available: " + _import_err_msg}
+            {"error": "reverge_collector integration not available: " + _import_err_msg}
         )
 
     # ---------------------------------------------------------------------------

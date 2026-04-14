@@ -5,12 +5,12 @@ import shutil
 import time
 import uuid
 import json
-from waluigi.metasploit_scan import Metasploit
-from waluigi.recon_manager import ReconManager, ScheduledScanThread
-from waluigi.data_model import ScheduledScan, ScanData
+from reverge_collector.metasploit_scan import Metasploit
+from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
+from reverge_collector.data_model import ScheduledScan, ScanData
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
-from waluigi.scan_utils import get_port_byte_array
+from reverge_collector.scan_utils import get_port_byte_array
 from tests.conftest import get_tool_id
 
 # ---------------------------------------------------------------------------
@@ -187,7 +187,7 @@ class TestMetasploitScan:
 
         scan_thread = ScheduledScanThread(recon_manager, None)
         with patch.object(ReconManager, 'get_scheduled_scan', return_value=scan_data), \
-            patch('waluigi.metasploit_scan.execute_msfrpc_commands',
+            patch('reverge_collector.metasploit_scan.execute_msfrpc_commands',
                   side_effect=_mock_execute_msfrpc_commands):
 
             scheduled_scan_obj = ScheduledScan(scan_thread, sched_scan_arr)
@@ -226,7 +226,7 @@ class TestMetasploitScan:
         try:
             scan_thread = ScheduledScanThread(recon_manager, None)
             with patch.object(ReconManager, 'get_scheduled_scan', return_value=scan_data), \
-                    patch('waluigi.metasploit_scan.execute_msfrpc_commands',
+                    patch('reverge_collector.metasploit_scan.execute_msfrpc_commands',
                           side_effect=_mock_execute_msfrpc_commands), \
                     patch.object(ReconManager, 'import_data', return_value={}):
 
@@ -323,7 +323,7 @@ class TestMetasploitScan:
 
     def test_generate_modules_descriptions_populated(self):
         """Descriptions from module.info are stored on CollectionModule objects."""
-        with patch("waluigi.metasploit_scan.requests.post",
+        with patch("reverge_collector.metasploit_scan.requests.post",
                    side_effect=self._mock_post):
             modules = Metasploit._generate_metasploit_modules(
                 "127.0.0.1", 8081, "token", False
@@ -351,7 +351,7 @@ class TestMetasploitScan:
         options that have no default (KEY=CHANGEME), excluding RHOSTS and RPORT which
         are auto-populated.  When there are no required options the args string is
         still just the module path so MetasploitScan.run() can locate the module."""
-        with patch("waluigi.metasploit_scan.requests.post",
+        with patch("reverge_collector.metasploit_scan.requests.post",
                    side_effect=self._mock_post):
             modules = Metasploit._generate_metasploit_modules(
                 "127.0.0.1", 8081, "token", False
@@ -396,7 +396,7 @@ class TestMetasploitScan:
                 mock_resp.json.return_value = {"jsonrpc": "2.0", "result": []}
             return mock_resp
 
-        with patch("waluigi.metasploit_scan.requests.post",
+        with patch("reverge_collector.metasploit_scan.requests.post",
                    side_effect=_mock_no_desc):
             modules = Metasploit._generate_metasploit_modules(
                 "127.0.0.1", 8081, "token", False

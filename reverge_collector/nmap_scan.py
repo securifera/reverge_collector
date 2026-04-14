@@ -1,9 +1,9 @@
 """
-Nmap network scanning module for the Waluigi framework.
+Nmap network scanning module for the reverge_collector framework.
 
 This module provides comprehensive network scanning capabilities using Nmap, the industry-standard
 network discovery and security auditing tool. It implements port scanning, service detection,
-OS fingerprinting, and SSL certificate analysis through Luigi task orchestration.
+OS fingerprinting, and SSL certificate analysis through direct tool execution.
 
 The module supports both subnet-based and targeted scanning, with intelligent scan optimization
 based on previous masscan results. It processes XML output to extract detailed host, port,
@@ -31,11 +31,11 @@ import traceback
 import logging
 
 from libnmap.parser import NmapParser
-from waluigi import scan_utils
-from waluigi import data_model
-from waluigi import tool_utils
-from waluigi.proc_utils import process_wrapper
-from waluigi.tool_spec import ToolSpec
+from reverge_collector import scan_utils
+from reverge_collector import data_model
+from reverge_collector import tool_utils
+from reverge_collector.proc_utils import process_wrapper
+from reverge_collector.tool_spec import ToolSpec
 
 
 class Nmap(ToolSpec):
@@ -123,14 +123,14 @@ class Nmap(ToolSpec):
             >>> for module in modules:
             ...     print(f"{module.name}: {module.args}")
         """
-        from waluigi.module_cache import get_cached_modules
+        from reverge_collector.module_cache import get_cached_modules
         return get_cached_modules('nmap', Nmap._fingerprint,
                                   Nmap._generate_nmap_modules)
 
     @staticmethod
     def _fingerprint() -> Optional[str]:
         """Cache fingerprint: SHA-256 of the nmap binary."""
-        from waluigi.module_cache import sha256_file
+        from reverge_collector.module_cache import sha256_file
         path = shutil.which('nmap')
         if path and os.path.exists(path):
             return sha256_file(path)
@@ -434,7 +434,7 @@ def execute_scan(scan_input) -> None:
             meta_file_fd.write(json.dumps(nmap_scan_data))
 
 
-# remove_dups_from_dict lives in waluigi.tool_utils
+# remove_dups_from_dict lives in reverge_collector.tool_utils
 
 
 def parse_nmap_xml(
