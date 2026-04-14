@@ -283,7 +283,9 @@ class TestMetasploitScan:
 
     def test_get_modules_success(self, recon_manager):
         """metasploit_modules() returns a list (may be empty — no live server needed)."""
-        modules = Metasploit.metasploit_modules()
+        with patch('reverge_collector.metasploit_scan.requests.post',
+                   side_effect=ConnectionError('no MSF server in CI')):
+            modules = Metasploit.metasploit_modules()
         assert isinstance(modules, list)
 
     # ------------------------------------------------------------------
