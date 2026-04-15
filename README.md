@@ -434,7 +434,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **ProjectDiscovery** - For excellent security tools (HTTPX, Subfinder, Nuclei)
 - **Rapid7** - For Metasploit Framework, the industry-standard penetration testing platform
-- **Luigi** - For robust task orchestration framework
 - **Security Community** - For continuous feedback and contributions
 
 ---
