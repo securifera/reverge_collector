@@ -89,20 +89,16 @@ sudo update-ca-certificates
 install_packages python3-pip pipx
 pip3 config set global.trusted-host "pypi.org files.pythonhosted.org pypi.python.org" --trusted-host=pypi.python.org --trusted-host=pypi.org --trusted-host=files.pythonhosted.org
 
-# install luigi/waluigi
-python3 -m pip install luigi setuptools build poetry
+# install reverge_collector dependencies
+python3 -m pip install setuptools build poetry
 python3 -m pip install --upgrade requests
 
-# Create luigi config file
-sudo mkdir /opt/collector
-echo "[worker]" | sudo tee /opt/collector/luigi.cfg
-echo "no_install_shutdown_handler=True" | sudo tee -a /opt/collector/luigi.cfg
-
-# Build and install waluigi
+# Build and install reverge_collector
 poetry build
-python3 -m pip install dist/waluigi*.whl
-sudo cp ./waluigi/scan_poller.py /opt/collector/
-sudo cp ./waluigi/mcp_server.py /opt/collector/
+python3 -m pip install dist/reverge_collector*.whl
+sudo mkdir -p /opt/collector
+sudo cp ./reverge_collector/scan_poller.py /opt/collector/
+sudo cp ./reverge_collector/mcp_server.py /opt/collector/
 
 # Install MCP server dependencies
 python3 -m pip install "mcp[cli]" uvicorn

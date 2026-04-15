@@ -5,11 +5,11 @@ import shutil
 import json
 import uuid
 
-from waluigi.recon_manager import ReconManager, ScheduledScanThread
+from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
 from types import SimpleNamespace
 from unittest.mock import patch
-from waluigi.scan_utils import get_port_byte_array
-from waluigi.data_model import ScanData, ScheduledScan, ImportToolXOutput
+from reverge_collector.scan_utils import get_port_byte_array
+from reverge_collector.data_model import ScanData, ScheduledScan
 from tests.conftest import get_tool_id
 
 
@@ -62,7 +62,7 @@ class TestIpthcScan:
 
             # Set the current tool
             scheduled_scan_obj.current_tool = first_tool.collection_tool
-            with patch.object(ImportToolXOutput, 'import_results', return_value=None):
+            with patch.object(ReconManager, 'import_data', return_value={}):
 
                 result = recon_manager.import_func(scheduled_scan_obj)
                 assert result == True
@@ -209,7 +209,7 @@ class TestIpthcScan:
 
             # Set the current tool
             scheduled_scan_obj.current_tool = first_tool.collection_tool
-            with patch.object(ImportToolXOutput, 'import_results', return_value=None):
+            with patch.object(ReconManager, 'import_data', return_value={}):
 
                 result = recon_manager.import_func(scheduled_scan_obj)
                 assert result == True
@@ -360,7 +360,7 @@ class TestIpthcScan:
 
             # Set the current tool
             scheduled_scan_obj.current_tool = first_tool.collection_tool
-            with patch.object(ImportToolXOutput, 'import_results', return_value=None):
+            with patch.object(ReconManager, 'import_data', return_value={}):
 
                 result = recon_manager.import_func(scheduled_scan_obj)
                 assert result == True

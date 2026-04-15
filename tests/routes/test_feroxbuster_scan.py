@@ -3,11 +3,11 @@ import os
 import shutil
 import json
 import uuid
-from waluigi.recon_manager import ReconManager, ScheduledScanThread
-from waluigi.data_model import ScheduledScan, ScanData
+from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
+from reverge_collector.data_model import ScheduledScan, ScanData
 from types import SimpleNamespace
 from unittest.mock import patch
-from waluigi.scan_utils import get_port_byte_array
+from reverge_collector.scan_utils import get_port_byte_array
 from tests.conftest import get_tool_id
 
 
@@ -85,14 +85,12 @@ class TestFeroxbusterScan:
 
                     # Get data and map
                     url_to_id_map = scan_data_dict['url_to_id_map']
-                    for url_str in url_to_id_map:
-
-                        obj_data = url_to_id_map[url_str]
-                        output_file = obj_data['output_file']
-                        assert os.path.exists(output_file) == True
-                        with open(output_file, 'r') as f:
-                            file_contents = f.read()
-                            assert len(file_contents) > 0
+                    output_file = scan_data_dict.get('output_file')
+                    assert output_file is not None
+                    assert os.path.exists(output_file) == True
+                    with open(output_file, 'r') as f:
+                        file_contents = f.read()
+                        assert len(file_contents) > 0
 
     def test_feroxbuster_import_success(self, recon_manager):
 

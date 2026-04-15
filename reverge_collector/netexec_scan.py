@@ -1,0 +1,720 @@
+"""
+Netexec network scanning module for the reverge_collector framework.
+
+This module provides comprehensive network scanning capabilities using Netexec, a post-exploitation
+framework used for network reconnaissance and security assessment. It implements protocol-specific
+scanning for FTP, SSH, NFS, WMI, LDAP, SMB, MySQL, RDP, VNC, and WinRM services.
+
+The module supports both subnet-based and targeted scanning, with intelligent scan optimization
+based on previous port discovery results. It processes JSON-formatted output with fields
+(protocol, host, port, hostname, message, module_name) to extract detailed host, port, and
+service information.
+
+Classes:
+    Netexec: Tool configuration class for Netexec scanner
+    NetexecScan: Luigi task for executing Netexec network scans
+    ImportNetexecOutput: Luigi task for processing and importing Netexec scan results
+
+Functions:
+    remove_dups_from_dict: Utility function to remove duplicate script results
+
+"""
+
+from functools import partial
+import json
+import os
+import re
+from typing import Dict, Any, List, Set, Optional, Union
+import netaddr
+import traceback
+import logging
+
+from reverge_collector import scan_utils
+from reverge_collector import data_model
+from reverge_collector.proc_utils import process_wrapper
+from reverge_collector.tool_spec import ToolSpec
+
+netexec_protocol_map = {'21': 'ftp', '22': 'ssh', '111': 'nfs', '135': 'wmi', '389': 'ldap', '445': 'smb',
+                        '3306': 'mysql', '3389': 'rdp', '5900': 'vnc', '5985': 'winrm'}
+
+
+class Netexec(ToolSpec):
+
+    name = 'netexec'
+    description = 'Netexec is a network scanning tool used to discover hosts and services on a computer network. It can be used to perform port scanning, service detection, and OS detection.'
+    project_url = 'https://github.com/Pennyw0rth/NetExec'
+    tags = ['service-detection', 'authenticated',
+            'vuln-scan', 'exploitation', 'os-detection']
+    collector_type = data_model.CollectorType.ACTIVE.value
+    scan_order = 6
+    args = ''
+    input_records = [
+        data_model.ServerRecordType.SUBNET,
+        data_model.ServerRecordType.HOST,
+        data_model.ServerRecordType.PORT,
+    ]
+    output_records = [
+        data_model.ServerRecordType.COLLECTION_MODULE,
+        data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
+        data_model.ServerRecordType.WEB_COMPONENT,
+        data_model.ServerRecordType.DOMAIN,
+        data_model.ServerRecordType.CERTIFICATE,
+        data_model.ServerRecordType.LIST_ITEM,
+        data_model.ServerRecordType.PORT,
+        data_model.ServerRecordType.HOST,
+    ]
+
+    def __init__(self):
+        super().__init__()
+        self.modules_func = Netexec.netexec_modules
+
+    def get_output_path(self, scan_input) -> str:
+        return get_output_path(scan_input)
+
+    def execute_scan(self, scan_input) -> None:
+        execute_scan(scan_input)
+
+    def parse_output(self, output_path: str, scan_input) -> list:
+        return parse_netexec_output(
+            output_path,
+            scan_input.current_tool_instance_id,
+            scan_input.current_tool.id,
+        )
+
+    @staticmethod
+    def netexec_modules() -> List:
+        """
+        Retrieve available Netexec modules as collection modules.
+
+        Executes 'netexec -h' to discover available protocols, then runs
+        'netexec <protocol> -L' for each protocol to discover all available
+        modules. Each module becomes a CollectionModule object that can be
+        selectively enabled for scanning.
+
+        Results are cached on disk and only regenerated when the ``netexec``
+        version string changes.
+
+        Returns:
+            List[data_model.CollectionModule]: List of collection modules, one for each Netexec module
+
+        Example:
+            >>> netexec_tool = Netexec()
+            >>> modules = netexec_tool.modules_func()
+            >>> for module in modules:
+            ...     print(f"{module.name}: {module.args}")
+        """
+        from reverge_collector.module_cache import get_cached_modules
+        return get_cached_modules('netexec', Netexec._fingerprint,
+                                  Netexec._generate_netexec_modules)
+
+    @staticmethod
+    def _fingerprint() -> Optional[str]:
+        """Cache fingerprint: stripped output of 'netexec --version'."""
+        netexec_path = os.path.expanduser('~/.local/bin/netexec')
+        if not os.path.exists(netexec_path):
+            return None
+        result = process_wrapper(
+            cmd_args=[netexec_path, '--version'], store_output=True)
+        if not result:
+            return None
+        version = (result.get('stdout', '') + result.get('stderr', '')).strip()
+        return version if version else None
+
+    @staticmethod
+    def _generate_netexec_modules() -> List:
+        """Internal: enumerate Netexec modules without cache."""
+        modules = []
+
+        try:
+            # Execute netexec -h to get list of all protocols
+            netexec_path = os.path.expanduser('~/.local/bin/netexec')
+            cmd_args = [netexec_path, '-h']
+            result = process_wrapper(cmd_args=cmd_args, store_output=True)
+
+            if result and 'exit_code' in result and result['exit_code'] != 0:
+                logging.getLogger(__name__).warning(
+                    f"netexec -h failed with exit code {result['exit_code']}"
+                )
+                return modules
+
+            output = result.get('stdout', '') if result else ''
+
+            # Parse the output to extract protocols from "Available Protocols:" section
+            protocols = []
+            lines = output.split('\n')
+            in_protocols_section = False
+
+            for line in lines:
+                if 'Available Protocols:' in line:
+                    in_protocols_section = True
+                    continue
+
+                if in_protocols_section:
+                    # Protocol lines start with 4 spaces and protocol name
+                    if line.strip() and line.startswith('    ') and not line.startswith('      '):
+                        # Extract protocol name (first word after spaces)
+                        parts = line.strip().split()
+                        if parts:
+                            protocol = parts[0]
+                            protocols.append(protocol)
+
+            # For each protocol, get its modules
+            for protocol in protocols:
+                try:
+                    # Execute netexec <protocol> -L to get modules
+                    netexec_path = os.path.expanduser('~/.local/bin/netexec')
+                    cmd_args = [netexec_path, protocol, '-L']
+                    result = process_wrapper(
+                        cmd_args=cmd_args, store_output=True)
+
+                    if result and 'exit_code' in result and result['exit_code'] != 0:
+                        logging.getLogger(__name__).warning(
+                            f"netexec {protocol} -L failed with exit code {result['exit_code']}"
+                        )
+                        continue
+
+                    module_output = result.get('stdout', '') if result else ''
+
+                    # Parse module list output
+                    # Format includes category headers (LOW/HIGH PRIVILEGE MODULES, ENUMERATION, etc)
+                    # Module lines: [*] module_name         description
+                    module_lines = module_output.split('\n')
+                    for line in module_lines:
+                        # Only process lines that start with [*] (actual module entries)
+                        if not line.strip().startswith('[*]'):
+                            continue
+
+                        # Remove [*] prefix and strip whitespace
+                        line = line.strip()[3:].strip()
+
+                        # Split by whitespace to get module name and description
+                        # module_name is first word, rest is description
+                        parts = line.split(None, 1)
+                        if parts:
+                            module_name = parts[0]
+                            description = parts[1] if len(parts) > 1 else ''
+
+                            # Create CollectionModule for this module
+                            module = data_model.CollectionModule()
+                            module.name = f"{protocol}_{module_name}"
+                            module.description = description.strip()
+                            module.args = f"{protocol} -M {module_name}"
+                            modules.append(module)
+
+                except Exception as e:
+                    logging.getLogger(__name__).error(
+                        f"Error getting modules for {protocol}: {str(e)}"
+                    )
+                    logging.getLogger(__name__).debug(traceback.format_exc())
+
+        except FileNotFoundError:
+            logging.getLogger(__name__).error("netexec command not found")
+        except Exception as e:
+            logging.getLogger(__name__).error(
+                f"Error getting netexec modules: {str(e)}"
+            )
+            logging.getLogger(__name__).debug(traceback.format_exc())
+
+        return modules
+
+
+def get_output_path(scan_input) -> str:
+    scan_id: str = scan_input.id
+    mod_str: str = ''
+    if scan_input.scan_data.module_id:
+        mod_str = "_" + str(scan_input.scan_data.module_id)
+    tool_name: str = scan_input.current_tool.name
+    dir_path: str = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+    return dir_path + os.path.sep + "netexec_scan_" + scan_id + mod_str + ".meta"
+
+
+def execute_scan(scan_input) -> None:
+    meta_file_path: str = get_output_path(scan_input)
+    if os.path.exists(meta_file_path):
+        return
+
+    scheduled_scan_obj = scan_input
+    dir_path: str = os.path.dirname(meta_file_path)
+    scope_obj = scheduled_scan_obj.scan_data
+
+    netexec_scan_data: Optional[Dict[str, Any]] = None
+    netexec_scan_args: Optional[List[str]] = None
+    if scheduled_scan_obj.current_tool.args:
+        netexec_scan_args = scheduled_scan_obj.current_tool.args.split(" ")
+
+    port_scan_map: Dict[str, Dict[str, Any]] = {}
+
+    target_map = scope_obj.host_port_obj_map
+    port_num_list: List[str] = scope_obj.get_port_number_list_from_scope()
+
+    valid_port_list: List[str] = [
+        p for p in port_num_list if p in netexec_protocol_map]
+
+    subnet_map: Dict[int, Any] = scope_obj.subnet_map
+    if len(target_map) > 0:
+        for target_key in target_map:
+            target_obj_dict = target_map[target_key]
+            port_obj = target_obj_dict['port_obj']
+            port_str = port_obj.port
+
+            if port_str not in netexec_protocol_map:
+                continue
+
+            host_obj = target_obj_dict['host_obj']
+            ip_addr = host_obj.ipv4_addr
+
+            if port_str not in port_scan_map:
+                port_scan_map[port_str] = {
+                    'protocol': netexec_protocol_map[port_str],
+                    'tool_args': netexec_scan_args,
+                    'ip_set': set()
+                }
+
+            ip_set: Set[str] = port_scan_map[port_str]['ip_set']
+
+            if host_obj.credential and host_obj.credential.get('credential_id'):
+                port_scan_map[port_str]['credential_id'] = host_obj.credential.get(
+                    'credential_id')
+            elif port_obj.credential and port_obj.credential.get('credential_id'):
+                port_scan_map[port_str]['credential_id'] = port_obj.credential.get(
+                    'credential_id')
+
+            ip_set.add(ip_addr)
+
+    else:
+        if len(valid_port_list) > 0:
+            target_set: Set[str] = set()
+
+            for subnet_id in subnet_map:
+                subnet_obj = subnet_map[subnet_id]
+                subnet_str: str = "%s/%s" % (subnet_obj.subnet,
+                                             subnet_obj.mask)
+                target_set.add(subnet_str)
+
+            host_list = scope_obj.get_hosts(
+                [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+
+            for host_obj in host_list:
+                ip_addr = host_obj.ipv4_addr
+                target_set.add(ip_addr)
+
+            for port_str in valid_port_list:
+                port_scan_map[port_str] = {
+                    'protocol': netexec_protocol_map[port_str],
+                    'tool_args': netexec_scan_args,
+                    'ip_set': target_set.copy()
+                }
+
+    netexec_scan_cmd_list: List[Dict[str, Any]] = []
+    netexec_scan_data = {}
+
+    counter: int = 0
+    futures: List[Any] = []
+
+    if len(port_scan_map) == 0:
+        logging.getLogger(__name__).warning(
+            "No valid ports found for Netexec scan for scan ID %s" % scheduled_scan_obj.id)
+
+    for port_str in sorted(port_scan_map.keys()):
+        port_obj = port_scan_map[port_str]
+        netexec_scan_inst: Dict[str, Any] = {}
+        script_args: Optional[List[str]] = port_obj.get('tool_args')
+        protocol: str = port_obj.get('protocol')
+        port_id: str = port_obj.get('port_id')
+        host_id: str = port_obj.get('host_id')
+        credential_id: str = port_obj.get('credential_id')
+
+        ip_list_path: str = dir_path + os.path.sep + \
+            "netexec_in_" + str(counter)
+
+        ip_set: Set[str] = port_obj['ip_set']
+        if len(ip_set) == 0:
+            continue
+
+        with open(ip_list_path, 'w') as in_file_fd:
+            for ip in ip_set:
+                in_file_fd.write(ip + "\n")
+
+        netexec_output_file: str = dir_path + os.path.sep + \
+            "netexec_out_" + str(counter)
+
+        command: List[str] = []
+        if os.name != 'nt':
+            command.append("sudo")
+
+        netexec_path = os.path.expanduser('~/.local/bin/netexec')
+        command.append(netexec_path)
+        command.append("-j")
+
+        command_custom_args = []
+        if script_args and len(script_args) > 0:
+            protocol_arg = script_args[0]
+            command_custom_args = script_args[1:]
+            if protocol_arg != protocol:
+                logging.getLogger(__name__).warning(
+                    "Netexec scan protocol mismatch: expected %s, got %s" % (protocol, protocol_arg))
+                continue
+
+        command.append(protocol)
+        command.append(ip_list_path)
+
+        if credential_id and credential_id in scope_obj.credential_map:
+            credential = scope_obj.credential_map[credential_id]
+            command.append("-u")
+            command.append(credential.username)
+            command.append("-p")
+            command.append(credential.password)
+
+        command.extend(command_custom_args)
+
+        netexec_scan_inst['netexec_command'] = command
+        netexec_scan_inst['output_file'] = netexec_output_file
+        netexec_scan_inst['port'] = port_str
+        netexec_scan_inst['protocol'] = protocol
+        netexec_scan_inst['port_id'] = port_id
+        netexec_scan_inst['host_id'] = host_id
+        netexec_scan_cmd_list.append(netexec_scan_inst)
+
+        callback_with_tool_id = partial(
+            scheduled_scan_obj.register_tool_executor,
+            scheduled_scan_obj.current_tool_instance_id)
+
+        futures.append(scan_utils.executor.submit(
+            process_wrapper,
+            cmd_args=command,
+            pid_callback=callback_with_tool_id, stdout_file=netexec_output_file))
+        counter += 1
+
+    if len(futures) > 0:
+        scan_proc_inst = data_model.ToolExecutor(futures)
+        scheduled_scan_obj.register_tool_executor(
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+
+        for future in futures:
+            ret_dict = future.result()
+            if ret_dict and 'exit_code' in ret_dict:
+                exit_code = ret_dict['exit_code']
+                logging.getLogger(__name__).warning(
+                    "Exit code %s" % (exit_code))
+                if exit_code != 0:
+                    err_msg = ''
+                    if 'stderr' in ret_dict and ret_dict['stderr']:
+                        err_msg = ret_dict['stderr']
+                    logging.getLogger(__name__).error(
+                        "Netexec scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
+                    raise RuntimeError("Netexec scan for scan ID %s exited with code %d: %s" % (
+                        scheduled_scan_obj.id, exit_code, err_msg))
+
+    netexec_scan_data['netexec_scan_list'] = netexec_scan_cmd_list
+
+    if netexec_scan_data:
+        with open(meta_file_path, 'w') as meta_file_fd:
+            meta_file_fd.write(json.dumps(netexec_scan_data))
+
+
+def parse_netexec_output(output_file, tool_instance_id, tool_id):
+    """Parse a Netexec JSON metadata output file and return data-model objects."""
+
+    # Initialize result array for data model objects
+    ret_arr: List[Any] = []
+    module_id_map: Dict[str, str] = {}
+
+    # Read scan metadata file containing output file paths
+    if os.path.exists(output_file):
+
+        with open(output_file) as file_fd:
+            json_input = file_fd.read()
+
+        # Process scan metadata and output files
+        if len(json_input) > 0:
+            netexec_scan_obj = json.loads(json_input)
+            netexec_json_arr = netexec_scan_obj['netexec_scan_list']
+
+            # Process each parallel scan output file
+            for netexec_scan_entry in netexec_json_arr:
+
+                # Parse Netexec output file with error handling
+                netexec_out = netexec_scan_entry['output_file']
+                protocol = netexec_scan_entry['protocol']
+                if os.path.exists(netexec_out) and os.path.getsize(netexec_out) > 0:
+
+                    try:
+                        # First pass: Consolidate all JSON data from the file
+                        # Structure: {(host, port, hostname, protocol, module_name): {messages: [], data: {...}}}
+                        consolidated_data: Dict[tuple, Dict[str, Any]] = {}
+
+                        with open(netexec_out, 'r') as netexec_fd:
+                            for line in netexec_fd:
+                                line = line.strip()
+                                if not line:
+                                    continue
+
+                                # Parse JSON line: each line is a complete JSON object
+                                # Expected fields: protocol, host, port, hostname, message, module_name (optional)
+                                try:
+                                    json_data = json.loads(line)
+                                except json.JSONDecodeError as je:
+                                    logging.getLogger(__name__).warning(
+                                        "Skipping invalid JSON line in netexec output: %s (error: %s)" % (line, str(je)))
+                                    continue
+
+                                # Extract required fields from JSON
+                                if 'host' not in json_data or 'port' not in json_data or 'hostname' not in json_data:
+                                    logging.getLogger(__name__).warning(
+                                        "Skipping netexec output line missing required fields: %s" % line)
+                                    continue
+
+                                # Preprocess: Skip redundant display/info messages if they don't contain actionable data
+                                output_type = json_data.get('type', '')
+                                output_level = json_data.get('level', '')
+                                message = json_data.get('message', '')
+
+                                protocol_out = json_data.get(
+                                    'protocol', protocol)
+                                ip_address = json_data.get('host')
+                                port_str = str(json_data.get('port'))
+                                hostname = json_data.get('hostname')
+                                module_name = json_data.get(
+                                    'module_name', None)
+                                server_os = json_data.get(
+                                    'server_os', None)
+
+                                # Parse INFO messages to extract domain information
+                                # Example: "(name:WIN-JRO991PA8A2) (domain:CONTOSO)"
+                                domain_info = None
+                                if output_level in ['INFO'] and message:
+                                    # Use regex to extract name and domain from message
+                                    name_match = re.search(
+                                        r'\(name:([^)]+)\)', message)
+                                    domain_match = re.search(
+                                        r'\(domain:([^)]+)\)', message)
+
+                                    if name_match and domain_match:
+                                        name_value = name_match.group(
+                                            1).strip()
+                                        domain_value = domain_match.group(
+                                            1).strip()
+
+                                        # Only create domain object if name and domain differ
+                                        if name_value.upper() != domain_value.upper():
+                                            # Create FQDN: name.domain
+                                            domain_info = f"{name_value}.{domain_value}"
+
+                                # Parse credentials from success messages
+                                credential_obj = None
+                                if output_type in ['success'] and message:
+                                    # Message format: "DOMAIN\username:password" or "DOMAIN\username:password (Pwn3d!)"
+                                    if '\\' in message and ':' in message:
+                                        try:
+                                            # Extract credential parts from message
+                                            # Example: "WIN-JRO991PA8A2\\Administrator:password (Pwn3d!)"
+                                            credential_part = message.split(
+                                                '(')[0].strip()
+                                            domain_username, password = credential_part.rsplit(
+                                                ':', 1)
+                                            domain_or_host, username = domain_username.split(
+                                                '\\', 1)
+
+                                            # Determine if this is a host or domain credential
+                                            parent_id = None
+                                            if domain_or_host.upper() == hostname.upper():
+                                                # Host credential - will be set later when we have host_id
+                                                parent_id = 'HOST'
+                                            else:
+                                                # Domain credential - will be set later when we have domain_id
+                                                parent_id = 'DOMAIN'
+
+                                            # Check if credential is privileged (Pwn3d! in message)
+                                            is_privileged = 'Pwn3d' in message
+
+                                            # Store credential info for later creation
+                                            credential_obj = {
+                                                'username': username,
+                                                'password': password,
+                                                'privileged': is_privileged,
+                                                'parent_type': parent_id,
+                                                'domain_name': domain_or_host if parent_id == 'DOMAIN' else None
+                                            }
+
+                                        except Exception as cred_err:
+                                            logging.getLogger(__name__).warning(
+                                                "Failed to parse credential from message '%s': %s" % (message, str(cred_err)))
+
+                                # Create consolidation key: (host, port, hostname, protocol, module_name)
+                                consolidation_key = (
+                                    ip_address, port_str, hostname, protocol_out, module_name, server_os)
+
+                                # Add or update consolidated data
+                                if consolidation_key not in consolidated_data:
+                                    consolidated_data[consolidation_key] = {
+                                        'messages': [],
+                                        'output_level': output_level,
+                                        'output_type': output_type,
+                                        'timestamps': []
+                                    }
+
+                                # Append message to the list for this consolidation key
+                                consolidated_data[consolidation_key]['timestamps'].append(
+                                    json_data.get('timestamp', ''))
+
+                                # Store credential info if parsed
+                                if credential_obj:
+                                    if 'credentials' not in consolidated_data[consolidation_key]:
+                                        consolidated_data[consolidation_key]['credentials'] = [
+                                        ]
+                                    consolidated_data[consolidation_key]['credentials'].append(
+                                        credential_obj)
+                                else:
+                                    consolidated_data[consolidation_key]['messages'].append(
+                                        message)
+
+                                # Store domain info if parsed
+                                if domain_info:
+                                    if 'domain_info' not in consolidated_data[consolidation_key]:
+                                        consolidated_data[consolidation_key]['domain_info'] = [
+                                        ]
+                                    consolidated_data[consolidation_key]['domain_info'].append(
+                                        domain_info)
+
+                        # Second pass: Create data model objects from consolidated data
+                        host_obj_map: Dict[str, Any] = {}
+                        port_id_map: Dict[tuple, str] = {}
+                        domain_obj_map: Dict[str, Any] = {}
+                        host_os_map: Dict[str, tuple] = {}
+
+                        for consolidation_key, consolidated_entry in consolidated_data.items():
+                            ip_address, port_str, hostname, protocol_out, module_name, server_os = consolidation_key
+
+                            # Create or retrieve Host object using IP address as key
+                            if ip_address not in host_obj_map:
+                                ip_object = netaddr.IPAddress(ip_address)
+
+                                host_obj = data_model.Host(id=None)
+                                host_obj.collection_tool_instance_id = tool_instance_id
+
+                                if ip_object.version == 4:
+                                    host_obj.ipv4_addr = str(ip_object)
+                                elif ip_object.version == 6:
+                                    host_obj.ipv6_addr = str(ip_object)
+
+                                host_obj_map[ip_address] = host_obj
+                                ret_arr.append(host_obj)
+
+                            else:
+                                host_obj = host_obj_map[ip_address]
+
+                            host_id = host_obj.id
+
+                            # Handle OperatingSystem object
+                            if server_os:
+                                os_name = server_os
+                                os_version = ''
+
+                                parts = server_os.strip().split()
+                                if len(parts) > 1 and parts[-1].isdigit():
+                                    os_version = parts[-1]
+                                    os_name = ' '.join(parts[:-1])
+
+                                should_create_os = False
+                                if host_id not in host_os_map:
+                                    should_create_os = True
+                                else:
+                                    existing_os_name, existing_os_obj = host_os_map[host_id]
+                                    if ' or ' in existing_os_name.lower() and ' or ' not in os_name.lower():
+                                        should_create_os = True
+                                        ret_arr.remove(existing_os_obj)
+
+                                if should_create_os:
+                                    os_obj = data_model.OperatingSystem(
+                                        parent_id=host_id)
+                                    os_obj.collection_tool_instance_id = tool_instance_id
+                                    os_obj.name = os_name
+
+                                    if len(os_version) > 0:
+                                        os_obj.version = os_version
+
+                                    ret_arr.append(os_obj)
+                                    host_os_map[host_id] = (os_name, os_obj)
+
+                            # Create or retrieve Port object
+                            port_key = (host_id, port_str)
+                            if port_key not in port_id_map:
+                                port_obj = data_model.Port(
+                                    parent_id=host_id, id=None)
+                                port_obj.collection_tool_instance_id = tool_instance_id
+                                port_obj.proto = 0
+                                port_obj.port = port_str
+                                port_id = port_obj.id
+                                port_id_map[port_key] = port_id
+                                ret_arr.append(port_obj)
+                            else:
+                                port_id = port_id_map[port_key]
+
+                            # Create or retrieve Domain object
+                            if ip_address != hostname:
+                                if hostname not in domain_obj_map:
+                                    domain_obj = data_model.Domain(
+                                        parent_id=host_id)
+                                    domain_obj.collection_tool_instance_id = tool_instance_id
+                                    domain_obj.name = hostname
+                                    domain_obj_map[hostname] = domain_obj
+                                    ret_arr.append(domain_obj)
+                                else:
+                                    domain_obj = domain_obj_map[hostname]
+
+                            # Create FQDN domain objects from parsed domain_info
+                            if 'domain_info' in consolidated_entry:
+                                for domain_info in consolidated_entry['domain_info']:
+                                    if domain_info not in domain_obj_map:
+                                        fqdn_domain_obj = data_model.Domain(
+                                            parent_id=host_id)
+                                        fqdn_domain_obj.collection_tool_instance_id = tool_instance_id
+                                        fqdn_domain_obj.name = domain_info
+                                        domain_obj_map[domain_info] = fqdn_domain_obj
+                                        ret_arr.append(fqdn_domain_obj)
+
+                            # Use module_name if present, otherwise use protocol
+                            module_key = module_name if module_name else protocol_out
+
+                            if module_key not in module_id_map:
+                                module_obj = data_model.CollectionModule(
+                                    parent_id=tool_id)
+                                module_obj.collection_tool_instance_id = tool_instance_id
+                                module_obj.name = module_key.lower()
+                                ret_arr.append(module_obj)
+                                temp_module_id = module_obj.id
+                                module_id_map[module_key] = temp_module_id
+                            else:
+                                temp_module_id = module_id_map[module_key]
+
+                            # Concatenate all messages for this consolidation key
+                            consolidated_messages = '\n'.join(
+                                consolidated_entry['messages'])
+
+                            # Add single module output with consolidated messages
+                            module_output_obj = data_model.CollectionModuleOutput(
+                                parent_id=temp_module_id)
+                            module_output_obj.collection_tool_instance_id = tool_instance_id
+                            module_output_obj.output = consolidated_messages
+                            module_output_obj.port_id = port_id
+                            ret_arr.append(module_output_obj)
+
+                            # Create credential objects if any were parsed
+                            if 'credentials' in consolidated_entry:
+                                for cred_info in consolidated_entry['credentials']:
+                                    cred_obj = data_model.Credential()
+                                    cred_obj.collection_tool_instance_id = tool_instance_id
+                                    cred_obj.username = cred_info['username']
+                                    cred_obj.password = cred_info['password']
+                                    ret_arr.append(cred_obj)
+
+                                    if cred_info['parent_type'] == 'HOST':
+                                        host_obj.credential = {
+                                            'credential_id': cred_obj.id, 'privileged': cred_info['privileged']}
+
+                    except Exception as e:
+                        logging.getLogger(__name__).error(
+                            "Error processing netexec output file %s: %s" % (netexec_out, str(e)))
+                        traceback.print_exc()
+
+    return ret_arr

@@ -4,11 +4,11 @@ import shutil
 import json
 import uuid
 
-from waluigi.recon_manager import ReconManager, ScheduledScanThread
+from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
 from types import SimpleNamespace
 from unittest.mock import patch
-from waluigi.scan_utils import get_port_byte_array
-from waluigi.data_model import ScanData, ScheduledScan
+from reverge_collector.scan_utils import get_port_byte_array
+from reverge_collector.data_model import ScanData, ScheduledScan
 from tests.conftest import get_tool_id
 
 

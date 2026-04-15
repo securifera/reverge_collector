@@ -3,8 +3,8 @@ requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
-name = "waluigi"
-version = "1.1.2"
+name = "reverge_collector"
+version = "1.2.0"
 description = "A scan automation pipeline tool written in Python"
 authors = ["Ryan Wincey (b0yd)"]
 repository = "https://github.com/securifera/reverge_collector"
@@ -18,7 +18,6 @@ classifiers = [
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.14"
-luigi = "3.6.0"
 pycryptodomex = "3.23.0"
 netifaces = "0.11.0"
 pyyaml = "6.0.3"

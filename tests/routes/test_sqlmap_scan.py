@@ -4,12 +4,12 @@ import shutil
 import json
 import uuid
 import tempfile
-from waluigi.recon_manager import ReconManager, ScheduledScanThread
-from waluigi.data_model import ScheduledScan, ScanData
+from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
+from reverge_collector.data_model import ScheduledScan, ScanData
 from types import SimpleNamespace
 from unittest.mock import patch
-from waluigi.scan_utils import get_port_byte_array
-from waluigi.sqlmap_scan import parse_sqlmap_output
+from reverge_collector.scan_utils import get_port_byte_array
+from reverge_collector.sqlmap_scan import parse_sqlmap_output
 from tests.conftest import get_tool_id
 
 # Realistic sqlmap stdout for a vulnerable parameter (boolean-based blind + time-based)
