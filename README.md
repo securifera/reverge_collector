@@ -1,11 +1,11 @@
-# Waluigi - reverge collector framework
+# reverge_collector
 
 <div align="center">
 
 ![Python](https://img.shields.io/badge/python-3.9+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)
-![Version](https://img.shields.io/badge/version-v1.0.0-orange.svg)
+![Version](https://img.shields.io/badge/version-v1.2.0-orange.svg)
 
 **A comprehensive, distributed security scanning and reconnaissance framework**
 
@@ -17,7 +17,7 @@
 
 ## 🎯 Overview
 
-**Waluigi** is a powerful, distributed security reconnaissance framework designed for red teamers, offensive security engineers, penetration testers, bug bounty hunters, and security researchers. It acts as the collector component for the [reverge](https://www.reverge.io/) attack surface management tool. Built with Python and Luigi task orchestration, it provides automated, scalable scanning capabilities across multiple security tools and methodologies.
+**reverge_collector** is a powerful, distributed security reconnaissance framework designed for red teamers, offensive security engineers, penetration testers, bug bounty hunters, and security researchers. It acts as the collector component for the [reverge](https://www.reverge.io/) attack surface management tool. Built with Python, it provides automated, scalable scanning capabilities across multiple security tools and methodologies.
 
 ### Key Highlights
 
@@ -41,11 +41,11 @@
 - **Visual Analysis**: Screenshot capture and analysis
 - **Certificate Analysis**: SSL/TLS certificate inspection and domain extraction
 
-### 🏗️ **Advanced Architecture**
-- **Luigi Task Orchestration**: Robust workflow management and dependency handling
+### 🏗️ **Architecture**
+- **Direct Tool Execution**: Lightweight scan orchestration with no external task framework
 - **Distributed Processing**: Multi-collector deployment with centralized management
-- **Intelligent Scan Optimization**: Tool ordering based on previous results
-- **Parallel Execution**: Concurrent scanning for maximum performance
+- **Intelligent Scan Ordering**: Tools execute in configurable priority order based on previous results
+- **Parallel Execution**: Concurrent scanning via thread pool for maximum performance
 - **Process Management**: Advanced process tracking and cancellation capabilities
 
 ### 🔐 **Security & Reliability**
@@ -59,7 +59,6 @@
 - **Structured Data Models**: Comprehensive object-oriented data representation
 - **Relationship Mapping**: Intelligent correlation between scan results
 - **Deduplication**: Advanced duplicate detection and removal
-- **Export Capabilities**: Multiple output formats and integration options
 - **Historical Tracking**: Scan history and progress monitoring
 
 ---
@@ -143,7 +142,7 @@ pip install -r requirements.txt
 ```bash
 # Start the scan collector
 source venv/bin/activate
-python3 waluigi/scan_poller.py -x COLLECTOR_API_KEY
+python3 reverge_collector/scan_poller.py -x COLLECTOR_API_KEY
 ```
 
 ### Interactive Console
@@ -191,15 +190,15 @@ Once running, the interactive console provides real-time control:
 
 #### 🧠 **Reconnaissance Manager** (`recon_manager.py`)
 - Central coordination hub
-- API communication with manager
+- API communication with manager via `ApiClient`
 - Session and authentication management
 - Network interface detection
 
 #### 🔧 **Tool Integration**
-Each tool is implemented as a Luigi task with:
-- **Configuration Class**: Tool parameters and metadata
-- **Scan Task**: Execution logic and process management
-- **Import Task**: Result parsing and data model creation
+Each tool is a `ToolSpec` subclass that declares:
+- **Class-level metadata**: name, scan order, collector type, input/output record types
+- **`execute_scan()`**: runs the tool and writes output to disk
+- **`parse_output()`**: parses tool output into structured `Record` objects
 
 #### 📊 **Data Models** (`data_model.py`)
 Comprehensive object-oriented representation:
@@ -280,33 +279,32 @@ class ScheduledScan:
     def kill_scan_processes(tool_ids: List[str] = [])
 ```
 
-#### `WaluigiTool`
-Base class for all integrated security tools.
+#### `ApiClient`
+Handles all encrypted HTTP communication with the manager.
 
 ```python
-class WaluigiTool:
+class ApiClient:
+    def __init__(self, token: str, manager_url: str)
+    def get_session_key() -> bytes
+    def encrypt_data(data: bytes) -> bytes
+    def decrypt_data(data: bytes) -> bytes
+```
+
+#### `ToolSpec`
+Abstract base class for all integrated security tools.
+
+```python
+class ToolSpec(RevergeTool, ABC):
     name: str
     description: str
     scan_order: int
+    collector_type: CollectorType
     args: str
-    scan_func: Callable
-    import_func: Callable
-```
+    input_records: List[ServerRecordType]
+    output_records: List[ServerRecordType]
 
-### Luigi Tasks
-
-Each tool implements standardized Luigi tasks:
-
-```python
-class ToolScan(luigi.Task):
-    scan_input = luigi.Parameter()
-    
-    def output(self) -> luigi.LocalTarget
-    def run(self) -> None
-
-class ImportToolOutput(luigi.Task):
-    def requires(self) -> ToolScan
-    def run(self) -> None
+    def execute_scan(self, scan_input: ScheduledScan) -> None: ...
+    def parse_output(self, output_path: str, scan_input: ScheduledScan) -> List[Record]: ...
 ```
 
 ---
@@ -336,12 +334,11 @@ httpx_tool.args = "-favicon -td -t 100 -timeout 5"
 
 ```bash
 # Run all tests
-pytest tests/
+sudo /root/venv/bin/python -m pytest tests/routes/ -q --override-ini="addopts="
 
 # Run specific test modules
 pytest tests/routes/test_nmap_scan.py
 pytest tests/routes/test_httpx_scan.py
-
 ```
 
 ### Test Structure
@@ -383,22 +380,29 @@ pip install -r requirements.txt
 - **Type Hints**: Use comprehensive type annotations
 - **Documentation**: Sphinx-compatible docstrings required
 - **Testing**: Maintain >80% test coverage
-- **Security**: Follow security best practices
+- **Security**: Follow OWASP secure coding best practices
 
 ---
 
 ## 📋 Changelog
 
-### v1.0.0 (Current)
-- ✅ Initial release with 10 integrated tools
+### v1.2.0 (Current)
+- ✅ Removed Luigi task orchestration in favour of direct tool execution
+- ✅ Introduced `ToolSpec` abstract base class — all 17 tools migrated
+- ✅ Extracted `ApiClient` for clean HTTP/encryption separation
+- ✅ Added `RecordStore` for auto-indexed scan data management
+- ✅ Added `ProcessHandle` for unified future/PID lifecycle management
+- ✅ Renamed package from `waluigi` to `reverge_collector`
+- ✅ Scan inputs written to disk per tool for debugging
+
+### v1.0.0
+- ✅ Initial release with 17 integrated tools
 - ✅ Distributed collector-manager architecture
-- ✅ Luigi task orchestration
 - ✅ Comprehensive API framework
 - ✅ Advanced process management
 
 ### Roadmap
 - 🔄 Additional tool integrations
-- 🔄 Machine learning result correlation
 - 🔄 Advanced reporting capabilities
 
 ---
