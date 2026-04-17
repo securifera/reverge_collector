@@ -192,13 +192,13 @@ def subdomain_request_wrapper(domain: str) -> Dict[str, Union[str, List[str]]]:
             if res.status != 200:
                 logging.getLogger(__name__).error(
                     f"IP THC lookup failed. Status code: {res.status}")
-                logging.getLogger(__name__).error(f"Payload sent: {payload}")
+                # logging.getLogger(__name__).error(f"Payload sent: {payload}")
                 try:
                     decoded_data = data.decode("utf-8")
                 except Exception:
                     decoded_data = str(data)
-                logging.getLogger(__name__).error(
-                    f"Response data: {decoded_data}")
+                # logging.getLogger(__name__).error(
+                #    f"Response data: {decoded_data}")
                 raise RuntimeError(
                     f"[-] Error getting IP THC output. Status: {res.status}, Payload: {payload}, Response: {decoded_data}")
             break
@@ -209,8 +209,8 @@ def subdomain_request_wrapper(domain: str) -> Dict[str, Union[str, List[str]]]:
         raise RuntimeError(f"[-] Error getting IP THC output: {str(e)}")
 
     if data:
-        logging.getLogger(__name__).warning(
-            "Response Data: %s" % data.decode("utf-8"))
+        # logging.getLogger(__name__).warning(
+        #    "Response Data: %s" % data.decode("utf-8"))
         domain_set = process_response(data)
 
         # Return results with unique domains sorted for consistency
