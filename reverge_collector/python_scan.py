@@ -48,7 +48,7 @@ from reverge_collector.tool_spec import ToolSpec
 class Python(ToolSpec):
 
     name = 'python'
-    description = 'Python is a versatile programming language that enables rapid development and automation.'
+    description = 'Executes a Python script directly on the collector. Provide the Python code to run in the args field; it will be passed via stdin to the Python interpreter.'
     project_url = 'https://www.python.org/'
     tags = ['code-exec']
     collector_type = data_model.CollectorType.ACTIVE.value
