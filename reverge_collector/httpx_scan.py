@@ -177,6 +177,15 @@ def execute_scan(scan_input) -> None:
                     port_target_list_map[port_str] = ip_set
                 ip_set.update(url_list)
 
+        # Fallback: subnet expansion produced URLs but no host/port records exist yet
+        if not port_target_list_map and scope_urls:
+            for url_str in scope_urls.keys():
+                port_str = scan_utils.get_url_port(url_str)
+                if port_str is None:
+                    continue
+                port_str = str(port_str)
+                port_target_list_map.setdefault(port_str, set()).add(url_str)
+
     futures = []
     for port_str in port_target_list_map:
         scan_output_file_path = output_dir + os.path.sep + "httpx_out_" + port_str
