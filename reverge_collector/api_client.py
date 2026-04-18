@@ -205,22 +205,33 @@ class ApiClient:
     # API endpoint methods
     # ------------------------------------------------------------------
 
-    def get_scheduled_scans(self) -> List[ScheduledScanResponse]:
-        """Retrieve pending scheduled scans, returning typed ``ScheduledScanResponse`` objects."""
+    def get_scheduled_scans(self) -> List[Any]:
+        """Retrieve pending scheduled scans and collector jobs.
+
+        Returns a mixed list: ``ScheduledScanResponse`` objects for scan items
+        (``_type == 'scan'``) and raw ``SimpleNamespace`` objects for job items
+        (``_type == 'job'``).  The ``_type`` attribute is set on every entry.
+        """
         raw = self._get("/api/scheduler/", as_namespace=True)
         if not raw:
             return []
-        items: List[ScheduledScanResponse] = []
+        items: List[Any] = []
         for ns in raw:
             try:
-                items.append(ScheduledScanResponse(
-                    id=ns.id,
-                    target_id=ns.target_id,
-                    scan_id=ns.scan_id,
-                    collection_tools=getattr(ns, 'collection_tools', []),
-                ))
+                item_type = getattr(ns, '_type', 'scan')
+                if item_type == 'job':
+                    items.append(ns)
+                else:
+                    entry = ScheduledScanResponse(
+                        id=ns.id,
+                        target_id=ns.target_id,
+                        scan_id=ns.scan_id,
+                        collection_tools=getattr(ns, 'collection_tools', []),
+                    )
+                    entry._type = 'scan'  # type: ignore[attr-defined]
+                    items.append(entry)
             except AttributeError as exc:
-                logger.warning("Skipping malformed scheduled scan entry: %s", exc)
+                logger.warning("Skipping malformed scheduler entry: %s", exc)
         return items
 
     def get_scheduled_scan(self, sched_scan_id: str) -> Optional[Dict[str, Any]]:
@@ -328,4 +339,21 @@ class ApiClient:
     def import_screenshot(self, data_dict: Dict[str, Any]) -> bool:
         """Import a screenshot record."""
         self._post("/api/screenshots", [data_dict])
+        return True
+
+    # ------------------------------------------------------------------
+    # Collector Job endpoints
+    # ------------------------------------------------------------------
+
+    def update_job_status(self, job_id: str, status: int,
+                          status_message: str = "",
+                          result: Optional[Dict[str, Any]] = None) -> bool:
+        """Post a collector job status update, optionally with result payload."""
+        payload: Dict[str, Any] = {
+            "status": status,
+            "status_message": status_message,
+        }
+        if result is not None:
+            payload["result"] = result
+        self._post("/api/collector/job/%s/" % job_id, payload)
         return True
