@@ -73,7 +73,8 @@ class Feroxbuster(ToolSpec):
     scan_order = 10
     args = '--rate-limit 50 -s 200 -n --auto-bail --parallel 10 --scan-limit 10'
     input_records = [data_model.ServerRecordType.PORT,
-                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+                     data_model.ServerRecordType.SUBNET]
     output_records = [
         data_model.ServerRecordType.DOMAIN,
         data_model.ServerRecordType.LIST_ITEM,
@@ -122,7 +123,7 @@ def execute_scan(scan_input: Any) -> None:
         scan_wordlist = scheduled_scan_obj.current_tool.wordlist_path
 
     # Get all the URLs to scan using the same pattern as NucleiScan
-    endpoint_url_map = scheduled_scan_obj.scan_data.get_urls()
+    endpoint_url_map = scheduled_scan_obj.scan_data.get_url_metadata_map()
 
     # Convert the endpoint URL map to the format expected by FeroxScan
     # Skip URLs that already have specific paths (not "/") since Feroxbuster discovers paths

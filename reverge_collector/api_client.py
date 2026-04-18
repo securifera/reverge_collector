@@ -10,6 +10,7 @@ so that orchestration logic stays free of transport concerns.
 import json
 import logging
 import os
+import time
 import traceback
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -23,6 +24,21 @@ logger = logging.getLogger(__name__)
 
 # Suppress urllib3 SSL warnings globally (targets can have self-signed certs)
 requests.packages.urllib3.disable_warnings()
+
+# ---------------------------------------------------------------------------
+# HTTP transport configuration
+# ---------------------------------------------------------------------------
+
+# (connect_timeout_s, read_timeout_s) for every request.  A generous read
+# timeout is needed for large import payloads; the connect timeout catches
+# hung TCP handshakes quickly.
+_HTTP_TIMEOUT: tuple = (15, 300)
+
+# Retry policy for POST requests: how many *extra* attempts to make after the
+# first failure and how long to wait between them.  Applied to connection
+# errors and HTTP 5xx responses only — 4xx errors are not retried.
+_POST_MAX_RETRIES: int = 3
+_POST_RETRY_DELAYS: tuple = (5, 30, 120)  # seconds; one entry per retry
 
 _CUSTOM_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; AS; rv:11.0) like Gecko"
@@ -144,7 +160,8 @@ class ApiClient:
         Returns ``None`` on 404; raises on other non-200 responses.
         """
         url = "%s%s" % (self.manager_url, path)
-        r = requests.get(url, headers=self.headers, verify=self.verify_ssl)
+        r = requests.get(url, headers=self.headers, verify=self.verify_ssl,
+                         timeout=_HTTP_TIMEOUT)
         if r.status_code == 404:
             return None
         if r.status_code != 200:
@@ -171,35 +188,87 @@ class ApiClient:
         Encrypt *payload*, POST it, optionally decrypt and return the response.
 
         Returns ``True`` on plain 200 success when ``expect_response=False``.
-        Raises ``RuntimeError`` on non-200 responses.
+        Raises ``RuntimeError`` on non-200 responses that are not retried
+        (4xx) or after all retry attempts are exhausted (5xx / connection).
+
+        Retry policy (``_POST_MAX_RETRIES`` extra attempts with
+        ``_POST_RETRY_DELAYS`` between them):
+
+        * ``requests.ConnectionError`` / ``requests.Timeout`` — the request
+          almost certainly never reached the server, so retrying is safe.
+        * HTTP 5xx — the server was temporarily unavailable; the server is
+          expected to handle duplicate imports via the ``orig_id`` field.
+
+        HTTP 4xx errors are raised immediately without retrying because they
+        indicate a client-side problem that won't be fixed by waiting.
         """
         url = "%s%s" % (self.manager_url, path)
         b64_val = self._encrypt(payload)
-        r = requests.post(
-            url, headers=self.headers,
-            json={"data": b64_val},
-            verify=self.verify_ssl,
-        )
-        if r.status_code == 404:
-            return None
-        if r.status_code != 200:
-            raise RuntimeError("POST %s returned HTTP %d" % (path, r.status_code))
-        if not expect_response:
-            return True
-        if not r.content:
-            return None
-        try:
-            content = r.json()
-            data = self._decrypt(content)
-            if data is None:
+
+        last_exc: Optional[Exception] = None
+        for attempt in range(_POST_MAX_RETRIES + 1):
+            if attempt > 0:
+                delay = _POST_RETRY_DELAYS[attempt - 1]
+                logger.warning(
+                    "POST %s attempt %d/%d — retrying in %ds",
+                    path, attempt + 1, _POST_MAX_RETRIES + 1, delay,
+                )
+                time.sleep(delay)
+
+            try:
+                r = requests.post(
+                    url, headers=self.headers,
+                    json={"data": b64_val},
+                    verify=self.verify_ssl,
+                    timeout=_HTTP_TIMEOUT,
+                )
+            except (requests.ConnectionError, requests.Timeout) as exc:
+                logger.warning(
+                    "POST %s attempt %d — connection error: %s",
+                    path, attempt + 1, exc,
+                )
+                last_exc = exc
+                continue
+
+            if r.status_code == 404:
                 return None
-            if as_namespace:
-                return json.loads(data, object_hook=lambda d: SimpleNamespace(**d))
-            return json.loads(data)
-        except Exception as exc:
-            logger.error("Error parsing POST %s response: %s", path, exc)
-            logger.debug(traceback.format_exc())
-            return None
+            if r.status_code >= 500:
+                logger.warning(
+                    "POST %s attempt %d — server error HTTP %d",
+                    path, attempt + 1, r.status_code,
+                )
+                last_exc = RuntimeError(
+                    "POST %s returned HTTP %d" % (path, r.status_code))
+                continue
+            if r.status_code != 200:
+                raise RuntimeError(
+                    "POST %s returned HTTP %d" % (path, r.status_code))
+
+            # --- success ---
+            if not expect_response:
+                return True
+            if not r.content:
+                return None
+            try:
+                content = r.json()
+                data = self._decrypt(content)
+                if data is None:
+                    return None
+                if as_namespace:
+                    return json.loads(
+                        data, object_hook=lambda d: SimpleNamespace(**d))
+                return json.loads(data)
+            except Exception as exc:
+                logger.error(
+                    "Error parsing POST %s response: %s", path, exc)
+                logger.debug(traceback.format_exc())
+                return None
+
+        # All attempts exhausted.
+        if last_exc:
+            raise last_exc
+        raise RuntimeError(
+            "POST %s failed after %d attempts" % (path, _POST_MAX_RETRIES + 1))
 
     # ------------------------------------------------------------------
     # API endpoint methods
@@ -295,13 +364,6 @@ class ApiClient:
         for subnet in result:
             subnets.append("%s/%s" % (subnet.subnet, subnet.mask))
         return subnets
-
-    def get_urls(self, scan_id: str) -> List[str]:
-        """Return URL strings associated with a scan."""
-        result = self._get("/api/urls/scan/%s" % scan_id, as_namespace=True)
-        if not result:
-            return []
-        return [url_obj.url for url_obj in result]
 
     def get_hosts(self, scan_id: str) -> List[Any]:
         """Return host objects associated with a scan."""

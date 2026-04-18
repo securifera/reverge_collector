@@ -68,6 +68,16 @@ logger = logging.getLogger(__name__)
 # Idempotency helpers
 # ---------------------------------------------------------------------------
 
+def get_pre_import_marker(output_path: str) -> str:
+    """Return the path of the ``tool_pre_import_json`` file for *output_path*.
+
+    This file is written *before* the API POST so that a failed or interrupted
+    import can be retried without re-parsing the raw tool output.  It lives in
+    the same directory as the scan output file.
+    """
+    return os.path.join(os.path.dirname(output_path), "tool_pre_import_json")
+
+
 def get_import_marker(output_path: str) -> str:
     """Return the path of the ``tool_import_json`` marker for *output_path*.
 
@@ -120,6 +130,93 @@ def import_already_done(scheduled_scan_obj: Any, output_path: str) -> bool:
 # Result import
 # ---------------------------------------------------------------------------
 
+def load_pre_import_arr(output_path: str) -> Any:
+    """Return the cached pre-import array if ``tool_pre_import_json`` exists.
+
+    This is the serialised ``import_arr`` (list of JSON-serialisable record
+    dicts) that was written by :func:`import_results` *before* the API POST.
+    If the POST was interrupted the file will be present but
+    ``tool_import_json`` will be absent, so :func:`post_pre_import` can
+    re-POST without re-parsing the raw tool output.
+
+    Returns:
+        A list of dicts (the pre-import array) if the file exists and is
+        valid JSON, otherwise ``None``.
+    """
+    marker = get_pre_import_marker(output_path)
+    if not os.path.exists(marker):
+        return None
+    try:
+        with open(marker) as fh:
+            raw = fh.read().strip()
+        if raw:
+            return json.loads(raw)
+    except Exception as exc:
+        logger.warning("Could not read pre-import marker %s: %s", marker, exc)
+    return None
+
+
+def _remap_import_arr(
+    import_arr: List[Any],
+    updated_record_map: Any,
+) -> List[Any]:
+    """Apply the server's ID remapping to a list of serialised record dicts.
+
+    Used on the retry path where we no longer have live Record objects but
+    still need to apply ``orig_id → db_id`` substitutions returned by the
+    server so that the in-memory scope stays consistent.
+    """
+    if not updated_record_map:
+        return import_arr
+    id_map = {
+        r["orig_id"]: r["db_id"]
+        for r in updated_record_map
+        if r.get("orig_id") != r.get("db_id")
+    }
+    if not id_map:
+        return import_arr
+    # JSON-encode, bulk-replace all UUIDs, decode.  UUID strings are
+    # sufficiently unique that false positives are not a concern.
+    raw = json.dumps(import_arr)
+    for orig, db in id_map.items():
+        raw = raw.replace(orig, db)
+    return json.loads(raw)
+
+
+def post_pre_import(
+    scheduled_scan_obj: Any,
+    import_arr: List[Any],
+    output_path: str,
+) -> None:
+    """POST a previously cached ``import_arr`` to the Reverge API.
+
+    Called on the retry path when ``tool_pre_import_json`` exists but
+    ``tool_import_json`` does not — meaning the parse phase completed but the
+    POST was interrupted.  Skips parsing entirely and goes straight to the
+    network call.
+
+    Args:
+        scheduled_scan_obj: The ``ScheduledScan`` instance providing context.
+        import_arr: The list of JSON-serialisable record dicts loaded from
+            ``tool_pre_import_json``.
+        output_path: Absolute path to the scan output file, used to derive
+            the marker paths.
+    """
+    scan_id = scheduled_scan_obj.scan_id
+    recon_manager = scheduled_scan_obj.scan_thread.recon_manager
+    tool_id = scheduled_scan_obj.current_tool.id
+
+    updated_record_map = recon_manager.import_data(scan_id, tool_id, import_arr)
+
+    updated_import_arr = _remap_import_arr(import_arr, updated_record_map)
+
+    import_marker = get_import_marker(output_path)
+    with open(import_marker, "w") as fh:
+        fh.write(json.dumps(updated_import_arr))
+
+    scheduled_scan_obj.scan_data.update(updated_import_arr)
+
+
 def import_results(
     scheduled_scan_obj: Any,
     obj_arr: List[Any],
@@ -128,6 +225,10 @@ def import_results(
     """Serialize *obj_arr*, POST to the Reverge API, remap IDs, update scope,
     and write the ``tool_import_json`` marker so the import is skipped on
     subsequent restarts.
+
+    The serialised ``import_arr`` is written to ``tool_pre_import_json``
+    *before* the POST so that a failed or interrupted import can be retried
+    via :func:`post_pre_import` without re-parsing the raw tool output.
 
     This replaces ``data_model.ImportToolXOutput.import_results()``.
 
@@ -154,6 +255,13 @@ def import_results(
     for obj in obj_arr:
         record_map[obj.id] = obj
         import_arr.append(obj.to_jsonable())
+
+    # Persist the serialised records BEFORE the network call so a failed or
+    # interrupted POST can be retried via post_pre_import() without
+    # re-parsing the raw tool output.
+    pre_import_marker = get_pre_import_marker(output_path)
+    with open(pre_import_marker, "w") as fh:
+        fh.write(json.dumps(import_arr))
 
     # POST to server and get back the server-assigned ID mapping.
     updated_record_map = recon_manager.import_data(

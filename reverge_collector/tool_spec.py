@@ -54,6 +54,8 @@ from reverge_collector import data_model, scan_utils
 from reverge_collector.tool_runner import (
     import_already_done as _import_already_done,
     import_results as _import_results,
+    load_pre_import_arr as _load_pre_import_arr,
+    post_pre_import as _post_pre_import,
 )
 
 logger = logging.getLogger(__name__)
@@ -140,7 +142,7 @@ class ToolSpec(data_model.RevergeTool, ABC):
                 'secure': port_obj.secure,
             })
 
-        urls = list(scope_obj.get_urls().keys())
+        urls = list(scope_obj.get_url_metadata_map().keys())
 
         input_data = {
             'scan_id': scan_id,
@@ -168,15 +170,29 @@ class ToolSpec(data_model.RevergeTool, ABC):
             raise
 
     def _run_import(self, scan_input: 'data_model.ScheduledScan') -> bool:
-        """Standard idempotent import: exists-check → already-done → parse → POST."""
+        """Standard idempotent import: exists-check → already-done → parse → POST.
+
+        Retry path: if ``tool_pre_import_json`` exists (parse completed but
+        POST was interrupted) the cached serialised records are re-POSTed
+        directly without re-parsing the raw tool output.
+        """
         try:
             output_path = self.get_output_path(scan_input)
             if not os.path.exists(output_path):
                 return True
             if _import_already_done(scan_input, output_path):
                 return True
-            ret_arr = self.parse_output(output_path, scan_input)
-            _import_results(scan_input, ret_arr, output_path)
+            # Retry path: parse already done but POST was interrupted.
+            pre_import_arr = _load_pre_import_arr(output_path)
+            if pre_import_arr is not None:
+                logger.info(
+                    "%s: pre-import cache found — retrying POST without re-parsing",
+                    self.name,
+                )
+                _post_pre_import(scan_input, pre_import_arr, output_path)
+            else:
+                ret_arr = self.parse_output(output_path, scan_input)
+                _import_results(scan_input, ret_arr, output_path)
             return True
         except Exception as e:
             logger.error("%s import failed: %s", self.name, e, exc_info=True)
