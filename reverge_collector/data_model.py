@@ -254,6 +254,7 @@ class CollectionToolStatus(enum.Enum):
     COMPLETED = 3
     ERROR = 4
     CANCELLED = 5
+    IMPORT_FAILED = 6  # Scan phase succeeded; import POST to server failed — eligible for retry
 
     def __str__(self) -> str:
         """
@@ -276,6 +277,8 @@ class CollectionToolStatus(enum.Enum):
             return "ERROR"
         elif (self == CollectionToolStatus.CANCELLED):
             return "CANCELLED"
+        elif (self == CollectionToolStatus.IMPORT_FAILED):
+            return "IMPORT_FAILED"
 
 
 class ScheduledScan():
@@ -415,6 +418,10 @@ class ScheduledScan():
         self.current_tool = None
         self.current_tool_instance_id = None
         self.selected_interface = None
+        # Set to True when a tool's scan phase succeeded but its import POST
+        # failed.  The scheduler leaves the overall scan in RUNNING state so
+        # the next polling iteration retries the import without re-scanning.
+        self.has_pending_imports: bool = False
 
         # Validate and retrieve scan configuration from server
         scan_obj = self.scan_thread.recon_manager.get_scheduled_scan(

@@ -442,30 +442,38 @@ class ScheduledScanThread(threading.Thread):
                     break
 
                 # Import scan results regardless of tool type
+                import_err_msg = None
                 try:
                     if self.recon_manager.import_func(scheduled_scan_obj) == False:
-                        err_msg = "Import function failed"
-                        logging.getLogger(__name__).debug(err_msg)
-                        ret_status = data_model.CollectionToolStatus.ERROR.value
+                        import_err_msg = "Import function failed"
+                        logging.getLogger(__name__).debug(import_err_msg)
+                        ret_status = data_model.CollectionToolStatus.IMPORT_FAILED.value
                     else:
                         ret_status = data_model.CollectionToolStatus.COMPLETED.value
                 except Exception as e:
-                    err_msg = "Error calling import function: %s" % str(e)
-                    logging.getLogger(__name__).error(err_msg)
+                    import_err_msg = "Error calling import function: %s" % str(e)
+                    logging.getLogger(__name__).error(import_err_msg)
                     logging.getLogger(__name__).debug(traceback.format_exc())
-                    ret_status = data_model.CollectionToolStatus.ERROR.value
+                    ret_status = data_model.CollectionToolStatus.IMPORT_FAILED.value
 
                 # Check for task failures from import
                 if self.failed_task_exception:
                     task_err = f"{self.failed_task_exception[0]}\n{self.failed_task_exception[1]}"
                     self.failed_task_exception = None
-                    err_msg = task_err if not err_msg else f"{err_msg}\n{task_err}"
+                    import_err_msg = task_err if not import_err_msg else f"{import_err_msg}\n{task_err}"
+                    ret_status = data_model.CollectionToolStatus.IMPORT_FAILED.value
 
-                # Update tool status once after import (skip if scan already updated it)
+                # Update tool status once after import
                 scheduled_scan_obj.update_tool_status(
-                    collection_tool_inst.id, ret_status, err_msg if err_msg else '')
+                    collection_tool_inst.id, ret_status, import_err_msg if import_err_msg else '')
 
-                if ret_status == data_model.CollectionToolStatus.ERROR.value:
+                if ret_status == data_model.CollectionToolStatus.IMPORT_FAILED.value:
+                    # The scan phase completed but the server POST failed (e.g.
+                    # server down / 500).  Flag the scan so the scheduler keeps
+                    # it RUNNING for retry on the next polling iteration.
+                    # Subsequent tools are intentionally skipped because they
+                    # may depend on this tool's results being in scope.
+                    scheduled_scan_obj.has_pending_imports = True
                     break
 
             except Exception:
@@ -476,10 +484,12 @@ class ScheduledScanThread(threading.Thread):
                 scheduled_scan_obj.current_tool = None
                 scheduled_scan_obj.current_tool_instance_id = None
 
-        # Perform scan cleanup on successful completion
-        # if ret_status == data_model.CollectionToolStatus.COMPLETED.value:
-        scan_cleanup.scan_cleanup_func(scheduled_scan_obj.id)
-        # err_msg = None
+        # Only archive/delete scan directory when all imports succeeded.
+        # If has_pending_imports is set the output files (especially
+        # tool_pre_import_json) must survive so the next polling iteration
+        # can retry just the POST without re-running the scan.
+        if not scheduled_scan_obj.has_pending_imports:
+            scan_cleanup.scan_cleanup_func(scheduled_scan_obj.id)
 
         return err_msg
 
@@ -567,12 +577,24 @@ class ScheduledScanThread(threading.Thread):
                     "Failed connecting to extender")
                 return False
 
-            if err_msg is None:
+            if err_msg is None and not scheduled_scan_obj.has_pending_imports:
                 # Scan completed successfully
                 scan_status = data_model.ScanStatus.COMPLETED.value
 
                 # Perform resource cleanup
                 scheduled_scan_obj.cleanup()
+            elif scheduled_scan_obj.has_pending_imports:
+                # Scan phase succeeded but the server POST failed (e.g. server
+                # down / 500).  Leave the scan RUNNING so the next polling
+                # iteration picks it up and retries only the import step using
+                # the cached tool_pre_import_json — no re-scanning needed.
+                # Do NOT call cleanup() so wordlists and output files survive.
+                scan_status = data_model.ScanStatus.RUNNING.value
+                logging.getLogger(__name__).warning(
+                    "Scan %s has pending imports; leaving RUNNING for retry "
+                    "on next poll iteration",
+                    scheduled_scan_obj.id,
+                )
 
         except Exception as e:
             logging.getLogger(__name__).error("Error executing scan job")
