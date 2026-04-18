@@ -1200,9 +1200,6 @@ class ReconManager:
     def get_wordlist(self, wordlist_id: str):
         return self._api_client.get_wordlist(wordlist_id)
 
-    def get_urls(self, scan_id: str) -> List[str]:
-        return self._api_client.get_urls(scan_id)
-
     def get_scheduled_scans(self) -> List[Any]:
         return self._api_client.get_scheduled_scans()
 

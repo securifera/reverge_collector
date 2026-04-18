@@ -79,6 +79,7 @@ class Sqlmap(ToolSpec):
     input_records = [
         data_model.ServerRecordType.PORT,
         data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+        data_model.ServerRecordType.SUBNET,
     ]
     output_records = [
         data_model.ServerRecordType.VULNERABILITY,
@@ -121,7 +122,7 @@ def execute_scan(scan_input: Any) -> None:
         tool_args = tool_args.split()
 
     # Collect all URLs using the same pattern as NucleiScan / FeroxScan
-    endpoint_url_map = scheduled_scan_obj.scan_data.get_urls()
+    endpoint_url_map = scheduled_scan_obj.scan_data.get_url_metadata_map()
 
     for url_str, url_metadata in endpoint_url_map.items():
         host_id = url_metadata.get('host_id')

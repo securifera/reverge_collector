@@ -19,7 +19,8 @@ class IISShortnameScanner(ToolSpec):
     scan_order = 8
     args = ""
     input_records = [data_model.ServerRecordType.PORT,
-                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+                     data_model.ServerRecordType.SUBNET]
     output_records = [
         data_model.ServerRecordType.COLLECTION_MODULE,
         data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
@@ -97,7 +98,7 @@ def execute_scan(scan_input: data_model.ScheduledScan) -> None:
     scope_obj = scheduled_scan_obj.scan_data
 
     # Attempt to get all urls first
-    all_endpoint_port_obj_map = scope_obj.get_urls()
+    all_endpoint_port_obj_map = scope_obj.get_url_metadata_map()
     endpoint_port_obj_map = {}
 
     # Filter URLs to only include base URLs (path is None or "/")

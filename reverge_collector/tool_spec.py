@@ -142,7 +142,7 @@ class ToolSpec(data_model.RevergeTool, ABC):
                 'secure': port_obj.secure,
             })
 
-        urls = list(scope_obj.get_urls().keys())
+        urls = list(scope_obj.get_url_metadata_map().keys())
 
         input_data = {
             'scan_id': scan_id,

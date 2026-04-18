@@ -5,9 +5,6 @@ This module provides comprehensive HTTP/HTTPS scanning capabilities using HTTPX,
 a fast and multi-purpose HTTP toolkit. It performs web application discovery,
 technology detection, certificate analysis, and screenshot capture for web assets.
 
-The module uses the centralized get_urls() method for consistent URL extraction
-across the framework, grouping URLs by port for efficient parallel processing.
-
 The module implements both scanning and data import functionality through Luigi tasks,
 supporting parallel HTTP probing and comprehensive web asset enumeration.
 
@@ -51,6 +48,7 @@ class Httpx(ToolSpec):
         data_model.ServerRecordType.PORT,
         data_model.ServerRecordType.DOMAIN,
         data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+        data_model.ServerRecordType.SUBNET,
     ]
     output_records = [
         data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
@@ -107,7 +105,7 @@ def execute_scan(scan_input) -> None:
     if script_args:
         script_args = script_args.split(" ")
 
-    scope_urls = scheduled_scan_obj.scan_data.get_urls()
+    scope_urls = scheduled_scan_obj.scan_data.get_url_metadata_map()
 
     host_list = scope_obj.get_hosts(
         [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
@@ -170,7 +168,7 @@ def execute_scan(scan_input) -> None:
                     ip_set.add(domain_name)
         elif len(port_list) > 0:
             for port_obj in port_list:
-                url_list = port_obj.get_urls(scope_obj)
+                url_list = port_obj.get_url_list(scope_obj)
                 port_str = str(port_obj.port)
                 if port_str in port_target_list_map:
                     ip_set = port_target_list_map[port_str]

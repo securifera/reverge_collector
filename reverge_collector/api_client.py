@@ -365,13 +365,6 @@ class ApiClient:
             subnets.append("%s/%s" % (subnet.subnet, subnet.mask))
         return subnets
 
-    def get_urls(self, scan_id: str) -> List[str]:
-        """Return URL strings associated with a scan."""
-        result = self._get("/api/urls/scan/%s" % scan_id, as_namespace=True)
-        if not result:
-            return []
-        return [url_obj.url for url_obj in result]
-
     def get_hosts(self, scan_id: str) -> List[Any]:
         """Return host objects associated with a scan."""
         result = self._get("/api/hosts/scan/%s" % scan_id, as_namespace=True)
