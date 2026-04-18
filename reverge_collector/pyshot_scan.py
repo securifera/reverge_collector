@@ -73,7 +73,8 @@ class Pyshot(ToolSpec):
     scan_order = 8
     args = ''
     input_records = [data_model.ServerRecordType.PORT,
-                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+                     data_model.ServerRecordType.SUBNET]
     output_records = [
         data_model.ServerRecordType.SCREENSHOT,
         data_model.ServerRecordType.DOMAIN,
@@ -229,7 +230,7 @@ def execute_scan(scan_input) -> None:
     dir_path = os.path.dirname(output_file_path)
 
     scheduled_scan_obj = scan_input
-    url_metadata_map = scheduled_scan_obj.scan_data.get_urls()
+    url_metadata_map = scheduled_scan_obj.scan_data.get_url_metadata_map()
 
     from urllib.parse import urlparse
     futures = []

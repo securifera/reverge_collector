@@ -101,7 +101,7 @@ class TestGet:
         payload = {"key": "value"}
         mock_resp = _encrypted_response(payload)
         with patch("requests.get", return_value=mock_resp), \
-             patch.object(self.client, "_decrypt", return_value=json.dumps(payload).encode()):
+                patch.object(self.client, "_decrypt", return_value=json.dumps(payload).encode()):
             result = self.client._get("/api/something")
         assert result == payload
 
@@ -109,7 +109,7 @@ class TestGet:
         payload = {"name": "scan1"}
         mock_resp = _encrypted_response(payload)
         with patch("requests.get", return_value=mock_resp), \
-             patch.object(self.client, "_decrypt", return_value=json.dumps(payload).encode()):
+                patch.object(self.client, "_decrypt", return_value=json.dumps(payload).encode()):
             result = self.client._get("/api/something", as_namespace=True)
         assert isinstance(result, SimpleNamespace)
         assert result.name == "scan1"
@@ -128,7 +128,7 @@ class TestPost:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         with patch("requests.post", return_value=mock_resp), \
-             patch.object(self.client, "_encrypt", return_value="b64data"):
+                patch.object(self.client, "_encrypt", return_value="b64data"):
             result = self.client._post("/api/something", {"x": 1})
         assert result is True
 
@@ -136,7 +136,7 @@ class TestPost:
         mock_resp = MagicMock()
         mock_resp.status_code = 404
         with patch("requests.post", return_value=mock_resp), \
-             patch.object(self.client, "_encrypt", return_value="b64data"):
+                patch.object(self.client, "_encrypt", return_value="b64data"):
             result = self.client._post("/api/something", {"x": 1})
         assert result is None
 
@@ -144,7 +144,7 @@ class TestPost:
         mock_resp = MagicMock()
         mock_resp.status_code = 500
         with patch("requests.post", return_value=mock_resp), \
-             patch.object(self.client, "_encrypt", return_value="b64data"):
+                patch.object(self.client, "_encrypt", return_value="b64data"):
             with pytest.raises(RuntimeError):
                 self.client._post("/api/something", {"x": 1})
 
@@ -152,9 +152,10 @@ class TestPost:
         payload = {"result": "ok"}
         mock_resp = _encrypted_response(payload)
         with patch("requests.post", return_value=mock_resp), \
-             patch.object(self.client, "_encrypt", return_value="b64data"), \
-             patch.object(self.client, "_decrypt", return_value=json.dumps(payload).encode()):
-            result = self.client._post("/api/something", {"x": 1}, expect_response=True)
+                patch.object(self.client, "_encrypt", return_value="b64data"), \
+                patch.object(self.client, "_decrypt", return_value=json.dumps(payload).encode()):
+            result = self.client._post(
+                "/api/something", {"x": 1}, expect_response=True)
         assert result == payload
 
 
@@ -170,7 +171,8 @@ class TestEndpoints:
     # -- Scheduled scans --
 
     def test_get_scheduled_scans_returns_list(self):
-        ns = SimpleNamespace(id="abc", target_id="t1", scan_id="s1", collection_tools=[])
+        ns = SimpleNamespace(id="abc", target_id="t1",
+                             scan_id="s1", collection_tools=[])
         with patch.object(self.client, "_get", return_value=[ns]):
             result = self.client.get_scheduled_scans()
         assert len(result) == 1
@@ -250,7 +252,8 @@ class TestEndpoints:
     def test_import_data_returns_list(self):
         record_map = [{"old_id": "a", "new_id": "b"}]
         with patch.object(self.client, "_post", return_value=record_map):
-            result = self.client.import_data("scan1", "tool1", [{"type": "host"}])
+            result = self.client.import_data(
+                "scan1", "tool1", [{"type": "host"}])
         assert result == record_map
 
     def test_import_data_returns_empty_list_on_none(self):
@@ -280,12 +283,6 @@ class TestEndpoints:
             result = self.client.get_subnets("scan1")
         assert result == []
 
-    def test_get_urls_extracts_url_strings(self):
-        ns_list = [SimpleNamespace(url="https://example.com")]
-        with patch.object(self.client, "_get", return_value=ns_list):
-            result = self.client.get_urls("scan1")
-        assert result == ["https://example.com"]
-
     def test_get_hosts_returns_list(self):
         ns_list = [SimpleNamespace(ipv4_addr="1.2.3.4")]
         with patch.object(self.client, "_get", return_value=ns_list):
@@ -314,14 +311,16 @@ class TestEndpoints:
 
     def test_import_ports_ext_returns_true(self):
         with patch.object(self.client, "_post", return_value=True):
-            result = self.client.import_ports_ext({"scan_id": "x", "ports": []})
+            result = self.client.import_ports_ext(
+                {"scan_id": "x", "ports": []})
         assert result is True
 
     # -- Screenshot --
 
     def test_import_screenshot_returns_true(self):
         with patch.object(self.client, "_post", return_value=True):
-            result = self.client.import_screenshot({"url": "https://example.com", "image": "b64data"})
+            result = self.client.import_screenshot(
+                {"url": "https://example.com", "image": "b64data"})
         assert result is True
 
     def test_import_screenshot_sends_list(self):
@@ -336,7 +335,8 @@ class TestEndpoints:
 
     def test_import_shodan_data_returns_true(self):
         with patch.object(self.client, "_post", return_value=True):
-            result = self.client.import_shodan_data("scan1", [{"ip": "1.2.3.4"}])
+            result = self.client.import_shodan_data(
+                "scan1", [{"ip": "1.2.3.4"}])
         assert result is True
 
 
@@ -373,7 +373,7 @@ class TestDecrypt:
             return refreshed_key
 
         with patch("reverge_collector.tool_utils.decrypt_data", side_effect=fake_decrypt), \
-            patch.object(self.client, "_refresh_session_key", side_effect=fake_refresh) as mock_refresh:
+                patch.object(self.client, "_refresh_session_key", side_effect=fake_refresh) as mock_refresh:
             result = self.client._decrypt({"data": "b64stuff"})
 
         assert result == expected
@@ -381,6 +381,6 @@ class TestDecrypt:
 
     def test_decrypt_returns_none_when_all_attempts_fail(self):
         with patch("reverge_collector.tool_utils.decrypt_data", side_effect=Exception("bad")), \
-             patch.object(self.client, "_refresh_session_key"):
+                patch.object(self.client, "_refresh_session_key"):
             result = self.client._decrypt({"data": "b64stuff"})
         assert result is None

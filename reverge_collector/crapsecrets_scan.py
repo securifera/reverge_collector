@@ -82,7 +82,8 @@ class Crapsecrets(ToolSpec):
     scan_order = 10
     args = '-nh -t 3 -mrd 5 -avsk -fvsp'
     input_records = [data_model.ServerRecordType.PORT,
-                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+                     data_model.ServerRecordType.SUBNET]
     output_records = [data_model.ServerRecordType.VULNERABILITY]
 
     def get_output_path(self, scan_input) -> str:
@@ -261,7 +262,7 @@ def execute_scan(scan_input) -> None:
     if scheduled_scan_obj.current_tool.args:
         custom_args = scheduled_scan_obj.current_tool.args.split(" ")
 
-    all_endpoint_port_obj_map = scheduled_scan_obj.scan_data.get_urls()
+    all_endpoint_port_obj_map = scheduled_scan_obj.scan_data.get_url_metadata_map()
     endpoint_port_obj_map = {}
     for url, port_data in all_endpoint_port_obj_map.items():
         if port_data.get('path') is None or port_data.get('path') == '/':
