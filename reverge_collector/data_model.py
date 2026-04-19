@@ -254,6 +254,7 @@ class CollectionToolStatus(enum.Enum):
     COMPLETED = 3
     ERROR = 4
     CANCELLED = 5
+    IMPORT_FAILED = 6  # Scan phase succeeded; import POST to server failed — eligible for retry
 
     def __str__(self) -> str:
         """
@@ -276,6 +277,8 @@ class CollectionToolStatus(enum.Enum):
             return "ERROR"
         elif (self == CollectionToolStatus.CANCELLED):
             return "CANCELLED"
+        elif (self == CollectionToolStatus.IMPORT_FAILED):
+            return "IMPORT_FAILED"
 
 
 class ScheduledScan():
@@ -415,6 +418,10 @@ class ScheduledScan():
         self.current_tool = None
         self.current_tool_instance_id = None
         self.selected_interface = None
+        # Set to True when a tool's scan phase succeeded but its import POST
+        # failed.  The scheduler leaves the overall scan in RUNNING state so
+        # the next polling iteration retries the import without re-scanning.
+        self.has_pending_imports: bool = False
 
         # Validate and retrieve scan configuration from server
         scan_obj = self.scan_thread.recon_manager.get_scheduled_scan(
@@ -1381,7 +1388,7 @@ class ScanData:
 
         return list(endpoint_urls)
 
-    def get_urls(self) -> Dict[str, Dict[str, Any]]:
+    def get_url_metadata_map(self) -> Dict[str, Dict[str, Any]]:
         """
         Extract all URLs suitable for screenshot capture with associated metadata.
 
@@ -1441,7 +1448,57 @@ class ScanData:
                 self._process_likely_http_ports(url_map, port_id, host_id, ip_addr,
                                                 port_str, secure, domain_set)
 
+        # Fallback: if no host data was available but subnets and port scope
+        # are defined, expand subnets to candidate URLs
+        if not url_map and self.subnet_map:
+            self._generate_subnet_port_urls(url_map)
+
         return url_map
+
+    def _generate_subnet_port_urls(self, url_map: Dict[str, Dict[str, Any]]) -> None:
+        """Expand subnets against the scoped port list to generate candidate URLs.
+
+        Used as a fallback when no host/port scan results are available yet but
+        subnets and a port scope are defined.  Only ports that pass
+        ``_is_likely_http_port`` are included.
+        """
+        secure_ports = {'443', '8443'}
+
+        # Prefer the bitmap-decoded scope list; fall back to discovered port_map
+        port_str_list = list(self.port_number_list)
+        if not port_str_list:
+            port_str_list = [
+                port_obj.port
+                for port_obj in self.port_map.values()
+                if port_obj.port
+            ]
+
+        if not port_str_list:
+            return
+
+        for subnet_id in self.subnet_map:
+            subnet_obj = self.subnet_map[subnet_id]
+            if not subnet_obj.subnet or not subnet_obj.mask:
+                continue
+            try:
+                network = ipaddress.ip_network(
+                    "%s/%s" % (subnet_obj.subnet, subnet_obj.mask), strict=False
+                )
+            except ValueError:
+                continue
+
+            for ip_addr_obj in network.hosts():
+                ip_addr = str(ip_addr_obj)
+                for port_str in port_str_list:
+                    secure = port_str in secure_ports
+                    url = construct_url(ip_addr, port_str, secure, "/")
+                    if url and url not in url_map:
+                        url_map[url] = {
+                            "ip_addr": ip_addr,
+                            "port_str": port_str,
+                            "secure": secure,
+                            "path": "/",
+                        }
 
     def _process_http_endpoints(self, url_map, port_id, host_id, ip_addr,
                                 port_str, secure, domain_set):
@@ -1542,10 +1599,10 @@ class ScanData:
 
     def _is_likely_http_port(self, port_id, port_str):
         """Determine if a port is likely HTTP"""
-        if port_str in ['80', '443']:
+        if port_str in ['80', '443', '8080', '8443', '8000', '8888']:
             return True
 
-        if port_id in self.component_port_id_map:
+        if port_id and port_id in self.component_port_id_map:
             for component_obj in self.component_port_id_map[port_id]:
                 if 'http' in component_obj.name.lower():
                     return True
@@ -2181,7 +2238,7 @@ class Port(Record):
         except Exception as e:
             raise Exception('Invalid port object: %s' % str(e))
 
-    def get_urls(self, scope_obj):
+    def get_url_list(self, scope_obj):
 
         url_set = set()
         if self.parent:

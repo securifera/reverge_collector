@@ -80,7 +80,8 @@ class Webcap(ToolSpec):
     scan_order = 8
     args = '--timeout 5 --threads 5 --quality 20 --format jpeg'
     input_records = [data_model.ServerRecordType.PORT,
-                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA]
+                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+                     data_model.ServerRecordType.SUBNET]
     output_records = [
         data_model.ServerRecordType.SCREENSHOT,
         data_model.ServerRecordType.DOMAIN,
@@ -345,7 +346,7 @@ def execute_scan(scan_input) -> None:
     webcap_scan_args = scheduled_scan_obj.current_tool.args
 
     future_map = {}
-    url_metadata_map = scheduled_scan_obj.scan_data.get_urls()
+    url_metadata_map = scheduled_scan_obj.scan_data.get_url_metadata_map()
 
     for url, metadata in url_metadata_map.items():
         scan_tuple = (

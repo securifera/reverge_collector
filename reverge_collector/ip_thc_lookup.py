@@ -174,10 +174,10 @@ def subdomain_request_wrapper(domain: str) -> Dict[str, Union[str, List[str]]]:
             conn.request("POST", "/api/v1/lookup/subdomains", payload, headers)
             res = conn.getresponse()
             data = res.read()
-            if res.status == 429:
+            if res.status == 429 or res.status == 500:
                 backoff = min(2 ** retry_count, 60)
                 logging.getLogger(__name__).warning(
-                    "Received 429 Too Many Requests. Sleeping %d seconds and retrying. Payload: %s", backoff, payload)
+                    "Received %d. Sleeping %d seconds and retrying. Payload: %s", res.status, backoff, payload)
                 time.sleep(backoff)
                 retry_count += 1
                 continue
@@ -281,10 +281,10 @@ def reverse_dns_request_wrapper(ip_addr: str) -> Dict[str, Union[str, List[str]]
             conn.request("POST", "/api/v1/lookup", payload, headers)
             res = conn.getresponse()
             data = res.read()
-            if res.status == 429:
+            if res.status == 429 or res.status == 500:
                 backoff = min(2 ** retry_count, 60)
                 logging.getLogger(__name__).warning(
-                    "Received 429 Too Many Requests. Sleeping %d seconds and retrying. Payload: %s", backoff, payload)
+                    "Received %d. Sleeping %d seconds and retrying. Payload: %s", res.status, backoff, payload)
                 time.sleep(backoff)
                 retry_count += 1
                 continue

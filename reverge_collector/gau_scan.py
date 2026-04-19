@@ -79,6 +79,7 @@ class Gau(ToolSpec):
         data_model.ServerRecordType.DOMAIN,
         data_model.ServerRecordType.PORT,
         data_model.ServerRecordType.HTTP_ENDPOINT,
+        data_model.ServerRecordType.SUBNET,
     ]
     output_records = [
         data_model.ServerRecordType.PORT,
@@ -119,7 +120,7 @@ def execute_scan(scan_input: Any) -> None:
 
     domain_host_map = {}
     domain_list_str = None
-    all_endpoint_port_obj_map = scope_obj.get_urls()
+    all_endpoint_port_obj_map = scope_obj.get_url_metadata_map()
     if len(all_endpoint_port_obj_map) > 0:
 
         # Filter URLs to only include base URLs (path is None or "/")
