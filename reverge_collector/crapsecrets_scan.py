@@ -58,6 +58,7 @@ import os
 # import traceback
 import time
 import logging
+import threading
 from typing import Dict, Set, List, Any, Optional, Union
 
 from reverge_collector import scan_utils
@@ -71,6 +72,10 @@ url_set: Set[str] = set()
 # Global path hash mapping for deduplication across vulnerability scans
 path_hash_map: Dict[str, Any] = {}
 
+# Limit concurrent host scans to avoid overwhelming targets and local resources
+MAX_CONCURRENT_SCANS: int = 5
+_scan_semaphore: threading.Semaphore = threading.Semaphore(MAX_CONCURRENT_SCANS)
+
 
 class Crapsecrets(ToolSpec):
 
@@ -81,6 +86,7 @@ class Crapsecrets(ToolSpec):
     collector_type = data_model.CollectorType.ACTIVE.value
     scan_order = 10
     args = '-nh -t 3 -mrd 5 -avsk -fvsp'
+    max_targets = 100
     input_records = [data_model.ServerRecordType.PORT,
                      data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
                      data_model.ServerRecordType.SUBNET]
@@ -186,53 +192,54 @@ def request_wrapper(url_obj: Dict[str, Any]) -> Dict[str, Any]:
 
     logging.getLogger(__name__).debug("Scanning URL: %s" % url)
 
-    count = 0
-    while True:
-        try:
+    with _scan_semaphore:
+        count = 0
+        while True:
+            try:
 
-            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+                user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
 
-            # Build command to run crapsecrets binary
-            command = [
-                "crapsecrets",
-                "--url",
-                url,
-                "-a",
-                user_agent,
-                "-j"  # JSON output
-            ]
+                # Build command to run crapsecrets binary
+                command = [
+                    "crapsecrets",
+                    "--url",
+                    url,
+                    "-a",
+                    user_agent,
+                    "-j"  # JSON output
+                ]
 
-            # Add custom args if provided
-            if custom_args:
-                command.extend(custom_args)
-            ret_dict = process_wrapper(cmd_args=command, store_output=True)
+                # Add custom args if provided
+                if custom_args:
+                    command.extend(custom_args)
+                ret_dict = process_wrapper(cmd_args=command, store_output=True)
 
-            if ret_dict and 'exit_code' in ret_dict:
-                exit_code = ret_dict['exit_code']
-                if exit_code == 0:
-                    # Parse stdout for results
-                    if 'stdout' in ret_dict and ret_dict['stdout']:
-                        stdout_text = ret_dict['stdout']
-                        try:
-                            # Try to parse as JSON if output contains findings
-                            if stdout_text.strip():
-                                output = json.loads(stdout_text)
-                        except json.JSONDecodeError:
-                            # If not JSON, store raw output
-                            output = [{'raw_output': stdout_text}]
-                    elif 'stderr' in ret_dict and ret_dict['stderr']:
-                        stderr_text = ret_dict['stderr']
-                        logging.getLogger(__name__).error(
-                            "Crapsecrets error for URL %s: %s" % (url, stderr_text))
+                if ret_dict and 'exit_code' in ret_dict:
+                    exit_code = ret_dict['exit_code']
+                    if exit_code == 0:
+                        # Parse stdout for results
+                        if 'stdout' in ret_dict and ret_dict['stdout']:
+                            stdout_text = ret_dict['stdout']
+                            try:
+                                # Try to parse as JSON if output contains findings
+                                if stdout_text.strip():
+                                    output = json.loads(stdout_text)
+                            except json.JSONDecodeError:
+                                # If not JSON, store raw output
+                                output = [{'raw_output': stdout_text}]
+                        elif 'stderr' in ret_dict and ret_dict['stderr']:
+                            stderr_text = ret_dict['stderr']
+                            logging.getLogger(__name__).error(
+                                "Crapsecrets error for URL %s: %s" % (url, stderr_text))
 
                 break
-        except Exception as e:
-            logging.getLogger(__name__).error(
-                "Error scanning URL %s: %s" % (url, str(e)))
-            count += 1
-            time.sleep(1)
-            if count > 2:
-                break
+            except Exception as e:
+                logging.getLogger(__name__).error(
+                    "Error scanning URL %s: %s" % (url, str(e)))
+                count += 1
+                time.sleep(1)
+                if count > 2:
+                    break
 
     url_obj['output'] = output
     return url_obj

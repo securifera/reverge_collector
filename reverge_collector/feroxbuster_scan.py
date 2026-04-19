@@ -71,6 +71,7 @@ class Feroxbuster(ToolSpec):
     tags = ['http-crawl']
     collector_type = data_model.CollectorType.ACTIVE.value
     scan_order = 10
+    max_targets = 10
     args = '--rate-limit 50 -s 200 -n --auto-bail --parallel 10 --scan-limit 10'
     input_records = [data_model.ServerRecordType.PORT,
                      data_model.ServerRecordType.HTTP_ENDPOINT_DATA,

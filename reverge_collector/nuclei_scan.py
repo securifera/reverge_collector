@@ -43,6 +43,7 @@ class Nuclei(ToolSpec):
     collector_type = data_model.CollectorType.ACTIVE.value
     scan_order = 7
     args = '-ni -pt http -rl 50 -t http/technologies/fingerprinthub-web-fingerprints.yaml'
+    max_targets = 500
     input_records = [data_model.ServerRecordType.PORT,
                      data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
                      data_model.ServerRecordType.SUBNET]

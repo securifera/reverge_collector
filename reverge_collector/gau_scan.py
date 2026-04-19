@@ -74,6 +74,7 @@ class Gau(ToolSpec):
     tags = ['passive', 'http-crawl']
     collector_type = data_model.CollectorType.PASSIVE.value
     scan_order = 1
+    max_targets = 10
     args = '--retries 3 --timeout 5'
     input_records = [
         data_model.ServerRecordType.DOMAIN,

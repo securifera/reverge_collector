@@ -82,6 +82,9 @@ class ToolSpec(data_model.RevergeTool, ABC):
     args: str = ''
     input_records: List[Any] = []
     output_records: List[Any] = []
+    # Maximum number of URL targets allowed per scan job.  None = unlimited.
+    # Set this on slow tools to force users to break large jobs into chunks.
+    max_targets: Optional[int] = None
 
     # -----------------------------------------------------------------------
     # Initialisation
@@ -162,6 +165,15 @@ class ToolSpec(data_model.RevergeTool, ABC):
     def _run_scan(self, scan_input: 'data_model.ScheduledScan') -> bool:
         """Calls ``execute_scan()`` and returns True on success."""
         try:
+            if self.max_targets is not None:
+                url_map = scan_input.scan_data.get_url_metadata_map()
+                target_count = len(url_map)
+                if target_count > self.max_targets:
+                    raise ValueError(
+                        f"{self.name}: job contains {target_count} targets but the "
+                        f"per-job limit is {self.max_targets}. "
+                        f"Split the scan into smaller chunks of at most {self.max_targets} targets."
+                    )
             self._write_scan_inputs(scan_input)
             self.execute_scan(scan_input)
             return True
