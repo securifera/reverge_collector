@@ -258,21 +258,38 @@ class ScheduledScanThread(threading.Thread):
         self.scan_thread_lock = threading.Lock()
         self.log_queue: Optional[Any] = None
         self.scheduled_scan_map: Dict[str, data_model.ScheduledScan] = {}
-        self.max_concurrent_scans = int(
-            os.environ.get("REVERGE_MAX_CONCURRENT_SCANS", "3")
-        )
-        if self.max_concurrent_scans < 1:
-            self.max_concurrent_scans = 1
-        self.scan_semaphore = threading.Semaphore(self.max_concurrent_scans)
         # Per-instance variable to hold task failures (avoids cross-thread race)
         self.failed_task_exception: Optional[Tuple[Any, Exception]] = None
+        # Jobs whose run_job succeeded but whose status POST failed (server
+        # down / 5xx).  Retried on every subsequent poll iteration.
+        # Maps job_id -> {"status": int, "result": dict|None, "err_msg": str|None}
+        self.pending_job_completions: Dict[str, dict] = {}
 
     def _process_scan_obj_with_slot(self, scheduled_scan_obj: data_model.ScheduledScan) -> None:
-        """Run scan processing while ensuring semaphore slot release."""
-        try:
-            self.process_scan_obj(scheduled_scan_obj)
-        finally:
-            self.scan_semaphore.release()
+        """Run scan processing in a dedicated thread."""
+        self.process_scan_obj(scheduled_scan_obj)
+
+    def _flush_pending_job_completions(self) -> None:
+        """Retry POSTing results for jobs that completed locally but failed to report."""
+        with self.scan_thread_lock:
+            pending = dict(self.pending_job_completions)
+
+        for job_id, payload in pending.items():
+            try:
+                self.recon_manager.update_job_status(
+                    job_id,
+                    payload["status"],
+                    status_message=payload["err_msg"] or "",
+                    result=payload["result"],
+                )
+                logging.getLogger(__name__).debug(
+                    "Job %s pending result flushed successfully", job_id)
+                with self.scan_thread_lock:
+                    self.pending_job_completions.pop(job_id, None)
+                    self.scheduled_scan_map.pop(job_id, None)
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "Job %s result flush failed; will retry next poll", job_id)
 
     def _process_job_with_slot(self, job_item) -> None:
         """Execute a CollectorJob and post results back to the server."""
@@ -311,16 +328,33 @@ class ScheduledScanThread(threading.Thread):
                     self.connection_manager.connect_to_extender()
 
             # Post result + COMPLETED status
-            self.recon_manager.update_job_status(
-                job_item.id,
-                data_model.ScanStatus.COMPLETED.value,
-                result=result,
-            )
-            logging.getLogger(__name__).debug(
-                "Job %s completed (exit_code=%s)",
-                job_item.id,
-                result.get('exit_code'),
-            )
+            try:
+                self.recon_manager.update_job_status(
+                    job_item.id,
+                    data_model.ScanStatus.COMPLETED.value,
+                    result=result,
+                )
+                logging.getLogger(__name__).debug(
+                    "Job %s completed (exit_code=%s)",
+                    job_item.id,
+                    result.get('exit_code'),
+                )
+            except Exception:
+                # Server unreachable / 5xx — keep job in scheduled_scan_map so
+                # the poll loop won't re-dispatch it, and store the result so
+                # the next poll iteration can retry the POST without re-running.
+                logging.getLogger(__name__).warning(
+                    "Job %s status POST failed; will retry on next poll",
+                    job_item.id,
+                )
+                with self.scan_thread_lock:
+                    self.pending_job_completions[job_item.id] = {
+                        "status": data_model.ScanStatus.COMPLETED.value,
+                        "result": result,
+                        "err_msg": None,
+                    }
+                # Return without popping the job — it stays in scheduled_scan_map.
+                return
 
         except Exception as e:
             err_msg = str(e)
@@ -334,9 +368,19 @@ class ScheduledScanThread(threading.Thread):
                     status_message=err_msg[:2048],
                 )
             except Exception:
-                logging.getLogger(__name__).debug(traceback.format_exc())
+                # Server unreachable — store the error result for retry.
+                logging.getLogger(__name__).warning(
+                    "Job %s error-status POST failed; will retry on next poll",
+                    job_item.id,
+                )
+                with self.scan_thread_lock:
+                    self.pending_job_completions[job_item.id] = {
+                        "status": data_model.ScanStatus.ERROR.value,
+                        "result": None,
+                        "err_msg": err_msg,
+                    }
+                return
         finally:
-            self.scan_semaphore.release()
             if self.connection_manager:
                 self.connection_manager.free_connection_lock()
             with self.scan_thread_lock:
@@ -772,6 +816,9 @@ class ScheduledScanThread(threading.Thread):
                                 self.process_collector_settings(
                                     collector_settings)
 
+                            # Retry any job completions whose earlier POST failed.
+                            self._flush_pending_job_completions()
+
                             # Process scheduled scans and jobs with thread safety
                             with self.scan_thread_lock:
                                 sched_scan_obj_arr = recon_manager.get_scheduled_scans()
@@ -783,24 +830,13 @@ class ScheduledScanThread(threading.Thread):
                                     # --- Collector Job dispatch ---
                                     if item_type == 'job':
                                         if sched_scan_obj.id not in self.scheduled_scan_map:
-                                            if not self.scan_semaphore.acquire(blocking=False):
-                                                logging.getLogger(__name__).debug(
-                                                    "Max concurrent tasks reached (%d); deferring job %s",
-                                                    self.max_concurrent_scans,
-                                                    sched_scan_obj.id,
+                                            self.scheduled_scan_map[sched_scan_obj.id] = sched_scan_obj
+                                            Thread(
+                                                target=partial(
+                                                    self._process_job_with_slot,
+                                                    sched_scan_obj,
                                                 )
-                                                continue
-                                            try:
-                                                self.scheduled_scan_map[sched_scan_obj.id] = sched_scan_obj
-                                                Thread(
-                                                    target=partial(
-                                                        self._process_job_with_slot,
-                                                        sched_scan_obj,
-                                                    )
-                                                ).start()
-                                            except Exception:
-                                                self.scan_semaphore.release()
-                                                raise
+                                            ).start()
                                         continue
 
                                     # --- Scan dispatch (unchanged) ---
@@ -810,31 +846,18 @@ class ScheduledScanThread(threading.Thread):
                                         logging.getLogger(__name__).debug(
                                             "Processing new scan: %s", sched_scan_obj.id)
 
-                                        # Respect global scan concurrency cap.
-                                        if not self.scan_semaphore.acquire(blocking=False):
-                                            logging.getLogger(__name__).debug(
-                                                "Max concurrent scans reached (%d); deferring %s",
-                                                self.max_concurrent_scans,
-                                                sched_scan_obj.id,
-                                            )
-                                            continue
-
                                         # Create new scheduled scan instance
-                                        try:
-                                            scheduled_scan_obj = data_model.ScheduledScan(
-                                                self, sched_scan_obj)
-                                            self.scheduled_scan_map[sched_scan_obj.id] = scheduled_scan_obj
+                                        scheduled_scan_obj = data_model.ScheduledScan(
+                                            self, sched_scan_obj)
+                                        self.scheduled_scan_map[sched_scan_obj.id] = scheduled_scan_obj
 
-                                            # Start scan processing in separate thread
-                                            Thread(
-                                                target=partial(
-                                                    self._process_scan_obj_with_slot,
-                                                    scheduled_scan_obj,
-                                                )
-                                            ).start()
-                                        except Exception:
-                                            self.scan_semaphore.release()
-                                            raise
+                                        # Start scan processing in separate thread
+                                        Thread(
+                                            target=partial(
+                                                self._process_scan_obj_with_slot,
+                                                scheduled_scan_obj,
+                                            )
+                                        ).start()
 
                                     else:
 
