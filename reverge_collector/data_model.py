@@ -851,6 +851,7 @@ class RevergeTool:
         self.description: Optional[str] = None
         self.project_url: Optional[str] = None
         self.tags: List[str] = []
+        self.max_targets: Optional[int] = None
         self.input_records: List[ServerRecordType] = []
         self.output_records: List[ServerRecordType] = []
         self.scope_func: Optional[callable] = lambda: False
@@ -895,6 +896,10 @@ class RevergeTool:
         for module_obj in module_obj_list:
             module_list.append(module_obj.to_jsonable())
         ret_dict['modules'] = module_list
+
+        # Add max targets if set
+        if self.max_targets is not None:
+            ret_dict['max_targets'] = self.max_targets
         return ret_dict
 
 
