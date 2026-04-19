@@ -274,6 +274,74 @@ class ScheduledScanThread(threading.Thread):
         finally:
             self.scan_semaphore.release()
 
+    def _process_job_with_slot(self, job_item) -> None:
+        """Execute a CollectorJob and post results back to the server."""
+        from reverge_collector.job_executor import run_job
+        err_msg = None
+        result = None
+        try:
+            if self.connection_manager:
+                self.connection_manager.get_connection_lock()
+
+            # connect_to_extender before any server communication
+            if self.connection_manager and self.connection_manager.connect_to_extender() == False:
+                raise RuntimeError("Failed connecting to extender")
+
+            # Configure connection target for this scan
+            target_id = job_item.target_id
+            self.recon_manager.set_current_target(
+                self.connection_manager, target_id)
+
+            # Update status to RUNNING
+            self.recon_manager.update_job_status(
+                job_item.id, data_model.ScanStatus.RUNNING.value)
+
+            try:
+                # connect_to_target before executing the job
+                if self.connection_manager and self.connection_manager.connect_to_target() == False:
+                    raise RuntimeError(
+                        "Failed connecting to target %s" % job_item.target_id)
+
+                result = run_job(job_item.job_type, job_item.args)
+
+            finally:
+                # Always return to extender after target work, whether run_job
+                # succeeded or raised.
+                if self.connection_manager:
+                    self.connection_manager.connect_to_extender()
+
+            # Post result + COMPLETED status
+            self.recon_manager.update_job_status(
+                job_item.id,
+                data_model.ScanStatus.COMPLETED.value,
+                result=result,
+            )
+            logging.getLogger(__name__).debug(
+                "Job %s completed (exit_code=%s)",
+                job_item.id,
+                result.get('exit_code'),
+            )
+
+        except Exception as e:
+            err_msg = str(e)
+            logging.getLogger(__name__).error(
+                "Job %s failed: %s", job_item.id, e)
+            logging.getLogger(__name__).debug(traceback.format_exc())
+            try:
+                self.recon_manager.update_job_status(
+                    job_item.id,
+                    data_model.ScanStatus.ERROR.value,
+                    status_message=err_msg[:2048],
+                )
+            except Exception:
+                logging.getLogger(__name__).debug(traceback.format_exc())
+        finally:
+            self.scan_semaphore.release()
+            if self.connection_manager:
+                self.connection_manager.free_connection_lock()
+            with self.scan_thread_lock:
+                self.scheduled_scan_map.pop(job_item.id, None)
+
     def catch_failure(self, task: Any, exception: Exception) -> None:
         """Capture tool task failures for inclusion in status updates."""
         self.failed_task_exception = (task, exception)
@@ -704,11 +772,38 @@ class ScheduledScanThread(threading.Thread):
                                 self.process_collector_settings(
                                     collector_settings)
 
-                            # Process scheduled scans with thread safety
+                            # Process scheduled scans and jobs with thread safety
                             with self.scan_thread_lock:
                                 sched_scan_obj_arr = recon_manager.get_scheduled_scans()
                                 for sched_scan_obj in sched_scan_obj_arr:
 
+                                    item_type = getattr(
+                                        sched_scan_obj, '_type', 'scan')
+
+                                    # --- Collector Job dispatch ---
+                                    if item_type == 'job':
+                                        if sched_scan_obj.id not in self.scheduled_scan_map:
+                                            if not self.scan_semaphore.acquire(blocking=False):
+                                                logging.getLogger(__name__).debug(
+                                                    "Max concurrent tasks reached (%d); deferring job %s",
+                                                    self.max_concurrent_scans,
+                                                    sched_scan_obj.id,
+                                                )
+                                                continue
+                                            try:
+                                                self.scheduled_scan_map[sched_scan_obj.id] = sched_scan_obj
+                                                Thread(
+                                                    target=partial(
+                                                        self._process_job_with_slot,
+                                                        sched_scan_obj,
+                                                    )
+                                                ).start()
+                                            except Exception:
+                                                self.scan_semaphore.release()
+                                                raise
+                                        continue
+
+                                    # --- Scan dispatch (unchanged) ---
                                     # Handle new scans
                                     if sched_scan_obj.id not in self.scheduled_scan_map:
 
@@ -1241,3 +1336,9 @@ class ReconManager:
 
     def import_screenshot(self, data_dict: Dict[str, Any]) -> bool:
         return self._api_client.import_screenshot(data_dict)
+
+    def update_job_status(self, job_id: str, status: int,
+                          status_message: str = "",
+                          result: Optional[Dict[str, Any]] = None) -> bool:
+        return self._api_client.update_job_status(
+            job_id, status, status_message, result)
