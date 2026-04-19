@@ -334,6 +334,8 @@ def get_output_path(scan_input) -> str:
 def execute_scan(scan_input) -> None:
     output_file_path = get_output_path(scan_input)
     if os.path.exists(output_file_path):
+        logging.getLogger(__name__).debug(
+            "Output path %s already exists, skipping IP THC scan execution", output_file_path)
         return
 
     scheduled_scan_obj = scan_input

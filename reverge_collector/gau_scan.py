@@ -74,7 +74,7 @@ class Gau(ToolSpec):
     tags = ['passive', 'http-crawl']
     collector_type = data_model.CollectorType.PASSIVE.value
     scan_order = 1
-    max_targets = 10
+    max_targets = 5
     args = '--retries 3 --timeout 5'
     input_records = [
         data_model.ServerRecordType.DOMAIN,
@@ -114,6 +114,8 @@ def get_output_path(scan_input: Any) -> str:
 def execute_scan(scan_input: Any) -> None:
     gau_meta_file_path = get_output_path(scan_input)
     if os.path.exists(gau_meta_file_path):
+        logging.getLogger(__name__).debug(
+            "Output path %s already exists, skipping gau scan execution", gau_meta_file_path)
         return
 
     scheduled_scan_obj = scan_input

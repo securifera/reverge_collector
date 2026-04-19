@@ -232,6 +232,8 @@ def get_output_path(scan_input) -> str:
 def execute_scan(scan_input) -> None:
     meta_file_path: str = get_output_path(scan_input)
     if os.path.exists(meta_file_path):
+        logging.getLogger(__name__).debug(
+            "Output path %s already exists, skipping nmap scan execution", meta_file_path)
         return
 
     scheduled_scan_obj = scan_input

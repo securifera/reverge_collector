@@ -308,9 +308,16 @@ class ScheduledScanThread(threading.Thread):
             target_id = job_item.target_id
             target_slug = self.recon_manager.get_target_slug(target_id)
 
-            # Update status to RUNNING
-            self.recon_manager.update_job_status(
-                job_item.id, data_model.ScanStatus.RUNNING.value)
+            # Update status to RUNNING (best-effort: if the server is briefly
+            # down we proceed anyway rather than blocking or aborting the job).
+            try:
+                self.recon_manager.update_job_status(
+                    job_item.id, data_model.ScanStatus.RUNNING.value)
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "Job %s: failed to set RUNNING status; proceeding anyway",
+                    job_item.id,
+                )
 
             try:
                 # connect_to_target before executing the job
@@ -561,7 +568,8 @@ class ScheduledScanThread(threading.Thread):
                     else:
                         ret_status = data_model.CollectionToolStatus.COMPLETED.value
                 except Exception as e:
-                    import_err_msg = "Error calling import function: %s" % str(e)
+                    import_err_msg = "Error calling import function: %s" % str(
+                        e)
                     logging.getLogger(__name__).error(import_err_msg)
                     logging.getLogger(__name__).debug(traceback.format_exc())
                     ret_status = data_model.CollectionToolStatus.IMPORT_FAILED.value
@@ -791,6 +799,11 @@ class ScheduledScanThread(threading.Thread):
                         first_poll = False
                     else:
                         self.exit_event.wait(self.checkin_interval)
+
+                    # Flush any pending job results before acquiring the
+                    # connection lock so HTTP retries never stall running jobs.
+                    self._flush_pending_job_completions()
+
                     if self._enabled:
                         try:
                             # Acquire connection lock if using connection manager
@@ -815,7 +828,7 @@ class ScheduledScanThread(threading.Thread):
                                     collector_settings)
 
                             # Retry any job completions whose earlier POST failed.
-                            self._flush_pending_job_completions()
+                            # (handled above, outside the connection lock)
 
                             # Process scheduled scans and jobs with thread safety
                             with self.scan_thread_lock:
