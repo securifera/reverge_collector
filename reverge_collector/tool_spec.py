@@ -145,7 +145,13 @@ class ToolSpec(data_model.RevergeTool, ABC):
                 'secure': port_obj.secure,
             })
 
-        urls = list(scope_obj.get_url_metadata_map().keys())
+        if len(ports) == 0:
+            ports = scope_obj.get_port_number_list_from_scope()
+
+        subnets = []
+        for subnet_obj in scope_obj.subnet_map.values():
+            if subnet_obj.subnet and subnet_obj.mask:
+                subnets.append(f"{subnet_obj.subnet}/{subnet_obj.mask}")
 
         input_data = {
             'scan_id': scan_id,
@@ -153,10 +159,8 @@ class ToolSpec(data_model.RevergeTool, ABC):
             'hosts': sorted(set(hosts)),
             'domains': sorted(set(domains)),
             'ports': ports,
-            'urls': sorted(urls),
+            'subnets': sorted(set(subnets)),
         }
-        logger.debug("%s: writing scan inputs to %s: %s",
-                     tool_name, input_file, input_data)
         try:
             with open(input_file, 'w') as fd:
                 fd.write(json.dumps(input_data, indent=2))
@@ -165,6 +169,7 @@ class ToolSpec(data_model.RevergeTool, ABC):
 
     def _run_scan(self, scan_input: 'data_model.ScheduledScan') -> bool:
         """Calls ``execute_scan()`` and returns True on success."""
+        
         try:
             self._write_scan_inputs(scan_input)
             self.execute_scan(scan_input)
