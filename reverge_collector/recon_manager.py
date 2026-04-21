@@ -306,7 +306,6 @@ class ScheduledScanThread(threading.Thread):
 
             # Configure connection target for this scan
             target_id = job_item.target_id
-            target_slug = self.recon_manager.get_target_slug(target_id)
 
             # Update status to RUNNING (best-effort: if the server is briefly
             # down we proceed anyway rather than blocking or aborting the job).
@@ -321,7 +320,7 @@ class ScheduledScanThread(threading.Thread):
 
             try:
                 # connect_to_target before executing the job
-                if self.connection_manager and self.connection_manager.connect_to_target(target_slug) == False:
+                if self.connection_manager and self.connection_manager.connect_to_target(target_id) == False:
                     raise RuntimeError(
                         "Failed connecting to target %s" % job_item.target_id)
 
@@ -459,7 +458,6 @@ class ScheduledScanThread(threading.Thread):
         err_msg = None
         # Configure connection target for this scan
         target_id = scheduled_scan_obj.target_id
-        target_slug = self.recon_manager.get_target_slug(target_id)
 
         # Sort tools by execution order for proper dependency handling
         collection_tools = scheduled_scan_obj.collection_tool_map.values()
@@ -521,7 +519,7 @@ class ScheduledScanThread(threading.Thread):
                 try:
                     # Connect to target only for active scanning tools
                     if tool_obj.tool_type == 2:
-                        if self.connection_manager and self.connection_manager.connect_to_target(target_slug) == False:
+                        if self.connection_manager and self.connection_manager.connect_to_target(target_id) == False:
                             err_msg = "Failed connecting to target"
                             logging.getLogger(__name__).error(err_msg)
                             return err_msg
