@@ -52,6 +52,8 @@ reverge_tools: List[Tuple[str, str]] = [
     # ('reverge_collector.sectrails_ip_lookup', 'Sectrails'), # SecurityTrails API
     ('reverge_collector.crapsecrets_scan', 'Crapsecrets'),  # Secret detection
     ('reverge_collector.webcap_scan', 'Webcap'),        # Web capture and analysis
+    # Playwright: scripted browser interaction (auth flows, exploit verify)
+    ('reverge_collector.playwright_scan', 'PlaywrightInteract'),
     # Web endpoint crawling results
     ('reverge_collector.gau_scan', 'Gau'),
     ('reverge_collector.python_scan', 'Python'),        # Python script execution
