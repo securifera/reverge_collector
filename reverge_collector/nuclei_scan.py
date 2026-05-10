@@ -239,6 +239,20 @@ class Nuclei(ToolSpec):
                         # Clean up description - remove leading/trailing whitespace
                         module.description += ": " + template_description.strip()
                     module.args = f"-t {template_path}"
+
+                    # Derive CPE: prefer classification.cpe; fall back to
+                    # constructing from metadata vendor + product fields.
+                    classification = info.get('classification', {}) or {}
+                    cpe = classification.get('cpe', '')
+                    if not cpe:
+                        metadata = info.get('metadata', {}) or {}
+                        vendor = metadata.get('vendor', '').strip()
+                        product = metadata.get('product', '').strip()
+                        if vendor and product:
+                            cpe = f"cpe:2.3:a:{vendor}:{product}:*:*:*:*:*:*:*:*"
+                    if cpe:
+                        module.cpe = cpe
+
                     modules.append(module)
 
                 except Exception as e:
@@ -421,6 +435,7 @@ def parse_nuclei_output(
                 component_obj = data_model.WebComponent(parent_id=port_id)
                 component_obj.collection_tool_instance_id = tool_instance_id
                 component_obj.name = nuclei_scan_result['matcher-name'].lower()
+                component_obj.cpe = f"cpe:2.3:a:*:{component_obj.name}:*:*:*:*:*:*:*:*"
                 ret_arr.append(component_obj)
 
         elif template_id.startswith("cve-"):

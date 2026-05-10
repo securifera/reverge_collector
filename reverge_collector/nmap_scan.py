@@ -518,6 +518,7 @@ def parse_nmap_xml(
                     comp = data_model.WebComponent(parent_id=port_id)
                     comp.collection_tool_instance_id = tool_instance_id
                     comp.name = component_name
+                    comp.cpe = f"cpe:2.3:a:*:{component_name}:*:*:*:*:*:*:*:*"
                     ret_arr.append(comp)
 
             product: str = svc_dict.get("product", "")
@@ -527,6 +528,7 @@ def parse_nmap_xml(
                     comp = data_model.WebComponent(parent_id=port_id)
                     comp.collection_tool_instance_id = tool_instance_id
                     comp.name = component_name
+                    comp.cpe = f"cpe:2.3:a:*:{component_name}:*:*:*:*:*:*:*:*"
                     version_str: str = svc_dict.get("version", "")
                     if version_str:
                         comp.version = version_str
@@ -607,6 +609,7 @@ def parse_nmap_xml(
                     comp = data_model.WebComponent(parent_id=port_id)
                     comp.collection_tool_instance_id = tool_instance_id
                     comp.name = "http"
+                    comp.cpe = f"cpe:2.3:a:*:{comp.name}:*:*:*:*:*:*:*:*"
                     ret_arr.append(comp)
 
             for script_out in script_res:

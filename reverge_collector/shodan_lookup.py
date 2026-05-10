@@ -563,6 +563,7 @@ def parse_shodan_output(
                                         parent_id=port_id)
                                     component_obj.collection_tool_instance_id = tool_instance_id
                                     component_obj.name = server_tech
+                                    component_obj.cpe = f"cpe:2.3:a:*:{server_tech}:*:*:*:*:*:*:*:*"
 
                                     if server_version:
                                         component_obj.version = server_version
@@ -583,6 +584,7 @@ def parse_shodan_output(
                                 parent_id=port_id)
                             component_obj.collection_tool_instance_id = tool_instance_id
                             component_obj.name = component_name
+                            component_obj.cpe = f"cpe:2.3:a:*:{component_name}:*:*:*:*:*:*:*:*"
 
                             if 'versions' in components_dict_obj:
                                 version_arr = components_dict_obj['versions']

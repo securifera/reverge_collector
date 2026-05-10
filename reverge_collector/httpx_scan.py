@@ -497,10 +497,11 @@ def parse_httpx_output(
                     component_obj.collection_tool_instance_id = tool_instance_id
                     if ":" in tech_entry:
                         tech_parts = tech_entry.split(":")
-                        component_obj.name = tech_parts[0]
-                        component_obj.version = tech_parts[1]
+                        component_obj.name = tech_parts[0].lower()
+                        component_obj.version = tech_parts[1].lower()
                     else:
-                        component_obj.name = tech_entry
+                        component_obj.name = tech_entry.lower()
+                    component_obj.cpe = f"cpe:2.3:a:*:{component_obj.name}:*:*:*:*:*:*:*:*"
                     ret_arr.append(component_obj)
 
             if 'raw_header' in httpx_scan:

@@ -2401,6 +2401,7 @@ class WebComponent(Record):
         super().__init__(id=id, parent=Port(id=parent_id))
         self.name: Optional[str] = None
         self.version: Optional[str] = None
+        self.cpe: Optional[str] = None
 
     def _data_to_jsonable(self) -> Dict[str, str]:
         """
@@ -2412,6 +2413,8 @@ class WebComponent(Record):
         ret: Dict[str, str] = {'name': self.name}
         if self.version is not None:
             ret['version'] = self.version
+        if self.cpe is not None:
+            ret['cpe'] = self.cpe
         return ret
 
     def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
@@ -3083,6 +3086,7 @@ class CollectionModule(Record):
         self.name: Optional[str] = None
         self.description: Optional[str] = None
         self.args: Optional[str] = None
+        self.cpe: Optional[str] = None
         self.bindings: Optional[List[str]] = None
         self.outputs: Optional[List[str]] = None
 
@@ -3102,6 +3106,8 @@ class CollectionModule(Record):
         """
         ret = {'name': self.name,
                'description': self.description, 'args': self.args}
+        if self.cpe:
+            ret['cpe'] = self.cpe
         return ret
 
     def get_output_components(self) -> List['WebComponent']:
