@@ -671,6 +671,11 @@ class Metasploit(ToolSpec):
                 m.description = description
                 opts = " ".join(f"{k}={v}" for k, v in required_args)
                 m.args = (fullname + " " + opts) if opts else fullname
+                # cpe is set by the fork's rpc_info handler when the module
+                # declares `'CPE' => 'cpe:2.3:a:...'` in its info hash.
+                cpe = info.get("cpe")
+                if cpe:
+                    m.cpe = cpe.strip()
                 return m
             except Exception as exc:
                 _log.debug("module.info(%s, %s) failed: %s", mtype, name, exc)
