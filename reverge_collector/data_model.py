@@ -40,6 +40,7 @@ from reverge_collector.record_store import RecordStore
 # get_tool_classes() imports them on first call, keeping module-load fast.
 reverge_tools: List[Tuple[str, str]] = [
     ('reverge_collector.masscan', 'Masscan'),          # Port scanner
+    ('reverge_collector.naabu_scan', 'Naabu'),          # Fast port scanner with service detection
     # Network mapper and port scanner
     ('reverge_collector.nmap_scan', 'Nmap'),
     ('reverge_collector.pyshot_scan', 'Pyshot'),       # Screenshot capture tool

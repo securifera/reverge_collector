@@ -110,7 +110,7 @@ class Nuclei(ToolSpec):
     def _fingerprint() -> Optional[str]:
         """Cache fingerprint: SHA-256 of the .templates-index file."""
         from reverge_collector.module_cache import sha256_file
-        result = process_wrapper(cmd_args=['nuclei', '-tv'], store_output=True)
+        result = process_wrapper(cmd_args=['nuclei', '-duc', '-tv'], store_output=True)
         if not result or result.get('exit_code', 1) != 0:
             return None
         for line in result.get('stderr', '').split('\n'):
@@ -131,7 +131,7 @@ class Nuclei(ToolSpec):
 
         try:
             # Execute nuclei -tl to get list of all templates
-            cmd_args = ['nuclei', '-tv']
+            cmd_args = ['nuclei', '-duc', '-tv']
             result = process_wrapper(cmd_args=cmd_args, store_output=True)
 
             if result and 'exit_code' in result and result['exit_code'] != 0:
@@ -324,6 +324,7 @@ def execute_scan(scan_input) -> None:
 
         command_inner: List[str] = [
             "nuclei",
+            "-duc",
             "-jsonl",
             "-l",
             nuclei_scan_input_file_path,
@@ -430,15 +431,42 @@ def parse_nuclei_output(
 
         template_id: str = nuclei_scan_result['template-id'].lower()
 
-        if template_id == 'fingerprinthub-web-fingerprints':
-            if 'matcher-name' in nuclei_scan_result:
-                component_obj = data_model.WebComponent(parent_id=port_id)
-                component_obj.collection_tool_instance_id = tool_instance_id
-                component_obj.name = nuclei_scan_result['matcher-name'].lower()
-                component_obj.cpe = f"cpe:2.3:a:*:{component_obj.name}:*:*:*:*:*:*:*:*"
-                ret_arr.append(component_obj)
+        info = nuclei_scan_result.get('info', {}) or {}
+        classification = info.get('classification', {}) or {}
+        template_cpe = classification.get('cpe', '')
+        if not template_cpe:
+            metadata = info.get('metadata', {}) or {}
+            vendor = str(metadata.get('vendor', '')).strip()
+            product = str(metadata.get('product', '')).strip()
+            if vendor and product:
+                template_cpe = f"cpe:2.3:a:{vendor}:{product}:*:*:*:*:*:*:*:*"
 
-        elif template_id.startswith("cve-"):
+        matcher_name = nuclei_scan_result.get('matcher-name', '')
+        matcher_cpe = nuclei_scan_result.get('matcher-cpe', '')
+        if matcher_name:
+            # Multi-matcher templates (tech-detect, fingerprinthub, etc.) fire once
+            # per matched technology with a named matcher. Prefer the per-matcher
+            # CPE emitted by our modified nuclei build, falling back to the
+            # template-level CPE, then a wildcard.
+            component_obj = data_model.WebComponent(parent_id=port_id)
+            component_obj.collection_tool_instance_id = tool_instance_id
+            component_obj.name = matcher_name.lower()
+            component_obj.cpe = (
+                matcher_cpe
+                or template_cpe
+                or f"cpe:2.3:a:*:{component_obj.name}:*:*:*:*:*:*:*:*"
+            )
+            ret_arr.append(component_obj)
+        elif template_cpe:
+            # Individual detect templates (e.g. angular-detect) have no named
+            # matcher but carry a CPE in info.classification.
+            component_obj = data_model.WebComponent(parent_id=port_id)
+            component_obj.collection_tool_instance_id = tool_instance_id
+            component_obj.name = (info.get('name') or template_id).lower()
+            component_obj.cpe = template_cpe
+            ret_arr.append(component_obj)
+
+        if template_id.startswith("cve-"):
             vuln_obj = data_model.Vuln(parent_id=port_id)
             vuln_obj.collection_tool_instance_id = tool_instance_id
             vuln_obj.name = template_id

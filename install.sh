@@ -109,12 +109,21 @@ install_packages libssl-dev libpcap-dev masscan autoconf build-essential
 # install nmap
 cd /tmp; curl -k -s https://api.github.com/repos/securifera/nmap/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf nmap*.tar.gz -C / ; sudo rm nmap*.tar.gz
 
-# Install nuclei
-cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o nuclei*.zip; sudo mv nuclei /usr/local/bin/ ; sudo rm nuclei*.zip
-sudo chmod +x /usr/local/bin/nuclei
+# Install naabu
+cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/naabu/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o naabu*.zip; sudo mv naabu /usr/local/bin/ ; sudo rm naabu*.zip
+sudo chmod +x /usr/local/bin/naabu
 
-# Download nuclei templates so the template index exists on first run
-sudo nuclei -update-templates -silent 2>/dev/null || true
+# Install nuclei (built from securifera fork)
+cd /tmp
+git clone -c http.sslVerify=false https://github.com/securifera/nuclei.git
+cd nuclei
+go build -buildvcs=false -o /tmp/nuclei ./cmd/nuclei
+sudo mv /tmp/nuclei /usr/local/bin/nuclei
+sudo chmod +x /usr/local/bin/nuclei
+cd /tmp; rm -rf /tmp/nuclei
+
+# Clone our nuclei-templates fork so the scanner only uses our curated templates
+sudo git clone -c http.sslVerify=false https://github.com/securifera/nuclei-templates.git /root/nuclei-templates
 
 # Install gau
 cd /tmp; curl -k -s https://api.github.com/repos/lc/gau/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf gau*.tar.gz ; sudo mv gau /usr/local/bin/ ; sudo rm gau*.tar.gz
@@ -132,9 +141,21 @@ sudo mv /tmp/phantomjs /usr/bin
 python3 -m build
 python3 -m pip install dist/pyshot*.whl
 
-# Install HTTPX
-cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/httpx/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o httpx*.zip; sudo mv httpx /usr/local/bin/ ; sudo rm httpx*.zip
+# Install Go (required to build httpx from source)
+if ! command -v go &>/dev/null; then
+    GO_VERSION=$(curl -s https://go.dev/VERSION?m=text | head -1)
+    cd /tmp; wget -q "https://go.dev/dl/${GO_VERSION}.linux-amd64.tar.gz"; sudo tar -C /usr/local -xzf "${GO_VERSION}.linux-amd64.tar.gz"; rm "${GO_VERSION}.linux-amd64.tar.gz"
+    export PATH=$PATH:/usr/local/go/bin
+fi
+
+# Install HTTPX (built from securifera fork)
+cd /tmp
+git clone -c http.sslVerify=false https://github.com/securifera/httpx.git
+cd httpx
+go build -o /tmp/httpx ./cmd/httpx
+sudo mv /tmp/httpx /usr/local/bin/httpx
 sudo chmod +x /usr/local/bin/httpx
+cd /tmp; rm -rf /tmp/httpx
 
 # Install Subfinder
 cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/subfinder/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o subfinder*.zip; sudo mv subfinder /usr/local/bin/; sudo rm subfinder*.zip

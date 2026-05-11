@@ -30,7 +30,8 @@ def mock_update_collector_and_session_key():
                                                          'crapsecrets': '323482209708942791672081599309763638894',
                                                          'netexec': '323482209708942791672081599309763638895',
                                                          'metasploit': '323482209708942791672081599309763638896',
-                                                         'sqlmap': '323482209708942791672081599309763638897'}}) as mock_update_collector, \
+                                                         'sqlmap': '323482209708942791672081599309763638897',
+                                                         'naabu': '323482209708942791672081599309763638898'}}) as mock_update_collector, \
             patch.object(ApiClient, '_init_session_key', return_value=b'mock_session_key') as mock_init_session_key, \
             patch.object(ReconManager, 'update_scan_status', return_value=''):
         yield mock_update_collector, mock_init_session_key
