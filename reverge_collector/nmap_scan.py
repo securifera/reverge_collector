@@ -157,6 +157,7 @@ class Nmap(ToolSpec):
             # Parse the output - format is:
             # script-name
             # Categories: cat1 cat2 cat3
+            # CPE: cpe:2.3:a:vendor:product:*:*:*:*:*:*:*:*    (optional, may repeat)
             # https://nmap.org/nsedoc/scripts/script-name.html
             #   Description (potentially multi-line, indented with tabs)
             # (blank line)
@@ -181,19 +182,29 @@ class Nmap(ToolSpec):
                     if i < len(lines) and lines[i].startswith('Categories:'):
                         categories = lines[i].replace(
                             'Categories:', '').strip()
+                        i += 1
                     else:
                         categories = ''
 
-                    # Line 3: URL
-                    i += 1
+                    # Optional: one or more `CPE:` lines (from cpe = "..." in .nse).
+                    # If the script declares multiple CPEs (Lua table), each emits
+                    # its own line; we keep the first since CollectionModule.cpe
+                    # is a single string.
+                    cpe = ''
+                    while i < len(lines) and lines[i].startswith('CPE:'):
+                        if not cpe:
+                            cpe = lines[i].replace('CPE:', '').strip()
+                        i += 1
+
+                    # Next: URL
                     if i < len(lines) and lines[i].startswith('http'):
                         url = lines[i].strip()
+                        i += 1
                     else:
                         url = ''
 
                     # Lines 4+: Description (indented lines until empty line)
                     description_parts = []
-                    i += 1
                     while i < len(lines):
                         if not lines[i].strip():
                             # Empty line marks end of this script entry
@@ -207,6 +218,8 @@ class Nmap(ToolSpec):
                     module.name = script_name
                     module.description = ' '.join(description_parts).strip()
                     module.args = f"--script +{script_name}"
+                    if cpe:
+                        module.cpe = cpe
                     modules.append(module)
 
                 i += 1
