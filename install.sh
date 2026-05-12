@@ -205,9 +205,32 @@ pipx ensurepath
 pipx install git+https://github.com/securifera/NetExec
 ~/.local/bin/netexec --version
 
-# Install metasploit
+# Install metasploit.  The msfinstall script just bootstraps an apt repo and
+# installs the rapid7 omnibus .deb, which gives us bundled Ruby, gems, postgres,
+# and the bin/ wrappers under /opt/metasploit-framework.  We keep all of that
+# but swap the framework code itself for our securifera fork below.
 cd /tmp
 curl https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > msfinstall && chmod 755 msfinstall && sudo ./msfinstall
+
+# Pin the apt package so `apt upgrade` won't reinstall rapid7's framework over
+# our fork.  Run msfupdate manually if you want to refresh the omnibus deps.
+sudo apt-mark hold metasploit-framework
+
+# Replace the bundled framework with our fork and reinstall gems using the
+# omnibus Ruby/Bundler so any new/changed dependencies in the fork are picked up.
+MSF_FW_DIR=/opt/metasploit-framework/embedded/framework
+sudo rm -rf "$MSF_FW_DIR"
+sudo git clone -c http.sslVerify=false --depth 1 https://github.com/securifera/metasploit-framework.git "$MSF_FW_DIR"
+
+# Ruby 3.4.x ships stringio 3.1.2 as a default gem but the upstream gemspec pins
+# to '3.1.1', which causes a gem-activation conflict at runtime.  Relax it here.
+sudo sed -i "s/add_runtime_dependency 'stringio', '3\.1\.1'/add_runtime_dependency 'stringio', '>= 3.1.2'/" "$MSF_FW_DIR/metasploit-framework.gemspec"
+
+# Bundle must be called with the omnibus bin/ in PATH so that the 'bundle'
+# shebang (#!/usr/bin/env ruby) resolves to the omnibus Ruby 3.4, not the
+# system Ruby which may be an older version.
+cd "$MSF_FW_DIR" && sudo env PATH=/opt/metasploit-framework/embedded/bin:$PATH bundle install --jobs 4
+cd -
 
 # Create a dedicated non-root user for msfdb and the JSON RPC server.
 # msfdb explicitly refuses to run as root; all msf state lives under this user's home.

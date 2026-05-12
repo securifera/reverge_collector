@@ -78,7 +78,8 @@ def _write_cache(tool_name: str, fingerprint: str,
     payload: Dict[str, Any] = {
         "fingerprint": fingerprint,
         "modules": [
-            {"name": m.name, "description": m.description, "args": m.args}
+            {"name": m.name, "description": m.description, "args": m.args,
+             "cpe": getattr(m, 'cpe', None)}
             for m in modules
         ],
     }
@@ -103,6 +104,9 @@ def _modules_from_cache(raw: Dict[str, Any]) -> List[Any]:
         m.name = entry.get("name")
         m.description = entry.get("description")
         m.args = entry.get("args")
+        cpe = entry.get("cpe")
+        if cpe:
+            m.cpe = cpe
         modules.append(m)
     return modules
 
