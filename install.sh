@@ -41,32 +41,49 @@ gh_release_json() {
     else
         api_url="https://api.github.com/repos/${repo}/releases/tags/${tag}"
     fi
-    tmpfile=$(mktemp)
+    body_file=$(mktemp)
+    err_file=$(mktemp)
     if [ -n "$GITHUB_TOKEN" ]; then
-        http_code=$(curl -k -sS -H "Authorization: Bearer $GITHUB_TOKEN" \
+        http_code=$(curl -k -sS \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            -w '%{http_code}' -o "$tmpfile" "$api_url" 2>&1)
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -w '%{http_code}' -o "$body_file" "$api_url" 2>"$err_file")
     else
         http_code=$(curl -k -sS \
             -H "Accept: application/vnd.github+json" \
-            -w '%{http_code}' -o "$tmpfile" "$api_url" 2>&1)
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -w '%{http_code}' -o "$body_file" "$api_url" 2>"$err_file")
     fi
-    response=$(cat "$tmpfile")
-    rm -f "$tmpfile"
-    if ! echo "$response" | jq -e '.assets | length > 0' >/dev/null 2>&1; then
-        echo "ERROR: GitHub API for $repo ($tag) returned no release assets." >&2
-        echo "  endpoint: $api_url" >&2
+    # Read body straight from file so we don't round-trip a large JSON
+    # response through a shell variable (where embedded escapes or NULs
+    # can silently mangle the payload before jq sees it).
+    if ! jq -e '.assets | length > 0' "$body_file" >/dev/null 2>&1; then
+        echo "ERROR: GitHub API for $repo ($tag) returned no usable release assets." >&2
+        echo "  endpoint:  $api_url" >&2
         echo "  http_code: $http_code" >&2
-        echo "  token: $([ -n "$GITHUB_TOKEN" ] && echo "present (${#GITHUB_TOKEN} chars)" || echo "absent")" >&2
-        echo "  response (first 800 chars):" >&2
-        echo "$response" | head -c 800 | sed 's/^/    /' >&2
+        echo "  token:     $([ -n "$GITHUB_TOKEN" ] && echo "present (${#GITHUB_TOKEN} chars)" || echo "absent")" >&2
+        echo "  body_size: $(wc -c < "$body_file") bytes" >&2
+        echo "  asset_count (jq):  $(jq -r '.assets | length' "$body_file" 2>&1 | head -c 200)" >&2
+        echo "  asset_names (jq):  $(jq -r '[.assets[]?.name] | @csv' "$body_file" 2>&1 | head -c 400)" >&2
+        if [ -s "$err_file" ]; then
+            echo "  curl stderr:" >&2
+            sed 's/^/    /' "$err_file" >&2
+        fi
+        echo "  body first 400 chars:" >&2
+        head -c 400 "$body_file" | sed 's/^/    /' >&2
+        echo "" >&2
+        echo "  body last 400 chars:" >&2
+        tail -c 400 "$body_file" | sed 's/^/    /' >&2
         echo "" >&2
         if [ -z "$GITHUB_TOKEN" ]; then
             echo "  hint: pass GITHUB_TOKEN as a docker build-arg to avoid the 60 req/hr unauthenticated rate limit." >&2
         fi
+        rm -f "$body_file" "$err_file"
         exit 1
     fi
-    echo "$response"
+    cat "$body_file"
+    rm -f "$body_file" "$err_file"
 }
 
 
