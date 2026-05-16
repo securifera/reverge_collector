@@ -24,6 +24,38 @@ verify_binary() {
     echo "  verified: $name at $path"
 }
 
+# Fetch a GitHub release JSON and validate it actually contains assets.
+# Uses GITHUB_TOKEN if set (raises rate limit from 60 → 5000 req/hr) — CI
+# Docker builds were silently rate-limited by GitHub, which returns a JSON
+# error object with no .assets field, making `jq '.assets[]'` blow up with
+# "Cannot iterate over null". The result is printed to stdout so callers
+# can pipe it to jq.
+gh_release_json() {
+    repo="$1"        # e.g. securifera/nmap or projectdiscovery/naabu
+    tag="${2:-latest}"  # 'latest' or a specific tag like 'v2.6.1'
+    if [ "$tag" = "latest" ]; then
+        api_url="https://api.github.com/repos/${repo}/releases/latest"
+    else
+        api_url="https://api.github.com/repos/${repo}/releases/tags/${tag}"
+    fi
+    if [ -n "$GITHUB_TOKEN" ]; then
+        response=$(curl -k -sS -H "Authorization: Bearer $GITHUB_TOKEN" "$api_url")
+    else
+        response=$(curl -k -sS "$api_url")
+    fi
+    if ! echo "$response" | jq -e '.assets | length > 0' >/dev/null 2>&1; then
+        msg=$(echo "$response" | jq -r '.message // "(no error message in response)"' 2>/dev/null)
+        echo "ERROR: GitHub API for $repo ($tag) returned no release assets." >&2
+        echo "  endpoint: $api_url" >&2
+        echo "  api message: $msg" >&2
+        if [ -z "$GITHUB_TOKEN" ]; then
+            echo "  hint: pass GITHUB_TOKEN as a docker build-arg to avoid the 60 req/hr unauthenticated rate limit." >&2
+        fi
+        exit 1
+    fi
+    echo "$response"
+}
+
 
 while getopts ":a:" opt; do
   case $opt in
@@ -123,7 +155,7 @@ sudo cp ./reverge_collector/scan_poller.py /opt/collector/
 install_packages libssl-dev libpcap-dev masscan autoconf build-essential
 
 # install nmap
-cd /tmp; curl -k -s https://api.github.com/repos/securifera/nmap/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf nmap*.tar.gz -C / ; sudo rm nmap*.tar.gz
+cd /tmp; gh_release_json securifera/nmap | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf nmap*.tar.gz -C / ; sudo rm nmap*.tar.gz
 verify_binary nmap /usr/local/bin/nmap
 
 # Install naabu — pinned to v2.6.1, the last release that still implements
@@ -132,7 +164,7 @@ verify_binary nmap /usr/local/bin/nmap
 # (projectdiscovery moved that capability behind their cloud platform).
 # naabu_scan.py defaults to '-sD -sV', so unpinned latest breaks every scan.
 NAABU_VERSION="v2.6.1"
-cd /tmp; curl -k -s "https://api.github.com/repos/projectdiscovery/naabu/releases/tags/${NAABU_VERSION}" | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o naabu*.zip; sudo mv naabu /usr/local/bin/ ; sudo rm naabu*.zip
+cd /tmp; gh_release_json projectdiscovery/naabu "${NAABU_VERSION}" | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o naabu*.zip; sudo mv naabu /usr/local/bin/ ; sudo rm naabu*.zip
 sudo chmod +x /usr/local/bin/naabu
 verify_binary naabu /usr/local/bin/naabu
 
@@ -160,7 +192,7 @@ verify_binary nuclei /usr/local/bin/nuclei
 sudo git clone -c http.sslVerify=false https://github.com/securifera/nuclei-templates.git /root/nuclei-templates
 
 # Install gau
-cd /tmp; curl -k -s https://api.github.com/repos/lc/gau/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf gau*.tar.gz ; sudo mv gau /usr/local/bin/ ; sudo rm gau*.tar.gz
+cd /tmp; gh_release_json lc/gau | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf gau*.tar.gz ; sudo mv gau /usr/local/bin/ ; sudo rm gau*.tar.gz
 sudo chmod +x /usr/local/bin/gau
 verify_binary gau /usr/local/bin/gau
 
@@ -188,7 +220,7 @@ cd /tmp; sudo rm -rf /tmp/httpx-src /tmp/httpx-bin
 verify_binary httpx /usr/local/bin/httpx
 
 # Install Subfinder
-cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/subfinder/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o subfinder*.zip; sudo mv subfinder /usr/local/bin/; sudo rm subfinder*.zip
+cd /tmp; gh_release_json projectdiscovery/subfinder | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o subfinder*.zip; sudo mv subfinder /usr/local/bin/; sudo rm subfinder*.zip
 sudo chmod +x /usr/local/bin/subfinder
 verify_binary subfinder /usr/local/bin/subfinder
 
@@ -200,7 +232,7 @@ else
 fi
 
 # Install FeroxBuster
-cd /tmp; curl -k -s https://api.github.com/repos/epi052/feroxbuster/releases/latest | jq -r ".assets[] | select(.name | contains(\"$ferox_version-feroxbuster.zip\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o *feroxbuster*.zip; sudo mv feroxbuster /usr/local/bin/ ; sudo rm *feroxbuster*.zip
+cd /tmp; gh_release_json epi052/feroxbuster | jq -r ".assets[] | select(.name | contains(\"$ferox_version-feroxbuster.zip\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o *feroxbuster*.zip; sudo mv feroxbuster /usr/local/bin/ ; sudo rm *feroxbuster*.zip
 sudo chmod +x /usr/local/bin/feroxbuster
 verify_binary feroxbuster /usr/local/bin/feroxbuster
 

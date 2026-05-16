@@ -16,6 +16,11 @@ RUN apt update
 RUN apt install sudo -y
 COPY . /tmp/
 RUN chmod +x /tmp/install.sh
-RUN /tmp/install.sh
+# GITHUB_TOKEN raises the GitHub API rate limit from 60 → 5000 req/hr.
+# install.sh hits the API for several tool releases in rapid succession;
+# without the token the Docker build IP gets rate-limited and tools fail
+# to install with a cryptic "jq: Cannot iterate over null" error.
+ARG GITHUB_TOKEN=""
+RUN GITHUB_TOKEN="$GITHUB_TOKEN" /tmp/install.sh
 
 CMD ["/bin/bash", "-c", "source ~/venv/bin/activate && pytest tests/"]

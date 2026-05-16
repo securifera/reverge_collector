@@ -12,7 +12,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Test
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        docker build -t pytest-chrome -f tests/Dockerfile .
+        docker build --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" -t pytest-chrome -f tests/Dockerfile .
         docker run --shm-size=2g pytest-chrome
     
