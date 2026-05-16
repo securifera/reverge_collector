@@ -559,16 +559,13 @@ def parse_shodan_output(
                                     if len(temp_val) > 0:
                                         server_version = temp_val
 
-                                    component_obj = data_model.WebComponent(
-                                        parent_id=port_id)
-                                    component_obj.collection_tool_instance_id = tool_instance_id
-                                    component_obj.name = server_tech
-                                    component_obj.cpe = f"cpe:2.3:a:*:{server_tech}:*:*:*:*:*:*:*:*"
-
+                                    comp = data_model.Cpe(parent_id=port_id)
+                                    comp.collection_tool_instance_id = tool_instance_id
+                                    comp.product = server_tech
+                                    comp.part = 'a'
                                     if server_version:
-                                        component_obj.version = server_version
-
-                                    ret_arr.append(component_obj)
+                                        comp.version = server_version
+                                    ret_arr.append(comp)
 
                     if 'favicon' in http_dict:
                         favicon_dict = http_dict['favicon']
@@ -580,18 +577,17 @@ def parse_shodan_output(
                             components_dict_obj = components_dict[component_name]
                             component_name = component_name.lower()
 
-                            component_obj = data_model.WebComponent(
-                                parent_id=port_id)
-                            component_obj.collection_tool_instance_id = tool_instance_id
-                            component_obj.name = component_name
-                            component_obj.cpe = f"cpe:2.3:a:*:{component_name}:*:*:*:*:*:*:*:*"
+                            comp = data_model.Cpe(parent_id=port_id)
+                            comp.collection_tool_instance_id = tool_instance_id
+                            comp.product = component_name
+                            comp.part = 'a'
 
                             if 'versions' in components_dict_obj:
                                 version_arr = components_dict_obj['versions']
                                 if len(version_arr) > 0:
-                                    component_obj.version = version_arr[0]
+                                    comp.version = version_arr[0]
 
-                            ret_arr.append(component_obj)
+                            ret_arr.append(comp)
 
                     if 'ssl' in service:
                         port_obj.secure = True

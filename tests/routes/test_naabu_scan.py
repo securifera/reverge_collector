@@ -191,10 +191,13 @@ class TestParseNaabuOutput:
         path = self._write_jsonl(str(tmp_path), [entry])
         records = parse_naabu_output(path)
 
-        host_records = [r for r in records if isinstance(r, __import__('reverge_collector.data_model', fromlist=['Host']).Host)]
-        port_records = [r for r in records if isinstance(r, __import__('reverge_collector.data_model', fromlist=['Port']).Port)]
-        comp_records = [r for r in records if isinstance(r, __import__('reverge_collector.data_model', fromlist=['WebComponent']).WebComponent)]
-        domain_records = [r for r in records if isinstance(r, __import__('reverge_collector.data_model', fromlist=['Domain']).Domain)]
+        from reverge_collector.data_model import Host, Port, Cpe, ApplicationProtocol, Domain
+
+        host_records = [r for r in records if isinstance(r, Host)]
+        port_records = [r for r in records if isinstance(r, Port)]
+        cpe_records = [r for r in records if isinstance(r, Cpe)]
+        proto_records = [r for r in records if isinstance(r, ApplicationProtocol)]
+        domain_records = [r for r in records if isinstance(r, Domain)]
 
         assert len(host_records) == 1
         assert host_records[0].ipv4_addr == '93.184.216.34'
@@ -206,15 +209,14 @@ class TestParseNaabuOutput:
         assert len(domain_records) == 1
         assert domain_records[0].name == 'www.example.com'
 
-        # service-level component
-        svc = next((c for c in comp_records if c.name == 'http'), None)
-        assert svc is not None
-        assert svc.cpe == 'cpe:2.3:a:*:http:*:*:*:*:*:*:*:*'
+        # service name now emitted as ApplicationProtocol
+        proto = next((p for p in proto_records if p.name == 'http'), None)
+        assert proto is not None
 
-        # product-level component with real CPE
-        prod = next((c for c in comp_records if c.name == 'apache httpd'), None)
+        # product-level component carries vendor/product extracted from the CPE
+        prod = next((c for c in cpe_records if c.product == 'apache httpd'), None)
         assert prod is not None
-        assert prod.cpe == 'cpe:2.3:a:apache:http_server:*:*:*:*:*:*:*:*'
+        assert prod.vendor == 'apache'
 
     def test_tls_port_marked_secure(self, tmp_path):
         entry = {
@@ -234,11 +236,12 @@ class TestParseNaabuOutput:
         port_records = [r for r in records if isinstance(r, Port)]
         assert port_records[0].secure is True
 
-        # When product == 'nginx' and service name == 'https', both components emitted
-        from reverge_collector.data_model import WebComponent
-        comp_records = [r for r in records if isinstance(r, WebComponent)]
-        assert any(c.name == 'https' for c in comp_records)
-        assert any(c.name == 'nginx' for c in comp_records)
+        # service name == 'https' → ApplicationProtocol; product 'nginx' → Cpe
+        from reverge_collector.data_model import Cpe, ApplicationProtocol
+        cpe_records = [r for r in records if isinstance(r, Cpe)]
+        proto_records = [r for r in records if isinstance(r, ApplicationProtocol)]
+        assert any(p.name == 'https' for p in proto_records)
+        assert any(c.product == 'nginx' for c in cpe_records)
 
     def test_version_populated(self, tmp_path):
         entry = {
@@ -255,17 +258,17 @@ class TestParseNaabuOutput:
         path = self._write_jsonl(str(tmp_path), [entry])
         records = parse_naabu_output(path)
 
-        from reverge_collector.data_model import WebComponent
-        comp_records = [r for r in records if isinstance(r, WebComponent)]
-        # Two components: generic 'ssh' service + specific 'openssh' product
-        assert len(comp_records) == 2
-        prod = next((c for c in comp_records if c.name == 'openssh'), None)
+        from reverge_collector.data_model import Cpe, ApplicationProtocol
+        cpe_records = [r for r in records if isinstance(r, Cpe)]
+        proto_records = [r for r in records if isinstance(r, ApplicationProtocol)]
+        # service 'ssh' → ApplicationProtocol; product 'openssh' → Cpe
+        prod = next((c for c in cpe_records if c.product == 'openssh'), None)
         assert prod is not None
-        assert prod.version == '9.6p1 ubuntu 3ubuntu13.16'
-        assert prod.cpe == 'cpe:2.3:a:openbsd:openssh:9.6p1:*:*:*:*:*:*:*'
-        svc = next((c for c in comp_records if c.name == 'ssh'), None)
+        # The naabu-provided CPE 2.2 string is parsed into vendor/product/version
+        assert prod.vendor == 'openbsd'
+        assert prod.version == '9.6p1'
+        svc = next((p for p in proto_records if p.name == 'ssh'), None)
         assert svc is not None
-        assert svc.cpe == 'cpe:2.3:a:*:ssh:*:*:*:*:*:*:*:*'
 
     def test_no_cpes_uses_generic(self, tmp_path):
         entry = {
@@ -281,12 +284,13 @@ class TestParseNaabuOutput:
         path = self._write_jsonl(str(tmp_path), [entry])
         records = parse_naabu_output(path)
 
-        from reverge_collector.data_model import WebComponent
-        comp_records = [r for r in records if isinstance(r, WebComponent)]
-        # product is empty so only the service-name component is emitted
-        assert len(comp_records) == 1
-        assert comp_records[0].name == 'http-proxy'
-        assert comp_records[0].cpe == 'cpe:2.3:a:*:http-proxy:*:*:*:*:*:*:*:*'
+        from reverge_collector.data_model import Cpe, ApplicationProtocol
+        cpe_records = [r for r in records if isinstance(r, Cpe)]
+        proto_records = [r for r in records if isinstance(r, ApplicationProtocol)]
+        # product is empty so only the service-name protocol is emitted
+        assert len(cpe_records) == 0
+        assert len(proto_records) == 1
+        assert proto_records[0].name == 'http-proxy'
 
     def test_skips_invalid_json_lines(self, tmp_path):
         path = os.path.join(str(tmp_path), 'naabu_out.jsonl')

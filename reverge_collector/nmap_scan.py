@@ -524,24 +524,28 @@ def parse_nmap_xml(
 
             svc_dict: Dict[str, str] = svc.service_dict
 
+            # nmap service.name (e.g. "http", "ssh") is a protocol label —
+            # routed into ApplicationProtocol rather than Cpe.
             service_name: str = svc_dict.get("name", "")
             if service_name:
-                component_name = service_name.lower().strip()
-                if component_name and component_name != "unknown":
-                    comp = data_model.WebComponent(parent_id=port_id)
-                    comp.collection_tool_instance_id = tool_instance_id
-                    comp.name = component_name
-                    comp.cpe = f"cpe:2.3:a:*:{component_name}:*:*:*:*:*:*:*:*"
-                    ret_arr.append(comp)
+                proto_name = service_name.lower().strip()
+                if proto_name and proto_name != "unknown":
+                    proto = data_model.ApplicationProtocol(parent_id=port_id)
+                    proto.collection_tool_instance_id = tool_instance_id
+                    proto.name = proto_name
+                    ret_arr.append(proto)
 
+            # nmap service.product (e.g. "Apache httpd") is the actual software
+            # → emit as Cpe. Vendor is left empty; nmap doesn't reliably split
+            # vendor from product in this field.
             product: str = svc_dict.get("product", "")
             if product:
-                component_name = product.replace(" httpd", "").lower().strip()
-                if component_name and component_name != "unknown":
-                    comp = data_model.WebComponent(parent_id=port_id)
+                product_name = product.replace(" httpd", "").lower().strip()
+                if product_name and product_name != "unknown":
+                    comp = data_model.Cpe(parent_id=port_id)
                     comp.collection_tool_instance_id = tool_instance_id
-                    comp.name = component_name
-                    comp.cpe = f"cpe:2.3:a:*:{component_name}:*:*:*:*:*:*:*:*"
+                    comp.product = product_name
+                    comp.part = 'a'
                     version_str: str = svc_dict.get("version", "")
                     if version_str:
                         comp.version = version_str
@@ -619,11 +623,10 @@ def parse_nmap_xml(
                     ret_arr.append(cert_obj)
 
                 elif "http" in script_id:
-                    comp = data_model.WebComponent(parent_id=port_id)
-                    comp.collection_tool_instance_id = tool_instance_id
-                    comp.name = "http"
-                    comp.cpe = f"cpe:2.3:a:*:{comp.name}:*:*:*:*:*:*:*:*"
-                    ret_arr.append(comp)
+                    proto = data_model.ApplicationProtocol(parent_id=port_id)
+                    proto.collection_tool_instance_id = tool_instance_id
+                    proto.name = "http"
+                    ret_arr.append(proto)
 
             for script_out in script_res:
                 if "id" not in script_out or "output" not in script_out:

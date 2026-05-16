@@ -801,6 +801,10 @@ class ServerRecordType(enum.Enum):
     SCREENSHOT = "Screenshot"
     CERTIFICATE = "Certificate"
     LIST_ITEM = "ListItem"
+    CPE = "Cpe"
+    APPLICATION_PROTOCOL = "ApplicationProtocol"
+    # Legacy alias maintained for backward compatibility with older collectors;
+    # new code should use CPE.
     WEB_COMPONENT = "WebComponent"
     SUBNET = "Subnet"
 
@@ -2357,83 +2361,159 @@ class Domain(Record):
             raise Exception('Invalid domain object: %s' % str(e))
 
 
-class WebComponent(Record):
+class Cpe(Record):
     """
-    Represents a web technology/component detected on a network port.
+    Represents a CPE (Common Platform Enumeration) entry detected on a port.
 
-    This record type stores information about web technologies, frameworks, servers,
-    or other software components detected during web scanning. Components are children
-    of Port records and help identify the technology stack of web services.
+    Holds vendor, product, version, and part fields. Replaces the older
+    WebComponent record type — ``name`` is kept as a back-compat alias for
+    ``product`` so scanners that haven't been updated still work.
 
     Attributes:
-        name (str): Name of the web component (e.g., "Apache", "nginx", "WordPress")
-        version (Optional[str]): Version of the component if detected
-
-    Example:
-        >>> component = WebComponent(parent_id="port_123")
-        >>> component.name = "Apache"
-        >>> component.version = "2.4.41"
+        vendor (str): CPE vendor field (e.g. "apache"); '' when unknown
+        product (str): CPE product field (e.g. "tomcat")
+        version (Optional[str]): Version string when known
+        part (str): 'a' for application (default), 'o' for OS, 'h' for hardware
     """
 
     _indices = [
         ('component_port_id_map', lambda r: r.parent.id,                     'list'),
         ('component_name_port_id_map',
-         lambda r: WebComponent._component_name_key(r), 'list_value'),
+         lambda r: Cpe._component_name_key(r), 'list_value'),
         ('component_map', lambda r: r.id,                            'map'),
     ]
 
     @staticmethod
     def _component_name_key(r):
-        if not r.name:
+        product = getattr(r, 'product', None) or getattr(r, 'name', None)
+        if not product:
             return None
-        key = r.name
+        key = product
         if r.version:
             key += ":" + r.version
         return (key, r.parent.id)
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
-        """
-        Initialize a WebComponent record.
-
-        Args:
-            parent_id (Optional[str]): ID of the parent Port record
-            id (Optional[str]): Unique identifier for the component record
-        """
         super().__init__(id=id, parent=Port(id=parent_id))
-        self.name: Optional[str] = None
+        self.vendor: str = ''
+        self.product: Optional[str] = None
         self.version: Optional[str] = None
-        self.cpe: Optional[str] = None
+        self.part: str = 'a'
 
-    def _data_to_jsonable(self) -> Dict[str, str]:
-        """
-        Convert web component data to JSON-serializable format.
+    # Back-compat shim: legacy scanner code reads/writes ``.name``; expose it
+    # as an alias for ``product`` so we can roll out the rename incrementally.
+    @property
+    def name(self) -> Optional[str]:
+        return self.product
 
-        Returns:
-            Dict[str, str]: Dictionary containing component name and version
-        """
-        ret: Dict[str, str] = {'name': self.name}
+    @name.setter
+    def name(self, value: Optional[str]) -> None:
+        self.product = value
+
+    @property
+    def cpe(self) -> Optional[str]:
+        """Return the assembled CPE 2.3 string (or None if product is missing)."""
+        if not self.product:
+            return None
+        vendor = self.vendor or '*'
+        version = self.version or '*'
+        return "cpe:2.3:%s:%s:%s:%s:*:*:*:*:*:*:*" % (
+            self.part or 'a', vendor, self.product, version)
+
+    @cpe.setter
+    def cpe(self, value: Optional[str]) -> None:
+        """Setter retained for back-compat; parses a CPE 2.3 string into fields."""
+        if not value:
+            return
+        try:
+            s = value.strip()
+            if not s.lower().startswith('cpe:2.3:'):
+                return
+            fields = s.split(':')
+            if len(fields) < 6:
+                return
+            self.part = (fields[2] or 'a').lower() if fields[2] in (
+                'a', 'o', 'h') else 'a'
+            vendor = fields[3] or ''
+            self.vendor = '' if vendor in ('*', '-') else vendor
+            product = fields[4] or ''
+            if product and product not in ('*', '-'):
+                self.product = product
+            version_raw = fields[5] or ''
+            self.version = None if version_raw in (
+                '*', '-', '') else version_raw
+        except Exception:
+            return
+
+    def _data_to_jsonable(self) -> Dict[str, Any]:
+        ret: Dict[str, Any] = {
+            'vendor': self.vendor or '',
+            'product': self.product,
+            'part': self.part or 'a',
+        }
+        # Emit 'name' too for back-compat with pre-refactor reverge instances.
+        if self.product:
+            ret['name'] = self.product
         if self.version is not None:
             ret['version'] = self.version
-        if self.cpe is not None:
-            ret['cpe'] = self.cpe
         return ret
 
     def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
-        """
-        Populate web component data from JSON dictionary.
-
-        Args:
-            input_data_dict (Dict[str, Any]): Dictionary containing component data
-
-        Raises:
-            Exception: If required component data is missing or invalid
-        """
         try:
-            self.name = input_data_dict['name']
+            self.vendor = input_data_dict.get('vendor', '') or ''
+            # Accept either legacy 'name' or new 'product'
+            self.product = input_data_dict.get(
+                'product') or input_data_dict.get('name')
+            if not self.product:
+                raise KeyError('product')
             if 'version' in input_data_dict:
                 self.version = input_data_dict['version']
+            self.part = input_data_dict.get('part', 'a') or 'a'
         except Exception as e:
-            raise Exception('Invalid component object: %s' % str(e))
+            raise Exception('Invalid CPE object: %s' % str(e))
+
+
+# Back-compat alias: existing scanners import ``data_model.WebComponent``.
+# New code should prefer ``Cpe`` directly.
+WebComponent = Cpe
+
+
+class ApplicationProtocol(Record):
+    """
+    Represents an application-layer protocol detected on a port.
+
+    Independent of CPE — protocols (http, ssh, smb, rmi, ftp, etc.) are
+    emitted in a separate scan-payload list and ingested via a separate
+    bulk-insert function on the reverge side.
+
+    Attributes:
+        name (str): Protocol name, lowercase (e.g. "http", "ssh")
+        description (Optional[str]): Optional human-readable description
+    """
+
+    _indices = [
+        ('application_protocol_port_id_map', lambda r: r.parent.id, 'list'),
+        ('application_protocol_map',         lambda r: r.id,        'map'),
+    ]
+
+    def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
+        super().__init__(id=id, parent=Port(id=parent_id))
+        self.name: Optional[str] = None
+        self.description: Optional[str] = None
+
+    def _data_to_jsonable(self) -> Dict[str, Any]:
+        ret: Dict[str, Any] = {'name': self.name}
+        if self.description is not None:
+            ret['description'] = self.description
+        return ret
+
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        try:
+            self.name = input_data_dict['name']
+            if 'description' in input_data_dict:
+                self.description = input_data_dict['description']
+        except Exception as e:
+            raise Exception('Invalid ApplicationProtocol object: %s' % str(e))
 
 
 class OperatingSystem(Record):
@@ -3508,7 +3588,10 @@ RECORD_REGISTRY: Dict[str, Any] = {
     'domain': lambda id, parent_id: Domain(id=id, parent_id=parent_id),
     'listitem': lambda id, parent_id: ListItem(id=id),
     'screenshot': lambda id, parent_id: Screenshot(id=id),
-    'webcomponent': lambda id, parent_id: WebComponent(id=id, parent_id=parent_id),
+    'cpe': lambda id, parent_id: Cpe(id=id, parent_id=parent_id),
+    'applicationprotocol': lambda id, parent_id: ApplicationProtocol(id=id, parent_id=parent_id),
+    # Legacy alias retained so older exports still deserialize.
+    'webcomponent': lambda id, parent_id: Cpe(id=id, parent_id=parent_id),
     'operatingsystem': lambda id, parent_id: OperatingSystem(id=id, parent_id=parent_id),
     'vuln': lambda id, parent_id: Vuln(id=id, parent_id=parent_id),
     'httpendpoint': lambda id, parent_id: HttpEndpoint(id=id, parent_id=parent_id),

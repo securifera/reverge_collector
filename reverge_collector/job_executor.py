@@ -3,10 +3,8 @@ Job Executor — handles ad-hoc CollectorJob tasks.
 
 Each job_type maps to a handler function that receives the parsed args
 dict and returns a result dict with output_text, exit_code, output_type.
-
-Handlers mirror the capabilities previously exposed by the standalone
-Collector MCP Server (mcp_server.py): shell execution, file read/write,
-directory listing, and Python script execution.
+Handlers cover shell execution, file read/write, directory listing, and
+Python script execution.
 """
 
 import base64

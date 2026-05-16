@@ -485,12 +485,15 @@ def parse_httpx_output(
             if cert_obj and domain_used in cert_obj.domain_name_id_map:
                 endpoint_domain_id = cert_obj.domain_name_id_map[domain_used]
 
-            component_obj = data_model.WebComponent(parent_id=port_obj.id)
-            component_obj.collection_tool_instance_id = tool_instance_id
-            component_obj.name = 'http'
-            ret_arr.append(component_obj)
+            # http is a protocol label, not a CPE
+            proto_obj = data_model.ApplicationProtocol(parent_id=port_obj.id)
+            proto_obj.collection_tool_instance_id = tool_instance_id
+            proto_obj.name = 'http'
+            ret_arr.append(proto_obj)
 
-            # Build a case-insensitive product -> CPE map from the cpe array
+            # Build a case-insensitive product -> CPE map from the cpe array.
+            # httpx returns full CPE 2.3 strings for known software — let the
+            # Cpe class parse vendor/product/version from them via the .cpe setter.
             cpe_map: Dict[str, str] = {}
             if 'cpe' in httpx_scan:
                 for cpe_entry in httpx_scan['cpe']:
@@ -499,20 +502,21 @@ def parse_httpx_output(
 
             if 'tech' in httpx_scan:
                 for tech_entry in httpx_scan['tech']:
-                    component_obj = data_model.WebComponent(
-                        parent_id=port_obj.id)
-                    component_obj.collection_tool_instance_id = tool_instance_id
+                    comp = data_model.Cpe(parent_id=port_obj.id)
+                    comp.collection_tool_instance_id = tool_instance_id
+                    comp.part = 'a'
                     if ":" in tech_entry:
                         tech_parts = tech_entry.split(":", 1)
-                        component_obj.name = tech_parts[0].lower()
-                        component_obj.version = tech_parts[1].lower()
+                        comp.product = tech_parts[0].lower()
+                        comp.version = tech_parts[1].lower()
                     else:
-                        component_obj.name = tech_entry.lower()
-                    component_obj.cpe = cpe_map.get(
-                        component_obj.name,
-                        f"cpe:2.3:a:*:{component_obj.name}:*:*:*:*:*:*:*:*"
-                    )
-                    ret_arr.append(component_obj)
+                        comp.product = tech_entry.lower()
+                    # Prefer the structured CPE string from httpx when available —
+                    # it carries vendor that we can't otherwise infer.
+                    structured_cpe = cpe_map.get(comp.product)
+                    if structured_cpe:
+                        comp.cpe = structured_cpe
+                    ret_arr.append(comp)
 
             if 'raw_header' in httpx_scan:
                 output = httpx_scan['raw_header']
