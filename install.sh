@@ -29,7 +29,10 @@ verify_binary() {
 # Docker builds were silently rate-limited by GitHub, which returns a JSON
 # error object with no .assets field, making `jq '.assets[]'` blow up with
 # "Cannot iterate over null". The result is printed to stdout so callers
-# can pipe it to jq.
+# can pipe it to jq. On failure we dump the HTTP code and the response body
+# itself, since the API has many failure modes (rate limit, auth error,
+# upstream HTML error page, empty body) and a generic "no assets" message
+# doesn't tell you which.
 gh_release_json() {
     repo="$1"        # e.g. securifera/nmap or projectdiscovery/naabu
     tag="${2:-latest}"  # 'latest' or a specific tag like 'v2.6.1'
@@ -38,16 +41,26 @@ gh_release_json() {
     else
         api_url="https://api.github.com/repos/${repo}/releases/tags/${tag}"
     fi
+    tmpfile=$(mktemp)
     if [ -n "$GITHUB_TOKEN" ]; then
-        response=$(curl -k -sS -H "Authorization: Bearer $GITHUB_TOKEN" "$api_url")
+        http_code=$(curl -k -sS -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -w '%{http_code}' -o "$tmpfile" "$api_url" 2>&1)
     else
-        response=$(curl -k -sS "$api_url")
+        http_code=$(curl -k -sS \
+            -H "Accept: application/vnd.github+json" \
+            -w '%{http_code}' -o "$tmpfile" "$api_url" 2>&1)
     fi
+    response=$(cat "$tmpfile")
+    rm -f "$tmpfile"
     if ! echo "$response" | jq -e '.assets | length > 0' >/dev/null 2>&1; then
-        msg=$(echo "$response" | jq -r '.message // "(no error message in response)"' 2>/dev/null)
         echo "ERROR: GitHub API for $repo ($tag) returned no release assets." >&2
         echo "  endpoint: $api_url" >&2
-        echo "  api message: $msg" >&2
+        echo "  http_code: $http_code" >&2
+        echo "  token: $([ -n "$GITHUB_TOKEN" ] && echo "present (${#GITHUB_TOKEN} chars)" || echo "absent")" >&2
+        echo "  response (first 800 chars):" >&2
+        echo "$response" | head -c 800 | sed 's/^/    /' >&2
+        echo "" >&2
         if [ -z "$GITHUB_TOKEN" ]; then
             echo "  hint: pass GITHUB_TOKEN as a docker build-arg to avoid the 60 req/hr unauthenticated rate limit." >&2
         fi
@@ -163,8 +176,11 @@ verify_binary nmap /usr/local/bin/nmap
 # CLI but emit "service discovery feature is not implemented" at runtime
 # (projectdiscovery moved that capability behind their cloud platform).
 # naabu_scan.py defaults to '-sD -sV', so unpinned latest breaks every scan.
-NAABU_VERSION="v2.6.1"
-cd /tmp; gh_release_json projectdiscovery/naabu "${NAABU_VERSION}" | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o naabu*.zip; sudo mv naabu /usr/local/bin/ ; sudo rm naabu*.zip
+# Since the version is pinned, fetch the asset by direct URL — no API call,
+# no rate-limit risk, no token needed.
+NAABU_VERSION="2.6.1"
+naabu_zip="naabu_${NAABU_VERSION}_${arch}.zip"
+cd /tmp; sudo wget --no-check-certificate "https://github.com/projectdiscovery/naabu/releases/download/v${NAABU_VERSION}/${naabu_zip}"; sudo unzip -o "${naabu_zip}"; sudo mv naabu /usr/local/bin/; sudo rm "${naabu_zip}"
 sudo chmod +x /usr/local/bin/naabu
 verify_binary naabu /usr/local/bin/naabu
 
