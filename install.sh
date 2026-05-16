@@ -2,10 +2,26 @@
 arch="linux_amd64"
 install_packages() {
     # Wait for the dpkg lock to be released.
-    while ps -opid= -C apt-get > /dev/null; do sleep 10; done;    
+    while ps -opid= -C apt-get > /dev/null; do sleep 10; done;
     sudo apt-get update
     while ps -opid= -C apt-get > /dev/null; do sleep 10; done;
     sudo DEBIAN_FRONTEND=noninteractive apt-get -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y $*
+}
+
+# Verify that a freshly installed tool actually landed somewhere usable.
+# Without this, a silent install failure (bad build, wrong release asset,
+# directory-vs-file mv collision, etc.) shows up much later as a confusing
+# pytest error like "sudo: /usr/local/bin/X: command not found". Call right
+# after every binary install step.
+verify_binary() {
+    name="$1"
+    path="$2"
+    if [ ! -x "$path" ] || [ -d "$path" ]; then
+        echo "INSTALL ERROR: $name not installed correctly at $path" >&2
+        ls -la "$path" >&2 2>/dev/null || echo "  (path does not exist)" >&2
+        exit 1
+    fi
+    echo "  verified: $name at $path"
 }
 
 
@@ -108,10 +124,17 @@ install_packages libssl-dev libpcap-dev masscan autoconf build-essential
 
 # install nmap
 cd /tmp; curl -k -s https://api.github.com/repos/securifera/nmap/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf nmap*.tar.gz -C / ; sudo rm nmap*.tar.gz
+verify_binary nmap /usr/local/bin/nmap
 
-# Install naabu
-cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/naabu/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o naabu*.zip; sudo mv naabu /usr/local/bin/ ; sudo rm naabu*.zip
+# Install naabu — pinned to v2.6.1, the last release that still implements
+# -sD/-sV service discovery natively. Newer releases leave the flags in the
+# CLI but emit "service discovery feature is not implemented" at runtime
+# (projectdiscovery moved that capability behind their cloud platform).
+# naabu_scan.py defaults to '-sD -sV', so unpinned latest breaks every scan.
+NAABU_VERSION="v2.6.1"
+cd /tmp; curl -k -s "https://api.github.com/repos/projectdiscovery/naabu/releases/tags/${NAABU_VERSION}" | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o naabu*.zip; sudo mv naabu /usr/local/bin/ ; sudo rm naabu*.zip
 sudo chmod +x /usr/local/bin/naabu
+verify_binary naabu /usr/local/bin/naabu
 
 # Install Go (required to build nuclei and httpx from source)
 if ! command -v go &>/dev/null; then
@@ -120,14 +143,18 @@ if ! command -v go &>/dev/null; then
     export PATH=$PATH:/usr/local/go/bin
 fi
 
-# Install nuclei (built from securifera fork)
+# Install nuclei (built from securifera fork). Clone into a distinct source
+# directory so `go build -o /tmp/nuclei-bin` doesn't collide with the clone
+# path — previously `go build -o /tmp/nuclei` wrote the binary INSIDE the
+# clone dir, and the subsequent `mv` relocated the whole directory tree.
 cd /tmp
-git clone -c http.sslVerify=false https://github.com/securifera/nuclei.git
-cd nuclei
-go build -buildvcs=false -o /tmp/nuclei ./cmd/nuclei
-sudo mv /tmp/nuclei /usr/local/bin/nuclei
-sudo chmod +x /usr/local/bin/nuclei
-cd /tmp; rm -rf /tmp/nuclei
+sudo rm -rf /tmp/nuclei-src /tmp/nuclei-bin
+git clone -c http.sslVerify=false https://github.com/securifera/nuclei.git /tmp/nuclei-src
+cd /tmp/nuclei-src
+go build -buildvcs=false -o /tmp/nuclei-bin ./cmd/nuclei
+sudo install -m 0755 /tmp/nuclei-bin /usr/local/bin/nuclei
+cd /tmp; sudo rm -rf /tmp/nuclei-src /tmp/nuclei-bin
+verify_binary nuclei /usr/local/bin/nuclei
 
 # Clone our nuclei-templates fork so the scanner only uses our curated templates
 sudo git clone -c http.sslVerify=false https://github.com/securifera/nuclei-templates.git /root/nuclei-templates
@@ -135,6 +162,7 @@ sudo git clone -c http.sslVerify=false https://github.com/securifera/nuclei-temp
 # Install gau
 cd /tmp; curl -k -s https://api.github.com/repos/lc/gau/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf gau*.tar.gz ; sudo mv gau /usr/local/bin/ ; sudo rm gau*.tar.gz
 sudo chmod +x /usr/local/bin/gau
+verify_binary gau /usr/local/bin/gau
 
 # Screenshot dependencies
 install_packages fonts-liberation libgbm1 libappindicator3-1 openssl libasound2t64
@@ -148,18 +176,21 @@ sudo mv /tmp/phantomjs /usr/bin
 python3 -m build
 python3 -m pip install dist/pyshot*.whl
 
-# Install HTTPX (built from securifera fork)
+# Install HTTPX (built from securifera fork). Same go-build/mv collision as
+# nuclei above: keep clone path and binary output path distinct.
 cd /tmp
-git clone -c http.sslVerify=false https://github.com/securifera/httpx.git
-cd httpx
-go build -o /tmp/httpx ./cmd/httpx
-sudo mv /tmp/httpx /usr/local/bin/httpx
-sudo chmod +x /usr/local/bin/httpx
-cd /tmp; rm -rf /tmp/httpx
+sudo rm -rf /tmp/httpx-src /tmp/httpx-bin
+git clone -c http.sslVerify=false https://github.com/securifera/httpx.git /tmp/httpx-src
+cd /tmp/httpx-src
+go build -o /tmp/httpx-bin ./cmd/httpx
+sudo install -m 0755 /tmp/httpx-bin /usr/local/bin/httpx
+cd /tmp; sudo rm -rf /tmp/httpx-src /tmp/httpx-bin
+verify_binary httpx /usr/local/bin/httpx
 
 # Install Subfinder
 cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/subfinder/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o subfinder*.zip; sudo mv subfinder /usr/local/bin/; sudo rm subfinder*.zip
 sudo chmod +x /usr/local/bin/subfinder
+verify_binary subfinder /usr/local/bin/subfinder
 
 if [ "$arch" = "linux_arm64" ]
 then
@@ -171,6 +202,7 @@ fi
 # Install FeroxBuster
 cd /tmp; curl -k -s https://api.github.com/repos/epi052/feroxbuster/releases/latest | jq -r ".assets[] | select(.name | contains(\"$ferox_version-feroxbuster.zip\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o *feroxbuster*.zip; sudo mv feroxbuster /usr/local/bin/ ; sudo rm *feroxbuster*.zip
 sudo chmod +x /usr/local/bin/feroxbuster
+verify_binary feroxbuster /usr/local/bin/feroxbuster
 
 # Badsecrets
 #python3 -m pip install badsecrets
@@ -242,6 +274,10 @@ cd -
 # Create a dedicated non-root user for msfdb and the JSON RPC server.
 # msfdb explicitly refuses to run as root; all msf state lives under this user's home.
 sudo useradd -r -m -s /bin/bash msf 2>/dev/null || true
+
+# msfdb runs as the msf user and loads the framework via git; add the safe
+# directory for that user too so git doesn't reject the root-owned clone.
+sudo -u msf git config --global --add safe.directory /opt/metasploit-framework/embedded/framework
 
 # Initialize the embedded PostgreSQL database as the msf user.
 # msfdb manages its own postgres instance (port 5433) under ~/.msf4/db — no system
