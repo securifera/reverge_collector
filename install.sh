@@ -226,6 +226,13 @@ sudo git clone -c http.sslVerify=false --depth 1 https://github.com/securifera/m
 # to '3.1.1', which causes a gem-activation conflict at runtime.  Relax it here.
 sudo sed -i "s/add_runtime_dependency 'stringio', '3\.1\.1'/add_runtime_dependency 'stringio', '>= 3.1.2'/" "$MSF_FW_DIR/metasploit-framework.gemspec"
 
+# Mark the framework dir as safe so git doesn't reject it due to sudo ownership.
+sudo git config --global --add safe.directory "$MSF_FW_DIR"
+
+# Remove the vendored Gemfile.lock so bundler resolves gem versions fresh
+# against the omnibus Ruby (avoids conflicts like psych 5.2.6 vs 5.3.1).
+sudo rm -f "$MSF_FW_DIR/Gemfile.lock"
+
 # Bundle must be called with the omnibus bin/ in PATH so that the 'bundle'
 # shebang (#!/usr/bin/env ruby) resolves to the omnibus Ruby 3.4, not the
 # system Ruby which may be an older version.
