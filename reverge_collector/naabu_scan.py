@@ -374,36 +374,30 @@ def parse_naabu_output(
             port_id = port_obj.id
             ret_arr.append(port_obj)
 
-            # Build WebComponent records from service / product information.
-            # The 'name' field represents the protocol/service (e.g. "http", "ssh")
-            # and the 'product' field is the specific technology (e.g. "Apache httpd").
-            # Emit a generic component for the service name and, when a distinct
-            # product is present, a second specific component with the CPE.
+            # Split naabu's service vs product:
+            # - service.name (http, ssh, ...) → ApplicationProtocol
+            # - service.product (apache httpd, ...) → Cpe with optional version
             service_name: str = entry.get('name', '').lower().strip()
             product: str = entry.get('product', '').lower().strip()
             version: str = entry.get('version', '')
             cpes_raw: List[str] = entry.get('cpes', [])
 
-            # Generic service-level component (e.g. "http")
             if service_name and service_name != 'unknown':
-                svc_comp = data_model.WebComponent(parent_id=port_id)
-                svc_comp.collection_tool_instance_id = tool_instance_id
-                svc_comp.name = service_name
-                svc_comp.cpe = 'cpe:2.3:a:*:%s:*:*:*:*:*:*:*:*' % service_name
-                ret_arr.append(svc_comp)
+                proto = data_model.ApplicationProtocol(parent_id=port_id)
+                proto.collection_tool_instance_id = tool_instance_id
+                proto.name = service_name
+                ret_arr.append(proto)
 
-            # Specific product component (e.g. "apache httpd") — only when it
-            # differs from the service name so we don't create a duplicate.
             if product and product != 'unknown' and product != service_name:
-                prod_comp = data_model.WebComponent(parent_id=port_id)
-                prod_comp.collection_tool_instance_id = tool_instance_id
-                prod_comp.name = product
+                comp = data_model.Cpe(parent_id=port_id)
+                comp.collection_tool_instance_id = tool_instance_id
+                comp.product = product
+                comp.part = 'a'
                 if version:
-                    prod_comp.version = version.lower()
+                    comp.version = version.lower()
+                # Honor an explicit CPE 2.3 string from naabu (overrides product split)
                 if cpes_raw:
-                    prod_comp.cpe = _cpe22_to_cpe23(cpes_raw[0])
-                else:
-                    prod_comp.cpe = 'cpe:2.3:a:*:%s:*:*:*:*:*:*:*:*' % product
-                ret_arr.append(prod_comp)
+                    comp.cpe = _cpe22_to_cpe23(cpes_raw[0])
+                ret_arr.append(comp)
 
     return ret_arr

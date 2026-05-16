@@ -444,27 +444,28 @@ def parse_nuclei_output(
         matcher_name = nuclei_scan_result.get('matcher-name', '')
         matcher_cpe = nuclei_scan_result.get('matcher-cpe', '')
         if matcher_name:
-            # Multi-matcher templates (tech-detect, fingerprinthub, etc.) fire once
-            # per matched technology with a named matcher. Prefer the per-matcher
-            # CPE emitted by our modified nuclei build, falling back to the
-            # template-level CPE, then a wildcard.
-            component_obj = data_model.WebComponent(parent_id=port_id)
-            component_obj.collection_tool_instance_id = tool_instance_id
-            component_obj.name = matcher_name.lower()
-            component_obj.cpe = (
-                matcher_cpe
-                or template_cpe
-                or f"cpe:2.3:a:*:{component_obj.name}:*:*:*:*:*:*:*:*"
-            )
-            ret_arr.append(component_obj)
+            # Multi-matcher templates (tech-detect, fingerprinthub, etc.) fire
+            # once per matched technology with a named matcher. Prefer the
+            # per-matcher CPE emitted by our modified nuclei build, falling
+            # back to the template-level CPE. When neither is present we emit
+            # a Cpe with only product set (vendor stays empty).
+            comp = data_model.Cpe(parent_id=port_id)
+            comp.collection_tool_instance_id = tool_instance_id
+            comp.product = matcher_name.lower()
+            comp.part = 'a'
+            structured = matcher_cpe or template_cpe
+            if structured:
+                comp.cpe = structured
+            ret_arr.append(comp)
         elif template_cpe:
             # Individual detect templates (e.g. angular-detect) have no named
             # matcher but carry a CPE in info.classification.
-            component_obj = data_model.WebComponent(parent_id=port_id)
-            component_obj.collection_tool_instance_id = tool_instance_id
-            component_obj.name = (info.get('name') or template_id).lower()
-            component_obj.cpe = template_cpe
-            ret_arr.append(component_obj)
+            comp = data_model.Cpe(parent_id=port_id)
+            comp.collection_tool_instance_id = tool_instance_id
+            comp.product = (info.get('name') or template_id).lower()
+            comp.part = 'a'
+            comp.cpe = template_cpe
+            ret_arr.append(comp)
 
         if template_id.startswith("cve-"):
             vuln_obj = data_model.Vuln(parent_id=port_id)
