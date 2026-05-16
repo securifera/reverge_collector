@@ -113,6 +113,13 @@ cd /tmp; curl -k -s https://api.github.com/repos/securifera/nmap/releases/latest
 cd /tmp; curl -k -s https://api.github.com/repos/projectdiscovery/naabu/releases/latest | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo unzip -o naabu*.zip; sudo mv naabu /usr/local/bin/ ; sudo rm naabu*.zip
 sudo chmod +x /usr/local/bin/naabu
 
+# Install Go (required to build nuclei and httpx from source)
+if ! command -v go &>/dev/null; then
+    GO_VERSION=$(curl -s https://go.dev/VERSION?m=text | head -1)
+    cd /tmp; wget -q "https://go.dev/dl/${GO_VERSION}.linux-amd64.tar.gz"; sudo tar -C /usr/local -xzf "${GO_VERSION}.linux-amd64.tar.gz"; rm "${GO_VERSION}.linux-amd64.tar.gz"
+    export PATH=$PATH:/usr/local/go/bin
+fi
+
 # Install nuclei (built from securifera fork)
 cd /tmp
 git clone -c http.sslVerify=false https://github.com/securifera/nuclei.git
@@ -140,13 +147,6 @@ tar -C /tmp -xvf phantomjs-2.1.1-linux-x86_64.tar.gz
 sudo mv /tmp/phantomjs /usr/bin
 python3 -m build
 python3 -m pip install dist/pyshot*.whl
-
-# Install Go (required to build httpx from source)
-if ! command -v go &>/dev/null; then
-    GO_VERSION=$(curl -s https://go.dev/VERSION?m=text | head -1)
-    cd /tmp; wget -q "https://go.dev/dl/${GO_VERSION}.linux-amd64.tar.gz"; sudo tar -C /usr/local -xzf "${GO_VERSION}.linux-amd64.tar.gz"; rm "${GO_VERSION}.linux-amd64.tar.gz"
-    export PATH=$PATH:/usr/local/go/bin
-fi
 
 # Install HTTPX (built from securifera fork)
 cd /tmp
