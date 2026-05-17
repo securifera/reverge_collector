@@ -20,31 +20,35 @@ Functions:
 
 """
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import partial
 import json
+import logging
 import os
 import re
 import time
+import traceback
 import uuid as uuid_lib
-from typing import Dict, Any, List, Set, Optional, Union
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Set
+
 import netaddr
 import requests
-import traceback
-import logging
 
-from reverge_collector import scan_utils
-from reverge_collector import data_model
+from reverge_collector import data_model, scan_utils
 from reverge_collector.tool_spec import ToolSpec
 
 
-def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: str,
-                            additional_options: Optional[Dict[str, Any]] = None,
-                            bearer_token: str = "",
-                            msf_host: str = "127.0.0.1",
-                            msf_port: int = 8081, use_ssl: bool = False,
-                            poll_interval: float = 2.0,
-                            max_wait: int = 300) -> str:
+def execute_msfrpc_commands(
+    ip_list: List[str],
+    module_path: str,
+    output_file: str,
+    additional_options: Optional[Dict[str, Any]] = None,
+    bearer_token: str = '',
+    msf_host: str = '127.0.0.1',
+    msf_port: int = 8081,
+    use_ssl: bool = False,
+    poll_interval: float = 2.0,
+    max_wait: int = 300,
+) -> str:
     """
     Execute a Metasploit module via the JSON RPC console interface.
 
@@ -73,27 +77,26 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
         The captured console output string, or an empty string on error.
     """
     logger = logging.getLogger(__name__)
-    scheme = "https" if use_ssl else "http"
-    rpc_url = f"{scheme}://{msf_host}:{msf_port}/api/v1/json-rpc"
+    scheme = 'https' if use_ssl else 'http'
+    rpc_url = f'{scheme}://{msf_host}:{msf_port}/api/v1/json-rpc'
     headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {bearer_token}",
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {bearer_token}',
     }
 
     def _rpc_call(method: str, params: list) -> Dict[str, Any]:
         payload = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "id": str(uuid_lib.uuid4()),
-            "params": params,
+            'jsonrpc': '2.0',
+            'method': method,
+            'id': str(uuid_lib.uuid4()),
+            'params': params,
         }
-        resp = requests.post(rpc_url, json=payload, headers=headers,
-                             verify=use_ssl, timeout=30)
+        resp = requests.post(rpc_url, json=payload, headers=headers, verify=use_ssl, timeout=30)
         resp.raise_for_status()
         return resp.json()
 
     # Build datastore options dict: RHOSTS from ip_list, rest from additional_options
-    options: Dict[str, Any] = {"RHOSTS": " ".join(ip_list)}
+    options: Dict[str, Any] = {'RHOSTS': ' '.join(ip_list)}
     if additional_options:
         options.update(additional_options)
 
@@ -101,35 +104,34 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
     #             module_path, options)
 
     console_id: Optional[str] = None
-    console_output: str = ""
+    console_output: str = ''
     session_opened: bool = False
 
     try:
         # Create a dedicated console for this module run
-        create_resp = _rpc_call("console.create", [{}])
-        if "error" in create_resp:
-            logger.error("console.create failed for %s: %s",
-                         module_path, create_resp["error"])
-            return ""
-        console_id = str(create_resp.get("result", {}).get("id", ""))
+        create_resp = _rpc_call('console.create', [{}])
+        if 'error' in create_resp:
+            logger.error('console.create failed for %s: %s', module_path, create_resp['error'])
+            return ''
+        console_id = str(create_resp.get('result', {}).get('id', ''))
         if not console_id:
-            logger.error("console.create returned no id for %s", module_path)
-            return ""
+            logger.error('console.create returned no id for %s', module_path)
+            return ''
 
         # logger.debug("Console id=%s created for module %s",
         #             console_id, module_path)
 
         def _drain(max_rounds: int = 5) -> str:
             """Read from the console until it reports busy=false."""
-            out = ""
+            out = ''
             for _ in range(max_rounds):
                 time.sleep(poll_interval)
-                read_resp = _rpc_call("console.read", [console_id])
-                chunk = read_resp.get("result", {})
-                data = chunk.get("data", "")
+                read_resp = _rpc_call('console.read', [console_id])
+                chunk = read_resp.get('result', {})
+                data = chunk.get('data', '')
                 if data:
                     out += data
-                if not chunk.get("busy", True):
+                if not chunk.get('busy', True):
                     break
             return out
 
@@ -137,23 +139,23 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
         _drain(max_rounds=10)
 
         # Write all setup commands in one shot
-        _rpc_call("console.write", [console_id, f"use {module_path}\n"])
+        _rpc_call('console.write', [console_id, f'use {module_path}\n'])
         for key, val in options.items():
-            _rpc_call("console.write", [console_id, f"set {key} {val}\n"])
+            _rpc_call('console.write', [console_id, f'set {key} {val}\n'])
         # Exploit modules are run with 'check' to test exploitability without
         # setting up a full callback listener.  Auxiliary modules use 'run'.
-        run_cmd = "check" if module_path.startswith("exploit/") else "run"
-        _rpc_call("console.write", [console_id, f"{run_cmd}\n"])
+        run_cmd = 'check' if module_path.startswith('exploit/') else 'run'
+        _rpc_call('console.write', [console_id, f'{run_cmd}\n'])
 
         # Indicators that tell us the module has definitively finished without
         # waiting for busy=false (useful for exploit modules that leave a
         # reverse-TCP handler running and never go idle on their own).
         _SESSION_OPENED = re.compile(
-            r'(Meterpreter session|Command shell session|session \d+ opened)',
-            re.IGNORECASE)
+            r'(Meterpreter session|Command shell session|session \d+ opened)', re.IGNORECASE
+        )
         _EXPLOIT_ABORTED = re.compile(
-            r'(Exploit aborted|exploit failed|no session|module failed)',
-            re.IGNORECASE)
+            r'(Exploit aborted|exploit failed|no session|module failed)', re.IGNORECASE
+        )
 
         session_opened = False
 
@@ -162,9 +164,9 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
         while elapsed < max_wait:
             time.sleep(poll_interval)
             elapsed += poll_interval
-            read_resp = _rpc_call("console.read", [console_id])
-            chunk = read_resp.get("result", {})
-            data = chunk.get("data", "")
+            read_resp = _rpc_call('console.read', [console_id])
+            chunk = read_resp.get('result', {})
+            data = chunk.get('data', '')
             if data:
                 console_output += data
                 # logger.debug("[t=%.0fs console=%s] %s",
@@ -179,54 +181,55 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
                     session_opened = True
                     break
                 # Clear failure — no point waiting for busy=false
-                if _EXPLOIT_ABORTED.search(data) and not chunk.get("busy", True):
-                    logger.info("Exploit aborted for module %s — stopping poll",
-                                module_path)
+                if _EXPLOIT_ABORTED.search(data) and not chunk.get('busy', True):
+                    logger.info('Exploit aborted for module %s — stopping poll', module_path)
                     break
 
-            if not chunk.get("busy", True):
+            if not chunk.get('busy', True):
                 # Drain any buffered output that arrived just as busy cleared.
                 for _ in range(20):
                     time.sleep(poll_interval)
-                    read_resp = _rpc_call("console.read", [console_id])
-                    trailing_chunk = read_resp.get("result", {})
-                    trailing = trailing_chunk.get("data", "")
+                    read_resp = _rpc_call('console.read', [console_id])
+                    trailing_chunk = read_resp.get('result', {})
+                    trailing = trailing_chunk.get('data', '')
                     if trailing:
                         console_output += trailing
                         # logger.debug("[trailing console=%s] %s",
                         #             console_id, trailing.rstrip())
                         with open(output_file, 'w') as _fd:
                             _fd.write(console_output)
-                    if not trailing_chunk.get("busy", True) and not trailing:
+                    if not trailing_chunk.get('busy', True) and not trailing:
                         break
                 break
         else:
             logger.warning(
-                "Timed out after %.0fs waiting for module %s on console %s — "
-                "output so far:\n%s",
-                max_wait, module_path, console_id,
-                console_output[-2000:] if console_output else "(none)")
+                'Timed out after %.0fs waiting for module %s on console %s — output so far:\n%s',
+                max_wait,
+                module_path,
+                console_id,
+                console_output[-2000:] if console_output else '(none)',
+            )
 
         if not console_output.strip():
             logger.warning(
-                "Module %s produced no console output (RHOSTS=%s)",
-                module_path, options.get("RHOSTS", ""))
+                'Module %s produced no console output (RHOSTS=%s)',
+                module_path,
+                options.get('RHOSTS', ''),
+            )
 
     except Exception as e:
-        logger.error("Console execution failed for %s: %s", module_path, e)
+        logger.error('Console execution failed for %s: %s', module_path, e)
     finally:
         # Don't destroy the console if a session was opened — doing so would
         # kill the session.  Leave it for the operator to interact with.
         if console_id is not None and not session_opened:
             try:
-                _rpc_call("console.destroy", [console_id])
+                _rpc_call('console.destroy', [console_id])
                 # logger.debug("Console id=%s destroyed", console_id)
             except Exception as e:
-                logger.warning(
-                    "console.destroy failed for id=%s: %s", console_id, e)
+                logger.warning('console.destroy failed for id=%s: %s', console_id, e)
         elif session_opened:
-            logger.info(
-                "Console id=%s left open — session is active", console_id)
+            logger.info('Console id=%s left open — session is active', console_id)
 
     # Final write (covers the no-data and exception paths)
     with open(output_file, 'w') as out_fd:
@@ -236,7 +239,6 @@ def execute_msfrpc_commands(ip_list: List[str], module_path: str, output_file: s
 
 
 class Metasploit(ToolSpec):
-
     name = 'metasploit'
     description = 'Metasploit Framework is a penetration testing platform that interfaces with the msfrpc daemon to execute exploits, auxiliary modules, and post-exploitation tasks on a computer network.'
     project_url = 'https://github.com/rapid7/metasploit-framework'
@@ -300,11 +302,14 @@ class Metasploit(ToolSpec):
 
                 for line in all_output.split('\n'):
                     stripped = line.strip()
-                    if stripped.startswith('[*]') or stripped.startswith('[+]') or \
-                            stripped.startswith('[-]') or stripped.startswith('[!]'):
+                    if (
+                        stripped.startswith('[*]')
+                        or stripped.startswith('[+]')
+                        or stripped.startswith('[-]')
+                        or stripped.startswith('[!]')
+                    ):
                         content = stripped[3:].strip()
-                        ip_match = re.match(
-                            r'^(\d+\.\d+\.\d+\.\d+):(\d+)\s+-\s+', content)
+                        ip_match = re.match(r'^(\d+\.\d+\.\d+\.\d+):(\d+)\s+-\s+', content)
                         if ip_match:
                             ip = ip_match.group(1)
                             port = ip_match.group(2)
@@ -314,15 +319,15 @@ class Metasploit(ToolSpec):
                                 ip_port_map_local[ip] = port
                             ip_lines_map[ip].append(stripped)
                         else:
-                            ip_match = re.match(
-                                r'^(\d+\.\d+\.\d+\.\d+)\s+-\s+', content)
+                            ip_match = re.match(r'^(\d+\.\d+\.\d+\.\d+)\s+-\s+', content)
                             if ip_match:
                                 ip = ip_match.group(1)
                                 current_ip = ip
                                 if ip not in ip_lines_map:
                                     ip_lines_map[ip] = []
                                     ip_port_map_local[ip] = str(
-                                        metasploit_scan_entry.get('port', '0'))
+                                        metasploit_scan_entry.get('port', '0')
+                                    )
                                 ip_lines_map[ip].append(stripped)
                     elif stripped and current_ip is not None:
                         ip_lines_map[current_ip].append(stripped)
@@ -343,16 +348,15 @@ class Metasploit(ToolSpec):
 
                 for ip_address, ip_lines in ip_lines_map.items():
                     port_str = ip_port_map_local.get(
-                        ip_address,
-                        str(metasploit_scan_entry.get('port', '0')))
+                        ip_address, str(metasploit_scan_entry.get('port', '0'))
+                    )
                     hostname = ip_address
                     server_os = None
 
                     for ln in ip_lines:
                         if ln.startswith('['):
                             msg = ln[3:].strip()
-                            os_match = re.search(
-                                r'Host is running (.+?)(?:\s+\(build:|\s*$)', msg)
+                            os_match = re.search(r'Host is running (.+?)(?:\s+\(build:|\s*$)', msg)
                             if os_match:
                                 server_os = os_match.group(1).strip()
                                 break
@@ -360,9 +364,12 @@ class Metasploit(ToolSpec):
                             tbl = re.match(r'^(os\.\w+)\s{2,}(\S[^\s]*)$', ln)
                             if tbl:
                                 key, value = tbl.group(1), tbl.group(2).strip()
-                                if key == 'os.product' and not server_os:
-                                    server_os = value
-                                elif key == 'os.family' and not server_os:
+                                if (
+                                    key == 'os.product'
+                                    and not server_os
+                                    or key == 'os.family'
+                                    and not server_os
+                                ):
                                     server_os = value
 
                     host_id: Optional[str] = None
@@ -391,8 +398,7 @@ class Metasploit(ToolSpec):
 
                     port_key = (host_id, port_str)
                     if port_key not in port_id_map:
-                        port_obj = data_model.Port(
-                            parent_id=host_id, id=port_id)
+                        port_obj = data_model.Port(parent_id=host_id, id=port_id)
                         port_obj.collection_tool_instance_id = tool_instance_id
                         port_obj.proto = 0
                         port_obj.port = port_str
@@ -402,8 +408,7 @@ class Metasploit(ToolSpec):
                     else:
                         port_id = port_id_map[port_key]
 
-                    ip_output_obj = data_model.CollectionModuleOutput(
-                        parent_id=temp_module_id)
+                    ip_output_obj = data_model.CollectionModuleOutput(parent_id=temp_module_id)
                     ip_output_obj.collection_tool_instance_id = tool_instance_id
                     ip_output_obj.output = '\n'.join(ip_lines)
                     ip_output_obj.port_id = port_id
@@ -422,14 +427,12 @@ class Metasploit(ToolSpec):
                             should_create_os = True
                         else:
                             existing_os_name, existing_os_obj = host_os_map[host_id]
-                            if ' or ' in existing_os_name.lower() and \
-                                    ' or ' not in os_name.lower():
+                            if ' or ' in existing_os_name.lower() and ' or ' not in os_name.lower():
                                 should_create_os = True
                                 ret_arr.remove(existing_os_obj)
 
                         if should_create_os:
-                            os_obj = data_model.OperatingSystem(
-                                parent_id=host_id)
+                            os_obj = data_model.OperatingSystem(parent_id=host_id)
                             os_obj.collection_tool_instance_id = tool_instance_id
                             os_obj.name = os_name
                             if os_version:
@@ -447,8 +450,8 @@ class Metasploit(ToolSpec):
 
             except Exception as e:
                 logging.getLogger(__name__).error(
-                    'Error processing metasploit output file %s: %s',
-                    metasploit_out, str(e))
+                    'Error processing metasploit output file %s: %s', metasploit_out, str(e)
+                )
                 traceback.print_exc()
 
         return ret_arr
@@ -477,25 +480,26 @@ class Metasploit(ToolSpec):
         """
         from reverge_collector.module_cache import get_cached_modules
 
-        msf_host = os.environ.get("MSF_JSON_RPC_HOST", "127.0.0.1")
-        msf_port = int(os.environ.get("MSF_JSON_RPC_PORT", "8081"))
+        msf_host = os.environ.get('MSF_JSON_RPC_HOST', '127.0.0.1')
+        msf_port = int(os.environ.get('MSF_JSON_RPC_PORT', '8081'))
         bearer_token = Metasploit._read_msf_token()
-        use_ssl = os.environ.get(
-            "MSF_JSON_RPC_SSL", "").lower() in ("1", "true", "yes")
+        use_ssl = os.environ.get('MSF_JSON_RPC_SSL', '').lower() in ('1', 'true', 'yes')
 
-        def fp_func(): return Metasploit._fingerprint(
-            msf_host, msf_port, bearer_token, use_ssl)
+        def fp_func():
+            return Metasploit._fingerprint(msf_host, msf_port, bearer_token, use_ssl)
 
-        def gen_func(): return Metasploit._generate_metasploit_modules(
-            msf_host, msf_port, bearer_token, use_ssl
-        )
+        def gen_func():
+            return Metasploit._generate_metasploit_modules(
+                msf_host, msf_port, bearer_token, use_ssl
+            )
+
         return get_cached_modules('metasploit', fp_func, gen_func)
 
     @staticmethod
     def _read_msf_token() -> str:
         """Return the MSF JSON RPC bearer token from env or token file."""
-        _token_file = "/opt/collector/msf_rpc_token"
-        token = os.environ.get("MSF_JSON_RPC_TOKEN", "")
+        _token_file = '/opt/collector/msf_rpc_token'
+        token = os.environ.get('MSF_JSON_RPC_TOKEN', '')
         if token:
             return token
         if os.path.exists(_token_file):
@@ -504,13 +508,13 @@ class Metasploit(ToolSpec):
                     return fh.read().strip()
             except Exception:
                 pass
-        return ""
+        return ''
 
     @staticmethod
     def _fingerprint(
-        msf_host: str = "127.0.0.1",
+        msf_host: str = '127.0.0.1',
         msf_port: int = 8081,
-        bearer_token: str = "",
+        bearer_token: str = '',
         use_ssl: bool = False,
     ) -> Optional[str]:
         """Cache fingerprint: MSF framework version from core.version RPC.
@@ -519,43 +523,44 @@ class Metasploit(ToolSpec):
         not reachable.
         """
         import shutil as _shutil
+
         from reverge_collector.module_cache import sha256_file
+
         _log = logging.getLogger(__name__)
-        scheme = "https" if use_ssl else "http"
-        url = f"{scheme}://{msf_host}:{msf_port}/api/v1/json-rpc"
+        scheme = 'https' if use_ssl else 'http'
+        url = f'{scheme}://{msf_host}:{msf_port}/api/v1/json-rpc'
         headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {bearer_token}",
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {bearer_token}',
         }
         try:
             payload = {
-                "jsonrpc": "2.0",
-                "method": "core.version",
-                "id": str(uuid_lib.uuid4()),
-                "params": [],
+                'jsonrpc': '2.0',
+                'method': 'core.version',
+                'id': str(uuid_lib.uuid4()),
+                'params': [],
             }
-            resp = requests.post(url, json=payload, headers=headers,
-                                 verify=use_ssl, timeout=5)
+            resp = requests.post(url, json=payload, headers=headers, verify=use_ssl, timeout=5)
             resp.raise_for_status()
-            result = resp.json().get("result", {})
-            version = result.get("version") or result.get("framework")
+            result = resp.json().get('result', {})
+            version = result.get('version') or result.get('framework')
             if version:
-                _log.debug("MSF fingerprint via RPC core.version: %s", version)
+                _log.debug('MSF fingerprint via RPC core.version: %s', version)
                 return str(version).strip()
-            _log.debug(
-                "MSF core.version RPC returned no version field; result=%s", result)
+            _log.debug('MSF core.version RPC returned no version field; result=%s', result)
         except Exception as exc:
-            _log.debug("MSF core.version RPC failed (%s: %s); falling back to binary hash",
-                       type(exc).__name__, exc)
+            _log.debug(
+                'MSF core.version RPC failed (%s: %s); falling back to binary hash',
+                type(exc).__name__,
+                exc,
+            )
 
         path = _shutil.which('msfconsole')
         if path and os.path.exists(path):
             h = sha256_file(path)
-            _log.debug(
-                "MSF fingerprint via msfconsole binary hash: %s (path=%s)", h, path)
+            _log.debug('MSF fingerprint via msfconsole binary hash: %s (path=%s)', h, path)
             return h
-        _log.debug(
-            "MSF fingerprint: msfconsole not found on PATH; returning None")
+        _log.debug('MSF fingerprint: msfconsole not found on PATH; returning None')
         return None
 
     @staticmethod
@@ -579,72 +584,68 @@ class Metasploit(ToolSpec):
         """
         _log = logging.getLogger(__name__)
         modules = []
-        scheme = "https" if use_ssl else "http"
-        url = f"{scheme}://{msf_host}:{msf_port}/api/v1/json-rpc"
+        scheme = 'https' if use_ssl else 'http'
+        url = f'{scheme}://{msf_host}:{msf_port}/api/v1/json-rpc'
         headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {bearer_token}",
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {bearer_token}',
         }
 
         def _post(method: str, params: list) -> dict:
             payload = {
-                "jsonrpc": "2.0",
-                "method": method,
-                "id": str(uuid_lib.uuid4()),
-                "params": params,
+                'jsonrpc': '2.0',
+                'method': method,
+                'id': str(uuid_lib.uuid4()),
+                'params': params,
             }
-            resp = requests.post(url, json=payload, headers=headers,
-                                 verify=use_ssl, timeout=30)
+            resp = requests.post(url, json=payload, headers=headers, verify=use_ssl, timeout=30)
             resp.raise_for_status()
             return resp.json()
 
         def _search_names(mtype: str) -> List[str]:
             """Return list of short module names (without type prefix) for a type."""
             try:
-                data = _post("module.search", [f"type:{mtype}"])
-                if "error" in data:
-                    _log.warning("module.search(type:%s) error: %s",
-                                 mtype, data["error"])
+                data = _post('module.search', [f'type:{mtype}'])
+                if 'error' in data:
+                    _log.warning('module.search(type:%s) error: %s', mtype, data['error'])
                     return []
-                result = data.get("result", [])
+                result = data.get('result', [])
                 if isinstance(result, dict):
-                    result = result.get("modules", [])
+                    result = result.get('modules', [])
                 if not isinstance(result, list):
                     return []
                 # Each entry has 'name' (short) and optionally 'fullname'
                 names = []
                 for e in result:
-                    fullname = e.get("fullname", "")
+                    fullname = e.get('fullname', '')
                     if fullname:
                         # strip leading type prefix to get the short name
-                        parts = fullname.split("/", 1)
+                        parts = fullname.split('/', 1)
                         names.append(parts[1] if len(parts) == 2 else fullname)
-                    elif e.get("name"):
-                        names.append(e["name"])
-                _log.debug("module.search(type:%s) returned %d names",
-                           mtype, len(names))
+                    elif e.get('name'):
+                        names.append(e['name'])
+                _log.debug('module.search(type:%s) returned %d names', mtype, len(names))
                 return names
             except Exception as exc:
-                _log.warning("module.search(type:%s) failed: %s",
-                             mtype, exc)
+                _log.warning('module.search(type:%s) failed: %s', mtype, exc)
             return []
 
         # Options that are auto-populated by the framework at run time;
         # exclude them from the required-args string so users aren't prompted
         # to supply values they don't need to think about.
-        _AUTO_OPTIONS = frozenset({"RHOSTS", "RPORT"})
+        _AUTO_OPTIONS = frozenset({'RHOSTS', 'RPORT'})
 
         def _fetch_info(mtype: str, name: str) -> Optional[data_model.CollectionModule]:
             """Call module.info and return a CollectionModule, or None on error."""
             try:
-                data = _post("module.info", [mtype, name])
-                if "error" in data:
+                data = _post('module.info', [mtype, name])
+                if 'error' in data:
                     return None
-                info = data.get("result", {})
+                info = data.get('result', {})
                 if not isinstance(info, dict):
                     return None
-                fullname = info.get("fullname") or f"{mtype}/{name}"
-                description = (info.get("description") or "").strip()
+                fullname = info.get('fullname') or f'{mtype}/{name}'
+                description = (info.get('description') or '').strip()
                 if not description:
                     description = fullname
 
@@ -654,49 +655,50 @@ class Metasploit(ToolSpec):
                 # are included with their default value so the user can see and
                 # override them.
                 required_args: List[tuple] = []
-                for opt_name, opt in (info.get("options") or {}).items():
+                for opt_name, opt in (info.get('options') or {}).items():
                     if (
-                        opt.get("required")
-                        and not opt.get("advanced")
+                        opt.get('required')
+                        and not opt.get('advanced')
                         and opt_name not in _AUTO_OPTIONS
                     ):
-                        default = opt.get("default")
-                        value = str(
-                            default) if default is not None else "CHANGEME"
+                        default = opt.get('default')
+                        value = str(default) if default is not None else 'CHANGEME'
                         required_args.append((opt_name, value))
                 required_args.sort(key=lambda x: x[0])
 
                 m = data_model.CollectionModule()
                 m.name = fullname
                 m.description = description
-                opts = " ".join(f"{k}={v}" for k, v in required_args)
-                m.args = (fullname + " " + opts) if opts else fullname
+                opts = ' '.join(f'{k}={v}' for k, v in required_args)
+                m.args = (fullname + ' ' + opts) if opts else fullname
                 # cpe is set by the fork's rpc_info handler when the module
                 # declares `'CPE' => 'cpe:2.3:a:...'` in its info hash.
-                cpe = info.get("cpe")
+                cpe = info.get('cpe')
                 if cpe:
                     m.cpe = cpe.strip()
                 return m
             except Exception as exc:
-                _log.debug("module.info(%s, %s) failed: %s", mtype, name, exc)
+                _log.debug('module.info(%s, %s) failed: %s', mtype, name, exc)
             return None
 
-        for mtype in ("auxiliary", "exploit"):
+        for mtype in ('auxiliary', 'exploit'):
             names = _search_names(mtype)
             if not names:
                 continue
-            _log.debug("Fetching module.info for %d %s modules (%d workers) …",
-                       len(names), mtype, info_workers)
+            _log.debug(
+                'Fetching module.info for %d %s modules (%d workers) …',
+                len(names),
+                mtype,
+                info_workers,
+            )
             with ThreadPoolExecutor(max_workers=info_workers) as pool:
-                futures = {pool.submit(
-                    _fetch_info, mtype, n): n for n in names}
+                futures = {pool.submit(_fetch_info, mtype, n): n for n in names}
                 for future in as_completed(futures):
                     result = future.result()
                     if result is not None:
                         modules.append(result)
 
-        _log.debug("_generate_metasploit_modules: total %d modules built",
-                   len(modules))
+        _log.debug('_generate_metasploit_modules: total %d modules built', len(modules))
         return modules
 
 
@@ -706,10 +708,10 @@ def get_output_path(scan_input) -> str:
     mod_str: str = ''
     if scheduled_scan_obj.scan_data.module_id:
         module_id: str = str(scheduled_scan_obj.scan_data.module_id)
-        mod_str = "_" + module_id
+        mod_str = '_' + module_id
     tool_name: str = scheduled_scan_obj.current_tool.name
     dir_path: str = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-    return dir_path + os.path.sep + "metasploit_scan_" + scan_id + mod_str + ".meta"
+    return dir_path + os.path.sep + 'metasploit_scan_' + scan_id + mod_str + '.meta'
 
 
 def execute_scan(scan_input) -> None:
@@ -734,7 +736,8 @@ def execute_scan(scan_input) -> None:
 
     if not module_path:
         logging.getLogger(__name__).warning(
-            "No Metasploit module path found in tool args for scan ID %s" % scheduled_scan_obj.id)
+            'No Metasploit module path found in tool args for scan ID %s' % scheduled_scan_obj.id
+        )
         metasploit_scan_data: Dict[str, Any] = {'metasploit_scan_list': []}
         with open(meta_file_path, 'w') as meta_file_fd:
             meta_file_fd.write(json.dumps(metasploit_scan_data))
@@ -756,15 +759,12 @@ def execute_scan(scan_input) -> None:
             ip_addr = host_obj.ipv4_addr
 
             if port_str not in port_scan_map:
-                port_scan_map[port_str] = {
-                    'protocol': module_path,
-                    'ip_set': set()
-                }
+                port_scan_map[port_str] = {'protocol': module_path, 'ip_set': set()}
 
             ip_set: Set[str] = port_scan_map[port_str]['ip_set']
             ip_set.add(ip_addr)
 
-            target_arr = target_key.split(":")
+            target_arr = target_key.split(':')
             extra = target_arr[0]
             if extra != ip_addr and ('.' in extra):
                 ip_set.add(extra)
@@ -775,45 +775,41 @@ def execute_scan(scan_input) -> None:
 
             for subnet_id in subnet_map:
                 subnet_obj = subnet_map[subnet_id]
-                target_set.add("%s/%s" % (subnet_obj.subnet, subnet_obj.mask))
+                target_set.add('%s/%s' % (subnet_obj.subnet, subnet_obj.mask))
 
             host_list = scope_obj.get_hosts(
-                [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+                [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value]
+            )
             for host_obj in host_list:
                 target_set.add(host_obj.ipv4_addr)
 
             for port_str in port_num_list:
-                port_scan_map[port_str] = {
-                    'protocol': module_path,
-                    'ip_set': target_set.copy()
-                }
+                port_scan_map[port_str] = {'protocol': module_path, 'ip_set': target_set.copy()}
 
     metasploit_scan_cmd_list: List[Dict[str, Any]] = []
     metasploit_scan_data = {}
 
-    msf_host: str = os.environ.get("MSF_JSON_RPC_HOST", "127.0.0.1")
-    msf_port: int = int(os.environ.get("MSF_JSON_RPC_PORT", "8081"))
-    bearer_token: str = os.environ.get("MSF_JSON_RPC_TOKEN", "")
-    use_ssl: bool = os.environ.get(
-        "MSF_JSON_RPC_SSL", "").lower() in ("1", "true", "yes")
+    msf_host: str = os.environ.get('MSF_JSON_RPC_HOST', '127.0.0.1')
+    msf_port: int = int(os.environ.get('MSF_JSON_RPC_PORT', '8081'))
+    bearer_token: str = os.environ.get('MSF_JSON_RPC_TOKEN', '')
+    use_ssl: bool = os.environ.get('MSF_JSON_RPC_SSL', '').lower() in ('1', 'true', 'yes')
 
     counter: int = 0
     futures: List[Any] = []
 
     if len(port_scan_map) == 0:
         logging.getLogger(__name__).warning(
-            "No scan targets found for Metasploit scan ID %s" % scheduled_scan_obj.id)
+            'No scan targets found for Metasploit scan ID %s' % scheduled_scan_obj.id
+        )
 
     for port_str in sorted(port_scan_map.keys()):
         port_obj = port_scan_map[port_str]
         metasploit_scan_inst: Dict[str, Any] = {}
         module_path_for_port: str = port_obj['protocol']
 
-        metasploit_output_file: str = dir_path + os.path.sep + \
-            "metasploit_out_" + str(counter)
+        metasploit_output_file: str = dir_path + os.path.sep + 'metasploit_out_' + str(counter)
 
-        ip_list_path: str = dir_path + os.path.sep + \
-            "metasploit_in_" + str(counter)
+        ip_list_path: str = dir_path + os.path.sep + 'metasploit_in_' + str(counter)
         ip_set_val: Set[str] = port_obj['ip_set']
         if len(ip_set_val) == 0:
             counter += 1
@@ -822,7 +818,7 @@ def execute_scan(scan_input) -> None:
         ip_list = list(ip_set_val)
         with open(ip_list_path, 'w') as in_file_fd:
             for ip in ip_list:
-                in_file_fd.write(ip + "\n")
+                in_file_fd.write(ip + '\n')
 
         port_options: Dict[str, str] = dict(additional_options)
         port_options['RPORT'] = port_str
@@ -833,23 +829,26 @@ def execute_scan(scan_input) -> None:
         metasploit_scan_inst['ip_list'] = ip_list_path
         metasploit_scan_cmd_list.append(metasploit_scan_inst)
 
-        futures.append(scan_utils.executor.submit(
-            execute_msfrpc_commands,
-            ip_list=ip_list,
-            module_path=module_path_for_port,
-            output_file=metasploit_output_file,
-            additional_options=port_options,
-            bearer_token=bearer_token,
-            msf_host=msf_host,
-            msf_port=msf_port,
-            use_ssl=use_ssl,
-        ))
+        futures.append(
+            scan_utils.executor.submit(
+                execute_msfrpc_commands,
+                ip_list=ip_list,
+                module_path=module_path_for_port,
+                output_file=metasploit_output_file,
+                additional_options=port_options,
+                bearer_token=bearer_token,
+                msf_host=msf_host,
+                msf_port=msf_port,
+                use_ssl=use_ssl,
+            )
+        )
         counter += 1
 
     if len(futures) > 0:
         scan_proc_inst = data_model.ToolExecutor(futures)
         scheduled_scan_obj.register_tool_executor(
-            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst
+        )
 
         for future in futures:
             future.result()

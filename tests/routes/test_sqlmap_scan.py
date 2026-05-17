@@ -1,15 +1,17 @@
 import base64
+import json
 import os
 import shutil
-import json
-import uuid
 import tempfile
-from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
-from reverge_collector.data_model import ScheduledScan, ScanData
+import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
+
+from reverge_collector.data_model import ScanData, ScheduledScan
+from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
 from reverge_collector.scan_utils import get_port_byte_array
 from reverge_collector.sqlmap_scan import parse_sqlmap_output
+
 from tests.conftest import get_tool_id
 
 # Realistic sqlmap stdout for a vulnerable parameter (boolean-based blind + time-based)
@@ -69,12 +71,13 @@ could interfere with the results of the tests
 
 
 class TestSqlmapScan:
-
     TOOL_NAME = 'sqlmap'
     TEST_SCAN_ID = format(uuid.uuid4().int, 'x')
     TEST_SCHEDULED_SCAN_ID = format(uuid.uuid4().int, 'x')
 
-    def _build_scheduled_scan(self, recon_manager, scan_id, scheduled_scan_id, args='--batch --level=1 --risk=1'):
+    def _build_scheduled_scan(
+        self, recon_manager, scan_id, scheduled_scan_id, args='--batch --level=1 --risk=1'
+    ):
         """Helper that constructs a ScheduledScan object for the test target."""
         tool_id_instance = get_tool_id(recon_manager, self.TOOL_NAME)
 
@@ -106,8 +109,7 @@ class TestSqlmapScan:
         }
 
         data = json.dumps(scheduler_inst_object)
-        sched_scan_arr = json.loads(
-            data, object_hook=lambda d: SimpleNamespace(**d))
+        sched_scan_arr = json.loads(data, object_hook=lambda d: SimpleNamespace(**d))
 
         port_list = '443'
         target_domain = 'www.securifera.com'
@@ -156,7 +158,6 @@ class TestSqlmapScan:
         scan_thread = ScheduledScanThread(recon_manager, None)
         with patch.object(ReconManager, 'get_scheduled_scan', return_value=scan_data):
             with patch.object(ReconManager, 'get_wordlist', return_value=None):
-
                 scheduled_scan_obj = ScheduledScan(scan_thread, sched_scan_arr)
 
                 first_key = next(iter(scheduled_scan_obj.collection_tool_map))
@@ -170,11 +171,13 @@ class TestSqlmapScan:
                 result = recon_manager.scan_func(scheduled_scan_obj)
                 assert result == True
 
-                output_dir = "/tmp/%s" % scheduled_scan_id
+                output_dir = '/tmp/%s' % scheduled_scan_id
                 assert os.path.exists(output_dir) == True
 
-                target_output = "%s/%s-outputs/sqlmap_outputs_%s" % (
-                    output_dir, self.TOOL_NAME, scheduled_scan_id
+                target_output = '%s/%s-outputs/sqlmap_outputs_%s' % (
+                    output_dir,
+                    self.TOOL_NAME,
+                    scheduled_scan_id,
                 )
                 assert os.path.exists(target_output) == True
 
@@ -200,16 +203,13 @@ class TestSqlmapScan:
             recon_manager, scan_id, scheduled_scan_id
         )
 
-        output_dir = "/tmp/%s" % scheduled_scan_id
+        output_dir = '/tmp/%s' % scheduled_scan_id
         try:
             scan_thread = ScheduledScanThread(recon_manager, None)
             with patch.object(ReconManager, 'get_scheduled_scan', return_value=scan_data):
                 with patch.object(ReconManager, 'get_wordlist', return_value=None):
-
-                    scheduled_scan_obj = ScheduledScan(
-                        scan_thread, sched_scan_arr)
-                    first_key = next(
-                        iter(scheduled_scan_obj.collection_tool_map))
+                    scheduled_scan_obj = ScheduledScan(scan_thread, sched_scan_arr)
+                    first_key = next(iter(scheduled_scan_obj.collection_tool_map))
                     first_tool = scheduled_scan_obj.collection_tool_map[first_key]
 
                     # Set the current tool
@@ -224,8 +224,9 @@ class TestSqlmapScan:
                         # tool_import_json is only written when sqlmap finds
                         # injection points; absence means a clean scan, which
                         # is the expected result against a non-vulnerable target.
-                        output_json = "%s/%s-outputs/tool_import_json" % (
-                            output_dir, self.TOOL_NAME
+                        output_json = '%s/%s-outputs/tool_import_json' % (
+                            output_dir,
+                            self.TOOL_NAME,
                         )
 
                         if os.path.exists(output_json):

@@ -2,19 +2,18 @@ import json
 import os
 import shutil
 import uuid
-
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from reverge_collector.data_model import ScanData, ScheduledScan
+from reverge_collector.naabu_scan import Naabu, _cpe22_to_cpe23, parse_naabu_output
 from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
-from reverge_collector.data_model import ScheduledScan, ScanData
-from reverge_collector.naabu_scan import Naabu, parse_naabu_output, _cpe22_to_cpe23
 from reverge_collector.scan_utils import get_port_byte_array
+
 from tests.conftest import get_tool_id
 
 
 class TestNaabuScan:
-
     TOOL_NAME = 'naabu'
     TEST_SCAN_ID = format(uuid.uuid4().int, 'x')
     TEST_SCHEDULED_SCAN_ID = format(uuid.uuid4().int, 'x')
@@ -51,15 +50,18 @@ class TestNaabuScan:
 
         port_bytes = get_port_byte_array(port_list)
         import base64
+
         b64_ports = base64.b64encode(port_bytes).decode()
         scope = {
             'b64_port_bitmap': b64_ports,
-            'obj_list': [{
-                'type': 'subnet',
-                'id': 'f57d93bcbe924127b24add0f5af04a63',
-                'data': {'subnet': target_ip, 'mask': 32},
-                'tags': [3],
-            }],
+            'obj_list': [
+                {
+                    'type': 'subnet',
+                    'id': 'f57d93bcbe924127b24add0f5af04a63',
+                    'data': {'subnet': target_ip, 'mask': 32},
+                    'tags': [3],
+                }
+            ],
         }
         scan_data = {
             'scan_id': self.TEST_SCAN_ID,
@@ -75,8 +77,7 @@ class TestNaabuScan:
         target_ip = 'www.securifera.com'
         port_list = '443'
 
-        sched_scan_arr, scan_data = self._make_scheduled_scan(
-            recon_manager, target_ip, port_list)
+        sched_scan_arr, scan_data = self._make_scheduled_scan(recon_manager, target_ip, port_list)
 
         scan_thread = ScheduledScanThread(recon_manager, None)
         with patch.object(ReconManager, 'get_scheduled_scan', return_value=scan_data):
@@ -110,8 +111,7 @@ class TestNaabuScan:
         target_ip = 'www.securifera.com'
         port_list = '443'
 
-        sched_scan_arr, scan_data = self._make_scheduled_scan(
-            recon_manager, target_ip, port_list)
+        sched_scan_arr, scan_data = self._make_scheduled_scan(recon_manager, target_ip, port_list)
 
         output_dir = '/tmp/%s' % self.TEST_SCHEDULED_SCAN_ID
         try:
@@ -128,8 +128,7 @@ class TestNaabuScan:
                     result = recon_manager.import_func(scheduled_scan_obj)
                     assert result is True
 
-                    output_json = '%s/%s-outputs/tool_import_json' % (
-                        output_dir, self.TOOL_NAME)
+                    output_json = '%s/%s-outputs/tool_import_json' % (output_dir, self.TOOL_NAME)
                     assert os.path.exists(output_json)
 
                     import_arr = []
@@ -168,8 +167,8 @@ class TestNaabuScan:
 # Unit tests for parse_naabu_output
 # ------------------------------------------------------------------
 
-class TestParseNaabuOutput:
 
+class TestParseNaabuOutput:
     def _write_jsonl(self, tmp_path, lines):
         path = os.path.join(tmp_path, 'naabu_out.jsonl')
         with open(path, 'w') as f:
@@ -191,7 +190,7 @@ class TestParseNaabuOutput:
         path = self._write_jsonl(str(tmp_path), [entry])
         records = parse_naabu_output(path)
 
-        from reverge_collector.data_model import Host, Port, Cpe, ApplicationProtocol, Domain
+        from reverge_collector.data_model import ApplicationProtocol, Cpe, Domain, Host, Port
 
         host_records = [r for r in records if isinstance(r, Host)]
         port_records = [r for r in records if isinstance(r, Port)]
@@ -233,11 +232,13 @@ class TestParseNaabuOutput:
         records = parse_naabu_output(path)
 
         from reverge_collector.data_model import Port
+
         port_records = [r for r in records if isinstance(r, Port)]
         assert port_records[0].secure is True
 
         # service name == 'https' → ApplicationProtocol; product 'nginx' → Cpe
-        from reverge_collector.data_model import Cpe, ApplicationProtocol
+        from reverge_collector.data_model import ApplicationProtocol, Cpe
+
         cpe_records = [r for r in records if isinstance(r, Cpe)]
         proto_records = [r for r in records if isinstance(r, ApplicationProtocol)]
         assert any(p.name == 'https' for p in proto_records)
@@ -258,7 +259,8 @@ class TestParseNaabuOutput:
         path = self._write_jsonl(str(tmp_path), [entry])
         records = parse_naabu_output(path)
 
-        from reverge_collector.data_model import Cpe, ApplicationProtocol
+        from reverge_collector.data_model import ApplicationProtocol, Cpe
+
         cpe_records = [r for r in records if isinstance(r, Cpe)]
         proto_records = [r for r in records if isinstance(r, ApplicationProtocol)]
         # service 'ssh' → ApplicationProtocol; product 'openssh' → Cpe
@@ -284,7 +286,8 @@ class TestParseNaabuOutput:
         path = self._write_jsonl(str(tmp_path), [entry])
         records = parse_naabu_output(path)
 
-        from reverge_collector.data_model import Cpe, ApplicationProtocol
+        from reverge_collector.data_model import ApplicationProtocol, Cpe
+
         cpe_records = [r for r in records if isinstance(r, Cpe)]
         proto_records = [r for r in records if isinstance(r, ApplicationProtocol)]
         # product is empty so only the service-name protocol is emitted
@@ -296,32 +299,52 @@ class TestParseNaabuOutput:
         path = os.path.join(str(tmp_path), 'naabu_out.jsonl')
         with open(path, 'w') as f:
             f.write('not json\n')
-            f.write(json.dumps({
-                'host': 'x.com',
-                'ip': '5.5.5.5',
-                'port': 80,
-                'protocol': 'tcp',
-                'tls': False,
-                'name': 'http',
-                'product': 'nginx',
-                'cpes': [],
-            }) + '\n')
+            f.write(
+                json.dumps(
+                    {
+                        'host': 'x.com',
+                        'ip': '5.5.5.5',
+                        'port': 80,
+                        'protocol': 'tcp',
+                        'tls': False,
+                        'name': 'http',
+                        'product': 'nginx',
+                        'cpes': [],
+                    }
+                )
+                + '\n'
+            )
         records = parse_naabu_output(path)
         assert len(records) > 0  # valid line should still be parsed
 
     def test_multiple_entries(self, tmp_path):
         entries = [
-            {'host': 'h.com', 'ip': '10.0.0.1', 'port': 80,
-             'protocol': 'tcp', 'tls': False, 'name': 'http',
-             'product': 'Apache httpd', 'cpes': ['cpe:/a:apache:http_server/']},
-            {'host': 'h.com', 'ip': '10.0.0.1', 'port': 443,
-             'protocol': 'tcp', 'tls': True, 'name': 'https',
-             'product': 'nginx', 'cpes': []},
+            {
+                'host': 'h.com',
+                'ip': '10.0.0.1',
+                'port': 80,
+                'protocol': 'tcp',
+                'tls': False,
+                'name': 'http',
+                'product': 'Apache httpd',
+                'cpes': ['cpe:/a:apache:http_server/'],
+            },
+            {
+                'host': 'h.com',
+                'ip': '10.0.0.1',
+                'port': 443,
+                'protocol': 'tcp',
+                'tls': True,
+                'name': 'https',
+                'product': 'nginx',
+                'cpes': [],
+            },
         ]
         path = self._write_jsonl(str(tmp_path), entries)
         records = parse_naabu_output(path)
 
         from reverge_collector.data_model import Port
+
         port_records = [r for r in records if isinstance(r, Port)]
         ports = {p.port for p in port_records}
         assert '80' in ports
@@ -332,8 +355,8 @@ class TestParseNaabuOutput:
 # Unit tests for _cpe22_to_cpe23
 # ------------------------------------------------------------------
 
-class TestCpe22ToCpe23:
 
+class TestCpe22ToCpe23:
     def test_apache(self):
         result = _cpe22_to_cpe23('cpe:/a:apache:http_server/')
         assert result == 'cpe:2.3:a:apache:http_server:*:*:*:*:*:*:*:*'

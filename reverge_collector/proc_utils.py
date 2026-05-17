@@ -5,13 +5,12 @@ This module provides process execution and monitoring utilities for the reverge_
 It includes subprocess wrappers, stream capture, and process management functionality.
 """
 
-import os
-import subprocess
 import logging
-from threading import Thread
-from queue import Queue
+import subprocess
 from enum import Enum
-from typing import Dict, List, Any, Optional, Callable, Set
+from queue import Queue
+from threading import Thread
+from typing import Any, Callable, Dict, List, Optional
 
 from reverge_collector.data_model import ToolExecutor
 
@@ -27,11 +26,17 @@ class ProcessStreamReader(Thread):
 
     class StreamType(Enum):
         """Enumeration for identifying stream types."""
+
         STDOUT = 1
         STDERR = 2
 
-    def __init__(self, pipe_type: 'ProcessStreamReader.StreamType',
-                 pipe_stream, print_output: bool = False, store_output: bool = True) -> None:
+    def __init__(
+        self,
+        pipe_type: 'ProcessStreamReader.StreamType',
+        pipe_stream,
+        print_output: bool = False,
+        store_output: bool = True,
+    ) -> None:
         """
         Initialize the stream reader with specified parameters.
 
@@ -76,7 +81,7 @@ class ProcessStreamReader(Thread):
                 if self.store_output:
                     self.queue(line)
         except Exception as e:
-            logging.getLogger(__name__).error("Exception: " + str(e))
+            logging.getLogger(__name__).error('Exception: ' + str(e))
         finally:
             self.queue(None)
 
@@ -91,18 +96,21 @@ class ProcessStreamReader(Thread):
                 output_bytes += line
             output_str = output_bytes.decode()
         except Exception as e:
-            logging.getLogger(__name__).error(
-                f"Error getting process output: {str(e)}")
+            logging.getLogger(__name__).error(f'Error getting process output: {str(e)}')
         return output_str
 
 
-def process_wrapper(cmd_args: List[str], use_shell: bool = False,
-                    my_env: Optional[Dict[str, str]] = None,
-                    stdin_data: Optional[str] = None,
-                    print_output: bool = False, store_output: bool = False,
-                    pid_callback: Optional[Callable] = None,
-                    stdout_file: Optional[str] = None,
-                    stderr_file: Optional[str] = None) -> Dict[str, Any]:
+def process_wrapper(
+    cmd_args: List[str],
+    use_shell: bool = False,
+    my_env: Optional[Dict[str, str]] = None,
+    stdin_data: Optional[str] = None,
+    print_output: bool = False,
+    store_output: bool = False,
+    pid_callback: Optional[Callable] = None,
+    stdout_file: Optional[str] = None,
+    stderr_file: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Execute a process with comprehensive monitoring and output capture.
 
@@ -135,8 +143,14 @@ def process_wrapper(cmd_args: List[str], use_shell: bool = False,
         pipe_type = subprocess.PIPE
 
     # Start the process
-    p = subprocess.Popen(cmd_args, shell=use_shell, stdin=subprocess.PIPE,
-                         stdout=pipe_type, stderr=subprocess.PIPE, env=my_env)
+    p = subprocess.Popen(
+        cmd_args,
+        shell=use_shell,
+        stdin=subprocess.PIPE,
+        stdout=pipe_type,
+        stderr=subprocess.PIPE,
+        env=my_env,
+    )
 
     # Provide process ID to callback if specified
     if pid_callback:
@@ -152,31 +166,33 @@ def process_wrapper(cmd_args: List[str], use_shell: bool = False,
     stdout_reader = None
     if store_output or stdout_file:
         stdout_reader = ProcessStreamReader(
-            ProcessStreamReader.StreamType.STDOUT, p.stdout, print_output, True)
+            ProcessStreamReader.StreamType.STDOUT, p.stdout, print_output, True
+        )
         stdout_reader.start()
 
     stderr_reader = ProcessStreamReader(
-        ProcessStreamReader.StreamType.STDERR, p.stderr, print_output, True)
+        ProcessStreamReader.StreamType.STDERR, p.stderr, print_output, True
+    )
     stderr_reader.start()
 
     # Wait for process completion
     exit_code = p.wait()
 
     # Prepare return data
-    ret_data = {"exit_code": exit_code}
+    ret_data = {'exit_code': exit_code}
 
     # Collect and write stdout if requested
     if stdout_reader:
         stdout_output = stdout_reader.get_output()
         if store_output:
-            ret_data["stdout"] = stdout_output
+            ret_data['stdout'] = stdout_output
         if stdout_file:
             with open(stdout_file, 'w') as f:
                 f.write(stdout_output)
 
     # Collect and write stderr
     stderr_output = stderr_reader.get_output()
-    ret_data["stderr"] = stderr_output
+    ret_data['stderr'] = stderr_output
     if stderr_file:
         with open(stderr_file, 'w') as f:
             f.write(stderr_output)

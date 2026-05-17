@@ -1,21 +1,19 @@
-from typing import Dict, List, Any, Optional, Union, Callable, Set
-from urllib.parse import urlparse
-from concurrent.futures import ThreadPoolExecutor, Future
-from enum import Enum
-from queue import Queue
-from threading import Thread
-from json import JSONDecoder, JSONDecodeError
-import socket
 import logging
-import netaddr
-import traceback
-import time
-import threading
-import re
-import validators
-import os
 import math
+import os
+import re
+import socket
+import threading
+import time
+import traceback
+from concurrent.futures import Future, ThreadPoolExecutor
 from functools import wraps
+from json import JSONDecodeError, JSONDecoder
+from typing import Any, Callable, Dict, List, Optional, Set
+from urllib.parse import urlparse
+
+import netaddr
+import validators
 
 
 def is_cloud_domain(domain: str) -> bool:
@@ -24,8 +22,8 @@ def is_cloud_domain(domain: str) -> bool:
     Extend this list as needed for additional cloud providers.
     """
     cloud_domains = [
-        "amazonaws.com",
-        "cloudfront.net",
+        'amazonaws.com',
+        'cloudfront.net',
     ]
     domain = domain.lower()
     return any(domain.endswith(cloud) for cloud in cloud_domains)
@@ -96,7 +94,7 @@ Note:
 NOT_WHITESPACE = re.compile(r'\S')
 
 # Standard user agent string for HTTP requests across the framework
-custom_user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.3"
+custom_user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.3'
 
 
 class ThreadExecutorWrapper:
@@ -170,22 +168,22 @@ class ThreadExecutorWrapper:
             task_id = self.futures_map.pop(future, None)
 
         if task_id is None:
-            logging.getLogger(__name__).warning("Future not found in the map.")
+            logging.getLogger(__name__).warning('Future not found in the map.')
             return
 
         try:
             future.result()
             logging.getLogger(__name__).debug(
-                f"Task {task_id} completed. {len(self.futures_map)} task(s) remaining.")
+                f'Task {task_id} completed. {len(self.futures_map)} task(s) remaining.'
+            )
         except socket.gaierror:
             # DNS resolution failures are expected (e.g. domains that don't resolve).
             # dns_wrapper catches this from future.result() — no action needed here.
             pass
         except Exception as e:
             tb = traceback.format_exc()
-            logging.getLogger(__name__).debug(
-                f"Task {task_id} raised an exception: {e}")
-            logging.getLogger(__name__).debug(f"Traceback:\n{tb}")
+            logging.getLogger(__name__).debug(f'Task {task_id} raised an exception: {e}')
+            logging.getLogger(__name__).debug(f'Traceback:\n{tb}')
 
     def submit(self, fn: Callable, *args, **kwargs) -> Future:
         """
@@ -244,7 +242,7 @@ class ThreadExecutorWrapper:
             no longer needed to properly clean up resources.
         """
         self.executor.shutdown(wait=wait)
-        logging.getLogger(__name__).debug("Executor has been shut down.")
+        logging.getLogger(__name__).debug('Executor has been shut down.')
 
 
 def execution_time(f: Callable) -> Callable:
@@ -272,14 +270,17 @@ def execution_time(f: Callable) -> Callable:
         Execution time is logged at DEBUG level with the function name
         and duration in seconds.
     """
+
     @wraps(f)
     def wrapper(*args, **kwargs):
         start_time = int(time.time())
         result = f(*args, **kwargs)
         end_time = int(time.time())
         logging.getLogger(__name__).debug(
-            f"Execution time of '{f.__name__}': {end_time-start_time} seconds")
+            f"Execution time of '{f.__name__}': {end_time - start_time} seconds"
+        )
         return result
+
     return wrapper
 
 
@@ -322,12 +323,13 @@ def get_url_port(url: str) -> Optional[int]:
                 port_int = 443
         return port_int
     except Exception as e:
-        logging.getLogger(__name__).error("Invalid URL")
+        logging.getLogger(__name__).error('Invalid URL')
         return port_int
 
 
-def construct_url(target_str: str, port: int, secure: bool,
-                  query_str: Optional[str] = None) -> Optional[str]:
+def construct_url(
+    target_str: str, port: int, secure: bool, query_str: Optional[str] = None
+) -> Optional[str]:
     """
     Construct a complete URL from individual components.
 
@@ -361,18 +363,18 @@ def construct_url(target_str: str, port: int, secure: bool,
 
     port_str = str(port).strip()
     add_port_flag = True
-    url = "http"
+    url = 'http'
 
     if secure or port_str == '443':
-        url += "s"
+        url += 's'
         if port_str == '443':
             add_port_flag = False
     elif port_str == '80':
         add_port_flag = False
 
-    url += "://" + target_str
+    url += '://' + target_str
     if add_port_flag:
-        url += ":" + port_str
+        url += ':' + port_str
 
     if query_str:
         url += query_str
@@ -382,7 +384,8 @@ def construct_url(target_str: str, port: int, secure: bool,
         return url
     except Exception as e:
         logging.getLogger(__name__).debug(
-            f"Invalid URL constructed: {url}. Skipping scan queue. Error: {e}")
+            f'Invalid URL constructed: {url}. Skipping scan queue. Error: {e}'
+        )
         return None
 
 
@@ -415,7 +418,7 @@ def get_ports(byte_array: bytearray) -> List[str]:
             for j in range(8):
                 mask = 1 << j
                 if current_byte & mask:
-                    port_list.append(str(j + (i*8)))
+                    port_list.append(str(j + (i * 8)))
     return port_list
 
 
@@ -477,10 +480,10 @@ def get_port_byte_array(port_list: str) -> bytearray:
     if len(port_list) > 0:
         # Determine split delimiter (comma or space)
         split_delim = None
-        if "," in port_list:
-            split_delim = ","
-        elif " " in port_list:
-            split_delim = " "
+        if ',' in port_list:
+            split_delim = ','
+        elif ' ' in port_list:
+            split_delim = ' '
 
         # Split port list or use as single item
         port_arr = [port_list]
@@ -489,7 +492,7 @@ def get_port_byte_array(port_list: str) -> bytearray:
 
         # Process each port or port range
         for port_inst in port_arr:
-            port_range_arr = port_inst.split("-")
+            port_range_arr = port_inst.split('-')
             if len(port_range_arr) == 1:
                 # Single port
                 set_bit(int(port_range_arr[0]), port_map_bytes)
@@ -531,7 +534,7 @@ def check_domain(domain_str: str) -> Optional[str]:
         - IP addresses (detected using netaddr)
     """
     # Filter out wildcard domains
-    if "*." in domain_str:
+    if '*.' in domain_str:
         return None
 
     # Filter out IP addresses
@@ -571,8 +574,7 @@ def init_tool_folder(tool_name: str, desc: str, scan_id: str) -> str:
     """
     # Create directory structure based on scan ID and tool name
     cwd = os.getcwd()
-    dir_path = cwd + os.path.sep + scan_id + \
-        os.path.sep + "%s-%s" % (tool_name, desc)
+    dir_path = cwd + os.path.sep + scan_id + os.path.sep + '%s-%s' % (tool_name, desc)
 
     if not os.path.isdir(dir_path):
         os.makedirs(dir_path)
@@ -627,7 +629,7 @@ def parse_json_blob_file(output_file: str) -> List[Dict[str, Any]]:
                 try:
                     obj, pos = decoder.raw_decode(data, pos)
                 except JSONDecodeError:
-                    logging.getLogger(__name__).error("JSON decoding error")
+                    logging.getLogger(__name__).error('JSON decoding error')
                     break
 
                 # Add parsed object to results
@@ -672,12 +674,10 @@ def dns_wrapper(domain_set: Set[str]) -> List[Dict[str, str]]:
     futures_map = {}
 
     for domain in domain_set:
-        futures_map[domain] = executor.submit(
-            socket.gethostbyname, domain)
+        futures_map[domain] = executor.submit(socket.gethostbyname, domain)
 
     # Loop through thread function calls and update progress
     for domain_str in futures_map:
-
         ip_domain_map = {}
 
         # Add domain
@@ -687,11 +687,10 @@ def dns_wrapper(domain_set: Set[str]) -> List[Dict[str, str]]:
         try:
             ip_str = thread_obj.result()
             if ip_str and len(ip_str) > 0:
-
                 # Ignore any autogenerated DNS names
-                ip_arr = ip_str.split(".")
-                ip_dot = ip_arr[2]+"."+ip_arr[3]
-                ip_dash = ip_arr[2]+"-"+ip_arr[3]
+                ip_arr = ip_str.split('.')
+                ip_dot = ip_arr[2] + '.' + ip_arr[3]
+                ip_dash = ip_arr[2] + '-' + ip_arr[3]
                 if ip_dot in domain_str or ip_dash in domain_str:
                     continue
 

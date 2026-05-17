@@ -44,15 +44,14 @@ Note:
     authorization on target systems.
 """
 
-from functools import partial
 import json
-import os
-from typing import Dict, Any, Set, Optional, List
 import logging
+import os
 import random
+from functools import partial
+from typing import Any, Dict, List, Optional, Set
 
-from reverge_collector import scan_utils
-from reverge_collector import data_model
+from reverge_collector import data_model, scan_utils
 from reverge_collector.proc_utils import process_wrapper
 from reverge_collector.tool_spec import ToolSpec
 
@@ -60,11 +59,10 @@ from reverge_collector.tool_spec import ToolSpec
 url_set: Set[str] = set()
 
 # Path to the SQLMap Python script
-SQLMAP_PATH = "/opt/sqlmap/sqlmap.py"
+SQLMAP_PATH = '/opt/sqlmap/sqlmap.py'
 
 
 class Sqlmap(ToolSpec):
-
     name = 'sqlmap'
     description = (
         'SQLMap is an open source penetration testing tool that automates '
@@ -99,14 +97,15 @@ def get_output_path(scan_input: Any) -> str:
     scan_id = scan_input.id
     tool_name = scan_input.current_tool.name
     dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-    return dir_path + os.path.sep + "sqlmap_outputs_" + scan_id
+    return dir_path + os.path.sep + 'sqlmap_outputs_' + scan_id
 
 
 def execute_scan(scan_input: Any) -> None:
     output_file_path = get_output_path(scan_input)
     if os.path.exists(output_file_path):
         logging.getLogger(__name__).debug(
-            "Output path %s already exists, skipping SQLMap scan execution", output_file_path)
+            'Output path %s already exists, skipping SQLMap scan execution', output_file_path
+        )
         return
 
     global url_set
@@ -133,9 +132,7 @@ def execute_scan(scan_input: Any) -> None:
         if url_str and url_str not in url_set:
             url_set.add(url_str)
             rand_str = str(random.randint(1000000, 2000000))
-            scan_output_file_path = (
-                output_dir + os.path.sep + "sqlmap_out_" + rand_str
-            )
+            scan_output_file_path = output_dir + os.path.sep + 'sqlmap_out_' + rand_str
             url_to_id_map[url_str] = {
                 'port_id': port_id,
                 'host_id': host_id,
@@ -148,13 +145,16 @@ def execute_scan(scan_input: Any) -> None:
 
         command = []
         if os.name != 'nt':
-            command.append("sudo")
+            command.append('sudo')
 
-        command.extend([
-            "python3",
-            SQLMAP_PATH,
-            "-u", target_url,
-        ])
+        command.extend(
+            [
+                'python3',
+                SQLMAP_PATH,
+                '-u',
+                target_url,
+            ]
+        )
 
         if tool_args and len(tool_args) > 0:
             command.extend(tool_args)
@@ -164,12 +164,14 @@ def execute_scan(scan_input: Any) -> None:
             scheduled_scan_obj.current_tool_instance_id,
         )
 
-        futures.append(scan_utils.executor.submit(
-            process_wrapper,
-            cmd_args=command,
-            pid_callback=callback_with_tool_id,
-            stdout_file=scan_output_file_path,
-        ))
+        futures.append(
+            scan_utils.executor.submit(
+                process_wrapper,
+                cmd_args=command,
+                pid_callback=callback_with_tool_id,
+                stdout_file=scan_output_file_path,
+            )
+        )
 
     # Register all futures as a single ToolExecutor
     scan_proc_inst = data_model.ToolExecutor(futures)
@@ -191,11 +193,11 @@ def execute_scan(scan_input: Any) -> None:
             if exit_code != 0:
                 err_msg = ret_dict.get('stderr', '')
                 logging.getLogger(__name__).error(
-                    "SQLMap scan for scan ID %s exited with code %d: %s"
+                    'SQLMap scan for scan ID %s exited with code %d: %s'
                     % (scheduled_scan_obj.id, exit_code, err_msg)
                 )
                 raise RuntimeError(
-                    "SQLMap scan for scan ID %s exited with code %d: %s"
+                    'SQLMap scan for scan ID %s exited with code %d: %s'
                     % (scheduled_scan_obj.id, exit_code, err_msg)
                 )
 
@@ -231,7 +233,7 @@ def _extract_vuln_details(content: str, url: str) -> str:
 
     if details:
         return '\n'.join(details)
-    return "SQL injection detected at: %s" % url
+    return 'SQL injection detected at: %s' % url
 
 
 def parse_sqlmap_output(
@@ -276,9 +278,8 @@ def parse_sqlmap_output(
             content = f.read()
 
         # sqlmap reports findings with this header when a parameter is vulnerable
-        injection_found = (
-            'identified the following injection point' in content
-            or ('Parameter:' in content and 'Type:' in content)
+        injection_found = 'identified the following injection point' in content or (
+            'Parameter:' in content and 'Type:' in content
         )
 
         if injection_found:

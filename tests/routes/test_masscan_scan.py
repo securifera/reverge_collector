@@ -1,18 +1,19 @@
 import base64
+import json
 import os
 import shutil
 import uuid
-import json
-from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
-from reverge_collector.data_model import ScheduledScan, ScanData
 from types import SimpleNamespace
 from unittest.mock import patch
+
+from reverge_collector.data_model import ScanData, ScheduledScan
+from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
 from reverge_collector.scan_utils import get_port_byte_array
+
 from tests.conftest import get_tool_id
 
 
 class TestMassScan:
-
     TOOL_NAME = 'masscan'
     TEST_SCAN_ID = format(uuid.uuid4().int, 'x')
     TEST_SCHEDULED_SCAN_ID = format(uuid.uuid4().int, 'x')
@@ -23,28 +24,51 @@ class TestMassScan:
 
         scan_id = self.TEST_SCAN_ID
         scheduled_scan_id = self.TEST_SCHEDULED_SCAN_ID
-        tool_inst = {'id': 'a9866b94f7104754bd161c1ab7cbf0cd', 'collection_tool': {'wordlists': [], 'name': self.TOOL_NAME, 'args':
-                                                                                   '--rate 1000', 'tool_type': 2, 'scan_order': 2, 'api_key': None, 'id': tool_id_instance}, 'args_override': None,
-                     'enabled': 1, 'status': 0, 'status_message': None, 'collection_tool_id': tool_id_instance,
-                     'scheduled_scan_id': scheduled_scan_id, 'owner_id': '94cb514e85da4abea6ee227730328619'}
+        tool_inst = {
+            'id': 'a9866b94f7104754bd161c1ab7cbf0cd',
+            'collection_tool': {
+                'wordlists': [],
+                'name': self.TOOL_NAME,
+                'args': '--rate 1000',
+                'tool_type': 2,
+                'scan_order': 2,
+                'api_key': None,
+                'id': tool_id_instance,
+            },
+            'args_override': None,
+            'enabled': 1,
+            'status': 0,
+            'status_message': None,
+            'collection_tool_id': tool_id_instance,
+            'scheduled_scan_id': scheduled_scan_id,
+            'owner_id': '94cb514e85da4abea6ee227730328619',
+        }
 
         scheduler_inst_object = {
-            "id": scheduled_scan_id,
-            "scan_id": scan_id,
-            "target_id": 1234,
-            'collection_tools': [tool_inst], }
+            'id': scheduled_scan_id,
+            'scan_id': scan_id,
+            'target_id': 1234,
+            'collection_tools': [tool_inst],
+        }
 
         data = json.dumps(scheduler_inst_object)
-        sched_scan_arr = json.loads(
-            data, object_hook=lambda d: SimpleNamespace(**d))
+        sched_scan_arr = json.loads(data, object_hook=lambda d: SimpleNamespace(**d))
 
-        port_list = "53"
+        port_list = '53'
         target_ip = '8.8.8.8'
         port_bytes = get_port_byte_array(port_list)
         b64_ports = base64.b64encode(port_bytes).decode()
-        scope = {'b64_port_bitmap': b64_ports,
-                 'obj_list': [{'type': 'subnet', 'id': 'f57d93bcbe924127b24add0f5af04a62',
-                              'data': {'subnet': target_ip, 'mask': 32}, 'tags': [3]}]}
+        scope = {
+            'b64_port_bitmap': b64_ports,
+            'obj_list': [
+                {
+                    'type': 'subnet',
+                    'id': 'f57d93bcbe924127b24add0f5af04a62',
+                    'data': {'subnet': target_ip, 'mask': 32},
+                    'tags': [3],
+                }
+            ],
+        }
         scan_data = {
             'scan_id': scan_id,
             'scope': scope,
@@ -52,7 +76,6 @@ class TestMassScan:
 
         scan_thread = ScheduledScanThread(recon_manager, None)
         with patch.object(ReconManager, 'get_scheduled_scan', return_value=scan_data):
-
             scheduled_scan_obj = ScheduledScan(scan_thread, sched_scan_arr)
 
             first_key = next(iter(scheduled_scan_obj.collection_tool_map))
@@ -65,16 +88,25 @@ class TestMassScan:
 
             result = recon_manager.scan_func(scheduled_scan_obj)
             assert result == True
-            output_dir = "/tmp/%s" % scheduled_scan_id
+            output_dir = '/tmp/%s' % scheduled_scan_id
             assert os.path.exists(output_dir) == True
-            input_conf = "%s/%s-inputs/mass_conf_%s" % (
-                output_dir, self.TOOL_NAME, scheduled_scan_id)
+            input_conf = '%s/%s-inputs/mass_conf_%s' % (
+                output_dir,
+                self.TOOL_NAME,
+                scheduled_scan_id,
+            )
             assert os.path.exists(input_conf) == True
-            target_conf = "%s/%s-inputs/mass_ips_%s" % (
-                output_dir, self.TOOL_NAME, scheduled_scan_id)
+            target_conf = '%s/%s-inputs/mass_ips_%s' % (
+                output_dir,
+                self.TOOL_NAME,
+                scheduled_scan_id,
+            )
             assert os.path.exists(target_conf) == True
-            output_file = "%s/%s-outputs/mass_out_%s" % (
-                output_dir, self.TOOL_NAME, scheduled_scan_id)
+            output_file = '%s/%s-outputs/mass_out_%s' % (
+                output_dir,
+                self.TOOL_NAME,
+                scheduled_scan_id,
+            )
             assert os.path.exists(output_file) == True
 
             # Check if port_list is in the  file contents of input_conf
@@ -98,38 +130,60 @@ class TestMassScan:
 
         scan_id = self.TEST_SCAN_ID
         scheduled_scan_id = self.TEST_SCHEDULED_SCAN_ID
-        tool_inst = {'id': 'a9866b94f7104754bd161c1ab7cbf0cd', 'collection_tool': {'wordlists': [], 'name': self.TOOL_NAME, 'args':
-                                                                                   '--rate 1000', 'tool_type': 2, 'scan_order': 2, 'api_key': None, 'id': tool_id_instance}, 'args_override': None,
-                     'enabled': 1, 'status': 0, 'status_message': None, 'collection_tool_id': tool_id_instance,
-                     'scheduled_scan_id': scheduled_scan_id, 'owner_id': '94cb514e85da4abea6ee227730328619'}
+        tool_inst = {
+            'id': 'a9866b94f7104754bd161c1ab7cbf0cd',
+            'collection_tool': {
+                'wordlists': [],
+                'name': self.TOOL_NAME,
+                'args': '--rate 1000',
+                'tool_type': 2,
+                'scan_order': 2,
+                'api_key': None,
+                'id': tool_id_instance,
+            },
+            'args_override': None,
+            'enabled': 1,
+            'status': 0,
+            'status_message': None,
+            'collection_tool_id': tool_id_instance,
+            'scheduled_scan_id': scheduled_scan_id,
+            'owner_id': '94cb514e85da4abea6ee227730328619',
+        }
 
         scheduler_inst_object = {
-            "id": scheduled_scan_id,
-            "scan_id": scan_id,
-            "target_id": 1234,
-            'collection_tools': [tool_inst], }
+            'id': scheduled_scan_id,
+            'scan_id': scan_id,
+            'target_id': 1234,
+            'collection_tools': [tool_inst],
+        }
 
         data = json.dumps(scheduler_inst_object)
-        sched_scan_arr = json.loads(
-            data, object_hook=lambda d: SimpleNamespace(**d))
+        sched_scan_arr = json.loads(data, object_hook=lambda d: SimpleNamespace(**d))
 
-        port_list = "53"
+        port_list = '53'
         target_ip = '8.8.8.8'
         port_bytes = get_port_byte_array(port_list)
         b64_ports = base64.b64encode(port_bytes).decode()
-        scope = {'b64_port_bitmap': b64_ports,
-                 'obj_list': [{'type': 'subnet', 'id': 'f57d93bcbe924127b24add0f5af04a62',
-                              'data': {'subnet': target_ip, 'mask': 32}, 'tags': [3]}]}
+        scope = {
+            'b64_port_bitmap': b64_ports,
+            'obj_list': [
+                {
+                    'type': 'subnet',
+                    'id': 'f57d93bcbe924127b24add0f5af04a62',
+                    'data': {'subnet': target_ip, 'mask': 32},
+                    'tags': [3],
+                }
+            ],
+        }
         scan_data = {
             'scan_id': scan_id,
             'scope': scope,
         }
 
-        output_dir = "/tmp/%s" % scheduled_scan_id
+        output_dir = '/tmp/%s' % scheduled_scan_id
         try:
             scan_thread = ScheduledScanThread(recon_manager, None)
             with patch.object(ReconManager, 'get_scheduled_scan', return_value=scan_data):
-
                 scheduled_scan_obj = ScheduledScan(scan_thread, sched_scan_arr)
                 first_key = next(iter(scheduled_scan_obj.collection_tool_map))
                 first_tool = scheduled_scan_obj.collection_tool_map[first_key]
@@ -142,8 +196,7 @@ class TestMassScan:
                 with patch.object(ReconManager, 'import_data', return_value={}):
                     result = recon_manager.import_func(scheduled_scan_obj)
                     assert result == True
-                    output_json = "%s/%s-outputs/tool_import_json" % (
-                        output_dir, self.TOOL_NAME)
+                    output_json = '%s/%s-outputs/tool_import_json' % (output_dir, self.TOOL_NAME)
                     assert os.path.exists(output_json) == True
 
                     import_arr = []

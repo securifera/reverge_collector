@@ -28,13 +28,13 @@ Global Variables:
 
 Example:
     Basic usage through the reverge_collector framework::
-    
+
         # Initialize the tool
         pyshot = Pyshot()
-        
+
         # Execute screenshot capture
         success = pyshot.scan_func(scan_input_obj)
-        
+
         # Import results
         imported = pyshot.import_func(scan_input_obj)
 
@@ -45,18 +45,16 @@ Note:
 
 """
 
-import json
-import os
-import binascii
-import traceback
-import hashlib
 import base64
+import binascii
+import hashlib
+import json
 import logging
-from typing import Dict, Tuple, Any, Optional, List
-
-from reverge_collector import scan_utils
+import os
 from os.path import exists
-from reverge_collector import data_model
+from typing import Dict, Optional, Tuple
+
+from reverge_collector import data_model, scan_utils
 from reverge_collector.tool_spec import ToolSpec
 
 # Global future mapping for screenshot target management and deduplication
@@ -64,17 +62,20 @@ future_map: Dict[str, Tuple[Optional[int], Tuple]] = {}
 
 
 class Pyshot(ToolSpec):
-
     name = 'pyshot'
-    description = 'A python library that can be used for taking screenshots of web pages using PhantomJS.'
+    description = (
+        'A python library that can be used for taking screenshots of web pages using PhantomJS.'
+    )
     project_url = 'https://github.com/securifera/pyshot'
     tags = ['screenshot', 'load-balancer-incompatible']
     collector_type = data_model.CollectorType.ACTIVE.value
     scan_order = 8
     args = ''
-    input_records = [data_model.ServerRecordType.PORT,
-                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
-                     data_model.ServerRecordType.SUBNET]
+    input_records = [
+        data_model.ServerRecordType.PORT,
+        data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+        data_model.ServerRecordType.SUBNET,
+    ]
     output_records = [
         data_model.ServerRecordType.SCREENSHOT,
         data_model.ServerRecordType.DOMAIN,
@@ -90,15 +91,25 @@ class Pyshot(ToolSpec):
         execute_scan(scan_input)
 
     def parse_output(self, output_path: str, scan_input) -> list:
-        return parse_pyshot_output(
-            output_path,
-            scan_input.current_tool_instance_id,
-        ) or []
+        return (
+            parse_pyshot_output(
+                output_path,
+                scan_input.current_tool_instance_id,
+            )
+            or []
+        )
 
 
-def pyshot_wrapper(ip_addr: str, port: str, dir_path: str, ssl_val: bool, port_id: int,
-                   query_arg: str = "", domain: Optional[str] = None,
-                   http_endpoint_data_id: Optional[int] = None) -> str:
+def pyshot_wrapper(
+    ip_addr: str,
+    port: str,
+    dir_path: str,
+    ssl_val: bool,
+    port_id: int,
+    query_arg: str = '',
+    domain: Optional[str] = None,
+    http_endpoint_data_id: Optional[int] = None,
+) -> str:
     """
     Wrapper function for executing Pyshot screenshot capture operations.
 
@@ -136,22 +147,39 @@ def pyshot_wrapper(ip_addr: str, port: str, dir_path: str, ssl_val: bool, port_i
         SSL certificate validation is typically disabled for broader compatibility.
     """
 
-    ret_msg = ""
+    ret_msg = ''
     domain_str = ''
     if domain:
         domain_str = domain
-    logging.getLogger(__name__).debug("Running Pyshot scan on %s:%s%s (%s)" %
-                                      (ip_addr, port, query_arg, domain_str))
+    logging.getLogger(__name__).debug(
+        'Running Pyshot scan on %s:%s%s (%s)' % (ip_addr, port, query_arg, domain_str)
+    )
     from pyshot import pyshot as pyshot_lib  # noqa: PLC0415
-    pyshot_lib.take_screenshot(host=ip_addr, port_arg=port, query_arg=query_arg,
-                               dest_dir=dir_path, secure=ssl_val, port_id=port_id, domain=domain, endpoint_id=http_endpoint_data_id)
+
+    pyshot_lib.take_screenshot(
+        host=ip_addr,
+        port_arg=port,
+        query_arg=query_arg,
+        dest_dir=dir_path,
+        secure=ssl_val,
+        port_id=port_id,
+        domain=domain,
+        endpoint_id=http_endpoint_data_id,
+    )
 
     return ret_msg
 
 
-def queue_scan(host: str, port_str: str, dir_path: str, secure: bool, port_id: int,
-               query_arg: str = "", domain_str: Optional[str] = None,
-               http_endpoint_data_id: Optional[int] = None) -> None:
+def queue_scan(
+    host: str,
+    port_str: str,
+    dir_path: str,
+    secure: bool,
+    port_id: int,
+    query_arg: str = '',
+    domain_str: Optional[str] = None,
+    http_endpoint_data_id: Optional[int] = None,
+) -> None:
     """
     Queue a screenshot capture target with deduplication and priority management.
 
@@ -201,14 +229,32 @@ def queue_scan(host: str, port_str: str, dir_path: str, secure: bool, port_id: i
         prev_http_endpoint_data_id, scan_tuple = future_map[url]
         # the previous http endoint is None then switch it out to avoid duplicates
         if http_endpoint_data_id is not None and prev_http_endpoint_data_id is None:
-            scan_tuple = (pyshot_wrapper, host, port_str, dir_path, secure,
-                          port_id, query_arg, domain_str, http_endpoint_data_id)
+            scan_tuple = (
+                pyshot_wrapper,
+                host,
+                port_str,
+                dir_path,
+                secure,
+                port_id,
+                query_arg,
+                domain_str,
+                http_endpoint_data_id,
+            )
             future_map[url] = (http_endpoint_data_id, scan_tuple)
             return
 
     else:
-        scan_tuple = (pyshot_wrapper, host, port_str, dir_path, secure,
-                      port_id, query_arg, domain_str, http_endpoint_data_id)
+        scan_tuple = (
+            pyshot_wrapper,
+            host,
+            port_str,
+            dir_path,
+            secure,
+            port_id,
+            query_arg,
+            domain_str,
+            http_endpoint_data_id,
+        )
         future_map[url] = (http_endpoint_data_id, scan_tuple)
 
     return
@@ -233,26 +279,37 @@ def execute_scan(scan_input) -> None:
     url_metadata_map = scheduled_scan_obj.scan_data.get_url_metadata_map()
 
     from urllib.parse import urlparse
+
     futures = []
 
     for url, metadata in url_metadata_map.items():
         parsed_url = urlparse(url)
         host = parsed_url.hostname
-        port_str = str(parsed_url.port) if parsed_url.port else (
-            '443' if parsed_url.scheme == 'https' else '80')
+        port_str = (
+            str(parsed_url.port)
+            if parsed_url.port
+            else ('443' if parsed_url.scheme == 'https' else '80')
+        )
         secure = parsed_url.scheme == 'https'
-        query_arg = parsed_url.path + \
-            ('?' + parsed_url.query if parsed_url.query else '')
+        query_arg = parsed_url.path + ('?' + parsed_url.query if parsed_url.query else '')
 
         future_inst = scan_utils.executor.submit(
-            pyshot_wrapper, host, port_str, dir_path, secure,
-            metadata["port_id"], query_arg, metadata.get("domain"),
-            metadata.get("http_endpoint_data_id"))
+            pyshot_wrapper,
+            host,
+            port_str,
+            dir_path,
+            secure,
+            metadata['port_id'],
+            query_arg,
+            metadata.get('domain'),
+            metadata.get('http_endpoint_data_id'),
+        )
         futures.append(future_inst)
 
     scan_proc_inst = data_model.ToolExecutor(futures)
     scheduled_scan_obj.register_tool_executor(
-        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst
+    )
 
     for future in futures:
         future.result()
@@ -283,7 +340,7 @@ def parse_pyshot_output(meta_file, tool_instance_id):
         status_code = screenshot_meta['status_code']
         http_endpoint_data_id = screenshot_meta['endpoint_id']
 
-        with open(filename, "rb") as rf:
+        with open(filename, 'rb') as rf:
             image_data = rf.read()
         hashobj = hash_alg()
         hashobj.update(image_data)
@@ -334,8 +391,7 @@ def parse_pyshot_output(meta_file, tool_instance_id):
         http_endpoint_obj.web_path_id = web_path_id
         ret_arr.append(http_endpoint_obj)
 
-        http_endpoint_data_obj = data_model.HttpEndpointData(
-            parent_id=http_endpoint_obj.id)
+        http_endpoint_data_obj = data_model.HttpEndpointData(parent_id=http_endpoint_obj.id)
         http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
         http_endpoint_data_obj.domain_id = endpoint_domain_id
         http_endpoint_data_obj.status = status_code
@@ -352,8 +408,7 @@ def pyshot_scan_func(scan_input) -> bool:
         execute_scan(scan_input)
         return True
     except Exception as e:
-        logging.getLogger(__name__).error(
-            "pyshot scan failed: %s", e, exc_info=True)
+        logging.getLogger(__name__).error('pyshot scan failed: %s', e, exc_info=True)
         raise
 
 
@@ -370,6 +425,5 @@ def pyshot_import(scan_input) -> bool:
             _import_results(scan_input, ret_arr, output_path)
         return True
     except Exception as e:
-        logging.getLogger(__name__).error(
-            "pyshot import failed: %s", e, exc_info=True)
+        logging.getLogger(__name__).error('pyshot import failed: %s', e, exc_info=True)
         raise

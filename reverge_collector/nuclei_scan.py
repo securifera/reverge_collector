@@ -19,23 +19,22 @@ Classes:
 """
 
 import json
-import os
-from typing import Dict, Any, List, Set, Optional
 import logging
-import yaml
+import os
 import traceback
+from functools import partial
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import netaddr
-from functools import partial
-from urllib.parse import urlparse
-from reverge_collector import scan_utils
-from reverge_collector import data_model
+import yaml
+
+from reverge_collector import data_model, scan_utils
 from reverge_collector.proc_utils import process_wrapper
 from reverge_collector.tool_spec import ToolSpec
 
 
 class Nuclei(ToolSpec):
-
     name = 'nuclei'
     description = 'Nuclei is a fast and flexible vulnerability scanner based on simple YAML based DSL. It allows users to create custom templates for scanning various protocols and services.'
     project_url = 'https://github.com/projectdiscovery/nuclei'
@@ -44,9 +43,11 @@ class Nuclei(ToolSpec):
     scan_order = 7
     args = '-ni -pt http -rl 50 -t http/technologies/fingerprinthub-web-fingerprints.yaml'
     max_targets = 50
-    input_records = [data_model.ServerRecordType.PORT,
-                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
-                     data_model.ServerRecordType.SUBNET]
+    input_records = [
+        data_model.ServerRecordType.PORT,
+        data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+        data_model.ServerRecordType.SUBNET,
+    ]
     output_records = [
         data_model.ServerRecordType.COLLECTION_MODULE,
         data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
@@ -103,13 +104,14 @@ class Nuclei(ToolSpec):
             ...     print(f"{module.name}: {module.args}")
         """
         from reverge_collector.module_cache import get_cached_modules
-        return get_cached_modules('nuclei', Nuclei._fingerprint,
-                                  Nuclei._generate_nuclei_modules)
+
+        return get_cached_modules('nuclei', Nuclei._fingerprint, Nuclei._generate_nuclei_modules)
 
     @staticmethod
     def _fingerprint() -> Optional[str]:
         """Cache fingerprint: SHA-256 of the .templates-index file."""
         from reverge_collector.module_cache import sha256_file
+
         result = process_wrapper(cmd_args=['nuclei', '-duc', '-tv'], store_output=True)
         if not result or result.get('exit_code', 1) != 0:
             return None
@@ -118,7 +120,7 @@ class Nuclei(ToolSpec):
                 start = line.rfind('(')
                 end = line.rfind(')')
                 if 0 <= start < end:
-                    root = line[start + 1:end].strip()
+                    root = line[start + 1 : end].strip()
                     index = os.path.join(root, '.templates-index')
                     if os.path.exists(index):
                         return sha256_file(index)
@@ -136,7 +138,7 @@ class Nuclei(ToolSpec):
 
             if result and 'exit_code' in result and result['exit_code'] != 0:
                 logging.getLogger(__name__).warning(
-                    f"nuclei -tl failed with exit code {result['exit_code']}"
+                    f'nuclei -tl failed with exit code {result["exit_code"]}'
                 )
                 return modules
 
@@ -150,26 +152,24 @@ class Nuclei(ToolSpec):
                     start = line.rfind('(')
                     end = line.rfind(')')
                     if start != -1 and end != -1 and start < end:
-                        template_root_path = line[start+1:end].strip()
+                        template_root_path = line[start + 1 : end].strip()
                     break
 
             # Parse template list - each line is a template path
             if not template_root_path:
-                logging.getLogger(__name__).warning(
-                    "No templates found from nuclei -tl")
+                logging.getLogger(__name__).warning('No templates found from nuclei -tl')
                 return modules
 
-            template_index = template_root_path + "/.templates-index"
+            template_index = template_root_path + '/.templates-index'
 
             # Read the index file to get list of template IDs and paths
             # Format: template_id,/full/path/to/template.yaml
             try:
                 with open(template_index, 'r') as index_file:
-                    index_entries = [line.strip()
-                                     for line in index_file if line.strip()]
+                    index_entries = [line.strip() for line in index_file if line.strip()]
             except Exception as e:
                 logging.getLogger(__name__).warning(
-                    f"Failed to read template index file {template_index}: {str(e)}"
+                    f'Failed to read template index file {template_index}: {str(e)}'
                 )
                 return modules
 
@@ -182,15 +182,14 @@ class Nuclei(ToolSpec):
                     parts = index_entry.split(',', 1)
                     if len(parts) != 2:
                         logging.getLogger(__name__).debug(
-                            f"Invalid index entry format: {index_entry}"
+                            f'Invalid index entry format: {index_entry}'
                         )
                         continue
 
                     template_id_from_index = parts[0].strip()
                     full_template_path = parts[1].strip()
 
-                    template_path = full_template_path.replace(
-                        template_root_path + os.sep, '')
+                    template_path = full_template_path.replace(template_root_path + os.sep, '')
 
                     # Read only up to the 'variables:' field to minimize overhead
                     yaml_content = ''
@@ -203,7 +202,7 @@ class Nuclei(ToolSpec):
                                     break
                     except Exception as e:
                         logging.getLogger(__name__).debug(
-                            f"Failed to read template file {full_template_path}: {str(e)}"
+                            f'Failed to read template file {full_template_path}: {str(e)}'
                         )
                         continue
 
@@ -215,7 +214,7 @@ class Nuclei(ToolSpec):
                         template_data = yaml.safe_load(yaml_content)
                     except Exception as e:
                         logging.getLogger(__name__).debug(
-                            f"Failed to parse YAML for template {full_template_path}: {str(e)}"
+                            f'Failed to parse YAML for template {full_template_path}: {str(e)}'
                         )
                         continue
 
@@ -237,8 +236,8 @@ class Nuclei(ToolSpec):
                     module.description = template_name
                     if template_description:
                         # Clean up description - remove leading/trailing whitespace
-                        module.description += ": " + template_description.strip()
-                    module.args = f"-t {template_path}"
+                        module.description += ': ' + template_description.strip()
+                    module.args = f'-t {template_path}'
 
                     # Derive CPE: prefer classification.cpe; fall back to
                     # constructing from metadata vendor + product fields.
@@ -249,7 +248,7 @@ class Nuclei(ToolSpec):
                         vendor = metadata.get('vendor', '').strip()
                         product = metadata.get('product', '').strip()
                         if vendor and product:
-                            cpe = f"cpe:2.3:a:{vendor}:{product}:*:*:*:*:*:*:*:*"
+                            cpe = f'cpe:2.3:a:{vendor}:{product}:*:*:*:*:*:*:*:*'
                     if cpe:
                         module.cpe = cpe
 
@@ -257,14 +256,12 @@ class Nuclei(ToolSpec):
 
                 except Exception as e:
                     logging.getLogger(__name__).debug(
-                        f"Error processing template {template_path}: {str(e)}"
+                        f'Error processing template {template_path}: {str(e)}'
                     )
                     continue
 
         except Exception as e:
-            logging.getLogger(__name__).error(
-                f"Error getting nuclei modules: {str(e)}"
-            )
+            logging.getLogger(__name__).error(f'Error getting nuclei modules: {str(e)}')
             logging.getLogger(__name__).debug(traceback.format_exc())
 
         return modules
@@ -274,7 +271,7 @@ def get_output_path(scan_input) -> str:
     scan_id: str = scan_input.id
     tool_name: str = scan_input.current_tool.name
     dir_path: str = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-    return dir_path + os.path.sep + "nuclei_outputs_" + scan_id
+    return dir_path + os.path.sep + 'nuclei_outputs_' + scan_id
 
 
 def execute_scan(scan_input) -> None:
@@ -290,13 +287,13 @@ def execute_scan(scan_input) -> None:
     if os.name == 'nt':
         use_shell = True
     else:
-        my_env["HOME"] = "/opt"
+        my_env['HOME'] = '/opt'
 
     nuclei_output_file: Optional[str] = None
 
     custom_args: Optional[List[str]] = None
     if scheduled_scan_obj.current_tool.args:
-        custom_args = scheduled_scan_obj.current_tool.args.split(" ")
+        custom_args = scheduled_scan_obj.current_tool.args.split(' ')
 
     all_endpoint_port_obj_map = scheduled_scan_obj.scan_data.get_url_metadata_map()
     endpoint_port_obj_map = {}
@@ -308,27 +305,25 @@ def execute_scan(scan_input) -> None:
 
     counter: int = 0
     if len(total_endpoint_set) > 0:
-        nuclei_scan_input_file_path: str = (
-            output_dir + os.path.sep + "nuclei_scan_in").strip()
+        nuclei_scan_input_file_path: str = (output_dir + os.path.sep + 'nuclei_scan_in').strip()
 
         with open(nuclei_scan_input_file_path, 'w') as file_fd:
             for endpoint in total_endpoint_set:
                 file_fd.write(endpoint + '\n')
 
-        nuclei_output_file = output_dir + os.path.sep + \
-            "nuclei_scan_out" + "_" + str(counter)
+        nuclei_output_file = output_dir + os.path.sep + 'nuclei_scan_out' + '_' + str(counter)
 
         command: List[str] = []
         if os.name != 'nt':
-            command.append("sudo")
+            command.append('sudo')
 
         command_inner: List[str] = [
-            "nuclei",
-            "-duc",
-            "-jsonl",
-            "-l",
+            'nuclei',
+            '-duc',
+            '-jsonl',
+            '-l',
             nuclei_scan_input_file_path,
-            "-o",
+            '-o',
             nuclei_output_file,
         ]
         if custom_args:
@@ -336,10 +331,16 @@ def execute_scan(scan_input) -> None:
         command.extend(command_inner)
 
         callback_with_tool_id = partial(
-            scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
+            scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id
+        )
 
         future_inst = scan_utils.executor.submit(
-            process_wrapper, cmd_args=command, use_shell=use_shell, my_env=my_env, pid_callback=callback_with_tool_id)
+            process_wrapper,
+            cmd_args=command,
+            use_shell=use_shell,
+            my_env=my_env,
+            pid_callback=callback_with_tool_id,
+        )
 
         ret_dict = future_inst.result()
         if ret_dict and 'exit_code' in ret_dict:
@@ -349,13 +350,17 @@ def execute_scan(scan_input) -> None:
                 if 'stderr' in ret_dict and ret_dict['stderr']:
                     err_msg = ret_dict['stderr']
                 logging.getLogger(__name__).error(
-                    "Nuclei scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
-                raise RuntimeError("Nuclei scan for scan ID %s exited with code %d: %s" % (
-                    scheduled_scan_obj.id, exit_code, err_msg))
+                    'Nuclei scan for scan ID %s exited with code %d: %s'
+                    % (scheduled_scan_obj.id, exit_code, err_msg)
+                )
+                raise RuntimeError(
+                    'Nuclei scan for scan ID %s exited with code %d: %s'
+                    % (scheduled_scan_obj.id, exit_code, err_msg)
+                )
 
     results_dict: Dict[str, Any] = {
         'endpoint_port_obj_map': endpoint_port_obj_map,
-        'output_file_path': nuclei_output_file
+        'output_file_path': nuclei_output_file,
     }
     with open(output_file_path, 'w') as file_fd:
         file_fd.write(json.dumps(results_dict))
@@ -395,15 +400,15 @@ def parse_nuclei_output(
         if endpoint_port_obj_map is not None:
             if endpoint not in endpoint_port_obj_map:
                 logging.getLogger(__name__).debug(
-                    "Endpoint not in map: %s %s" % (endpoint, str(endpoint_port_obj_map)))
+                    'Endpoint not in map: %s %s' % (endpoint, str(endpoint_port_obj_map))
+                )
                 continue
             port_id = endpoint_port_obj_map[endpoint]['port_id']
         else:
             # Standalone: build host/port from the result URL
             parsed_url = urlparse(endpoint)
             hostname = parsed_url.hostname
-            port_num = parsed_url.port or (
-                443 if parsed_url.scheme == 'https' else 80)
+            port_num = parsed_url.port or (443 if parsed_url.scheme == 'https' else 80)
 
             host_obj = data_model.Host()
             host_obj.collection_tool_instance_id = tool_instance_id
@@ -439,7 +444,7 @@ def parse_nuclei_output(
             vendor = str(metadata.get('vendor', '')).strip()
             product = str(metadata.get('product', '')).strip()
             if vendor and product:
-                template_cpe = f"cpe:2.3:a:{vendor}:{product}:*:*:*:*:*:*:*:*"
+                template_cpe = f'cpe:2.3:a:{vendor}:{product}:*:*:*:*:*:*:*:*'
 
         matcher_name = nuclei_scan_result.get('matcher-name', '')
         matcher_cpe = nuclei_scan_result.get('matcher-cpe', '')
@@ -467,7 +472,7 @@ def parse_nuclei_output(
             comp.cpe = template_cpe
             ret_arr.append(comp)
 
-        if template_id.startswith("cve-"):
+        if template_id.startswith('cve-'):
             vuln_obj = data_model.Vuln(parent_id=port_id)
             vuln_obj.collection_tool_instance_id = tool_instance_id
             vuln_obj.name = template_id
@@ -482,8 +487,7 @@ def parse_nuclei_output(
         module_id = module_obj.id
 
         if module_id:
-            module_output_obj = data_model.CollectionModuleOutput(
-                parent_id=module_id)
+            module_output_obj = data_model.CollectionModuleOutput(parent_id=module_id)
             module_output_obj.collection_tool_instance_id = tool_instance_id
             module_output_obj.output = nuclei_scan_result
             module_output_obj.port_id = port_id

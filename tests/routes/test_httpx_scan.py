@@ -1,18 +1,19 @@
 import base64
+import json
 import os
 import shutil
-import json
 import uuid
-from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
-from reverge_collector.data_model import ScheduledScan, ScanData
 from types import SimpleNamespace
 from unittest.mock import patch
+
+from reverge_collector.data_model import ScanData, ScheduledScan
+from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
 from reverge_collector.scan_utils import get_port_byte_array
+
 from tests.conftest import get_tool_id
 
 
 class TestHttpxScan:
-
     TOOL_NAME = 'httpx'
     TEST_SCAN_ID = format(uuid.uuid4().int, 'x')
     TEST_SCHEDULED_SCAN_ID = format(uuid.uuid4().int, 'x')
@@ -23,27 +24,51 @@ class TestHttpxScan:
         scan_id = self.TEST_SCAN_ID
         scheduled_scan_id = self.TEST_SCHEDULED_SCAN_ID
 
-        tool_inst = {'id': 'a9866b94f7104754bd161c1ab7cbf0cd', 'collection_tool': {'wordlists': [], 'name': self.TOOL_NAME, 'args':
-                                                                                   '', 'tool_type': 2, 'scan_order': 2, 'api_key': None, 'id': tool_id_instance}, 'args_override': '-favicon -td -t 50 -timeout 3 -maxhr 5 -rstr 10000 -tls-grab -ss',
-                     'enabled': 1, 'status': 0, 'status_message': None, 'collection_tool_id': tool_id_instance,
-                     'scheduled_scan_id': scheduled_scan_id, 'owner_id': '94cb514e85da4abea6ee227730328619'}
+        tool_inst = {
+            'id': 'a9866b94f7104754bd161c1ab7cbf0cd',
+            'collection_tool': {
+                'wordlists': [],
+                'name': self.TOOL_NAME,
+                'args': '',
+                'tool_type': 2,
+                'scan_order': 2,
+                'api_key': None,
+                'id': tool_id_instance,
+            },
+            'args_override': '-favicon -td -t 50 -timeout 3 -maxhr 5 -rstr 10000 -tls-grab -ss',
+            'enabled': 1,
+            'status': 0,
+            'status_message': None,
+            'collection_tool_id': tool_id_instance,
+            'scheduled_scan_id': scheduled_scan_id,
+            'owner_id': '94cb514e85da4abea6ee227730328619',
+        }
 
         scheduler_inst_object = {
-            "id": scheduled_scan_id,
-            "scan_id": scan_id,
-            "target_id": 1234,
-            'collection_tools': [tool_inst], }
+            'id': scheduled_scan_id,
+            'scan_id': scan_id,
+            'target_id': 1234,
+            'collection_tools': [tool_inst],
+        }
 
         data = json.dumps(scheduler_inst_object)
-        sched_scan_arr = json.loads(
-            data, object_hook=lambda d: SimpleNamespace(**d))
+        sched_scan_arr = json.loads(data, object_hook=lambda d: SimpleNamespace(**d))
 
-        port_list = "443"
+        port_list = '443'
         target_domain = 'www.securifera.com'
         port_bytes = get_port_byte_array(port_list)
         b64_ports = base64.b64encode(port_bytes).decode()
-        scope = {'b64_port_bitmap': b64_ports,
-                 'obj_list': [{'type': 'domain', 'id': 'fadf99076dcf42e6a21549d074560b42', 'data': {'name': target_domain}, 'tags': [3]}]}
+        scope = {
+            'b64_port_bitmap': b64_ports,
+            'obj_list': [
+                {
+                    'type': 'domain',
+                    'id': 'fadf99076dcf42e6a21549d074560b42',
+                    'data': {'name': target_domain},
+                    'tags': [3],
+                }
+            ],
+        }
         scan_data = {
             'scan_id': scan_id,
             'scope': scope,
@@ -51,7 +76,6 @@ class TestHttpxScan:
 
         scan_thread = ScheduledScanThread(recon_manager, None)
         with patch.object(ReconManager, 'get_scheduled_scan', return_value=scan_data):
-
             scheduled_scan_obj = ScheduledScan(scan_thread, sched_scan_arr)
 
             first_key = next(iter(scheduled_scan_obj.collection_tool_map))
@@ -64,16 +88,28 @@ class TestHttpxScan:
 
             result = recon_manager.scan_func(scheduled_scan_obj)
             assert result == True
-            output_dir = "/tmp/%s" % scheduled_scan_id
+            output_dir = '/tmp/%s' % scheduled_scan_id
             assert os.path.exists(output_dir) == True
-            input_conf = "%s/%s-outputs/%s_in_%s" % (
-                output_dir, self.TOOL_NAME, self.TOOL_NAME, port_list)
+            input_conf = '%s/%s-outputs/%s_in_%s' % (
+                output_dir,
+                self.TOOL_NAME,
+                self.TOOL_NAME,
+                port_list,
+            )
             assert os.path.exists(input_conf) == True
-            target_output = "%s/%s-outputs/%s_outputs_%s" % (
-                output_dir, self.TOOL_NAME, self.TOOL_NAME, scheduled_scan_id)
+            target_output = '%s/%s-outputs/%s_outputs_%s' % (
+                output_dir,
+                self.TOOL_NAME,
+                self.TOOL_NAME,
+                scheduled_scan_id,
+            )
             assert os.path.exists(target_output) == True
-            output_file = "%s/%s-outputs/%s_out_%s" % (
-                output_dir, self.TOOL_NAME, self.TOOL_NAME, port_list)
+            output_file = '%s/%s-outputs/%s_out_%s' % (
+                output_dir,
+                self.TOOL_NAME,
+                self.TOOL_NAME,
+                port_list,
+            )
             assert os.path.exists(output_file) == True
 
             with open(input_conf, 'r') as f:
@@ -91,37 +127,60 @@ class TestHttpxScan:
         scan_id = self.TEST_SCAN_ID
         scheduled_scan_id = self.TEST_SCHEDULED_SCAN_ID
 
-        tool_inst = {'id': 'a9866b94f7104754bd161c1ab7cbf0cd', 'collection_tool': {'wordlists': [], 'name': self.TOOL_NAME, 'args':
-                                                                                   '', 'tool_type': 2, 'scan_order': 2, 'api_key': None, 'id': tool_id_instance}, 'args_override': '-favicon -td -t 50 -timeout 3 -maxhr 5 -rstr 10000 -tls-grab -ss',
-                     'enabled': 1, 'status': 0, 'status_message': None, 'collection_tool_id': tool_id_instance,
-                     'scheduled_scan_id': scheduled_scan_id, 'owner_id': '94cb514e85da4abea6ee227730328619'}
+        tool_inst = {
+            'id': 'a9866b94f7104754bd161c1ab7cbf0cd',
+            'collection_tool': {
+                'wordlists': [],
+                'name': self.TOOL_NAME,
+                'args': '',
+                'tool_type': 2,
+                'scan_order': 2,
+                'api_key': None,
+                'id': tool_id_instance,
+            },
+            'args_override': '-favicon -td -t 50 -timeout 3 -maxhr 5 -rstr 10000 -tls-grab -ss',
+            'enabled': 1,
+            'status': 0,
+            'status_message': None,
+            'collection_tool_id': tool_id_instance,
+            'scheduled_scan_id': scheduled_scan_id,
+            'owner_id': '94cb514e85da4abea6ee227730328619',
+        }
 
         scheduler_inst_object = {
-            "id": scheduled_scan_id,
-            "scan_id": scan_id,
-            "target_id": 1234,
-            'collection_tools': [tool_inst], }
+            'id': scheduled_scan_id,
+            'scan_id': scan_id,
+            'target_id': 1234,
+            'collection_tools': [tool_inst],
+        }
 
         data = json.dumps(scheduler_inst_object)
-        sched_scan_arr = json.loads(
-            data, object_hook=lambda d: SimpleNamespace(**d))
+        sched_scan_arr = json.loads(data, object_hook=lambda d: SimpleNamespace(**d))
 
-        port_list = "443"
+        port_list = '443'
         target_domain = 'www.securifera.com'
         port_bytes = get_port_byte_array(port_list)
         b64_ports = base64.b64encode(port_bytes).decode()
-        scope = {'b64_port_bitmap': b64_ports,
-                 'obj_list': [{'type': 'domain', 'id': 'fadf99076dcf42e6a21549d074560b42', 'data': {'name': target_domain}, 'tags': [3]}]}
+        scope = {
+            'b64_port_bitmap': b64_ports,
+            'obj_list': [
+                {
+                    'type': 'domain',
+                    'id': 'fadf99076dcf42e6a21549d074560b42',
+                    'data': {'name': target_domain},
+                    'tags': [3],
+                }
+            ],
+        }
         scan_data = {
             'scan_id': scan_id,
             'scope': scope,
         }
 
-        output_dir = "/tmp/%s" % scheduled_scan_id
+        output_dir = '/tmp/%s' % scheduled_scan_id
         try:
             scan_thread = ScheduledScanThread(recon_manager, None)
             with patch.object(ReconManager, 'get_scheduled_scan', return_value=scan_data):
-
                 scheduled_scan_obj = ScheduledScan(scan_thread, sched_scan_arr)
                 first_key = next(iter(scheduled_scan_obj.collection_tool_map))
                 first_tool = scheduled_scan_obj.collection_tool_map[first_key]
@@ -134,8 +193,7 @@ class TestHttpxScan:
                 with patch.object(ReconManager, 'import_data', return_value={}):
                     result = recon_manager.import_func(scheduled_scan_obj)
                     assert result == True
-                    output_json = "%s/httpx-outputs/tool_import_json" % (
-                        output_dir)
+                    output_json = '%s/httpx-outputs/tool_import_json' % (output_dir)
                     assert os.path.exists(output_json) == True
 
                     import_arr = []
@@ -208,7 +266,7 @@ class TestHttpxScan:
 
                         path_map = scan_data.path_map
                         first_path = next(iter(path_map.values()))
-                        assert first_path.web_path == "/"
+                        assert first_path.web_path == '/'
 
         finally:
             # Cleanup

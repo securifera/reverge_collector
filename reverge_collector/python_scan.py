@@ -33,27 +33,24 @@ Note:
 .. version:: 1.0.0
 """
 
-from functools import partial
-import json
-import os
-from typing import Dict, Any, List, Set, Optional
 import logging
+import os
+from functools import partial
+from typing import Any, Dict, List, Optional
 
-from reverge_collector import scan_utils
-from reverge_collector import data_model
+from reverge_collector import data_model, scan_utils
 from reverge_collector.proc_utils import process_wrapper
 from reverge_collector.tool_spec import ToolSpec
 
 
 class Python(ToolSpec):
-
     name = 'python'
     description = 'Executes a Python script directly on the collector. Provide the Python code to run in the args field; it will be passed via stdin to the Python interpreter.'
     project_url = 'https://www.python.org/'
     tags = ['code-exec']
     collector_type = data_model.CollectorType.ACTIVE.value
     scan_order = 7
-    args = ""
+    args = ''
     input_records = [data_model.ServerRecordType.PORT]
     output_records = [
         data_model.ServerRecordType.COLLECTION_MODULE,
@@ -76,7 +73,7 @@ def get_output_path(scan_input: data_model.ScheduledScan) -> str:
     scan_id: str = scan_input.id
     tool_name: str = scan_input.current_tool.name
     dir_path: str = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-    return f"{dir_path}{os.path.sep}{tool_name}_outputs_{scan_id}"
+    return f'{dir_path}{os.path.sep}{tool_name}_outputs_{scan_id}'
 
 
 def execute_scan(scan_input: data_model.ScheduledScan) -> None:
@@ -93,22 +90,25 @@ def execute_scan(scan_input: data_model.ScheduledScan) -> None:
     if scheduled_scan_obj.current_tool.args:
         custom_args = scheduled_scan_obj.current_tool.args
     else:
-        raise RuntimeError("Custom arguments are required for the scan.")
+        raise RuntimeError('Custom arguments are required for the scan.')
 
     scan_results = ''
     if len(target_map) > 0:
-
         # Build command arguments
-        command: List[str] = [
-            "python3"
-        ]
+        command: List[str] = ['python3']
 
         # Execute scan with process tracking
         callback_with_tool_id = partial(
-            scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
+            scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id
+        )
 
         future_inst = scan_utils.executor.submit(
-            process_wrapper, cmd_args=command, stdin_data=custom_args, pid_callback=callback_with_tool_id, store_output=True)
+            process_wrapper,
+            cmd_args=command,
+            stdin_data=custom_args,
+            pid_callback=callback_with_tool_id,
+            store_output=True,
+        )
 
         # Wait for scan completion
         ret_dict = future_inst.result()
@@ -120,14 +120,17 @@ def execute_scan(scan_input: data_model.ScheduledScan) -> None:
                     if 'stderr' in ret_dict and ret_dict['stderr']:
                         err_msg = ret_dict['stderr']
                     logging.getLogger(__name__).error(
-                        "Python scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
-                    raise RuntimeError("Python scan for scan ID %s exited with code %d: %s" % (
-                        scheduled_scan_obj.id, exit_code, err_msg))
+                        'Python scan for scan ID %s exited with code %d: %s'
+                        % (scheduled_scan_obj.id, exit_code, err_msg)
+                    )
+                    raise RuntimeError(
+                        'Python scan for scan ID %s exited with code %d: %s'
+                        % (scheduled_scan_obj.id, exit_code, err_msg)
+                    )
             if 'stdout' in ret_dict and ret_dict['stdout']:
                 scan_results = ret_dict['stdout']
     else:
-        raise RuntimeError(
-            "No ports found for Python scan. Skipping scan execution.")
+        raise RuntimeError('No ports found for Python scan. Skipping scan execution.')
 
     # Write output file
     with open(output_file_path, 'w') as file_fd:
@@ -141,12 +144,10 @@ def parse_python_scan_output(output_file, tool_instance_id, tool_id, target_map=
 
     ret_arr: List[Any] = []
     if len(data) > 0:
-
         # Add collection module for non-module scans
-        module_obj = data_model.CollectionModule(
-            parent_id=tool_id)
+        module_obj = data_model.CollectionModule(parent_id=tool_id)
         module_obj.collection_tool_instance_id = tool_instance_id
-        module_obj.name = "python-script"
+        module_obj.name = 'python-script'
         module_obj.args = ''
         ret_arr.append(module_obj)
         module_id = module_obj.id
@@ -159,8 +160,7 @@ def parse_python_scan_output(output_file, tool_instance_id, tool_id, target_map=
 
                 # Add module output for all scan results
                 if module_id:
-                    module_output_obj = data_model.CollectionModuleOutput(
-                        parent_id=module_id)
+                    module_output_obj = data_model.CollectionModuleOutput(parent_id=module_id)
                     module_output_obj.collection_tool_instance_id = tool_instance_id
                     module_output_obj.output = data
                     module_output_obj.port_id = port_id

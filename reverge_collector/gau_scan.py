@@ -29,13 +29,13 @@ Global Variables:
 
 Example:
     Basic usage through the reverge_collector framework::
-        
+
         # Initialize the tool
         gau = Gau()
-        
+
         # Execute passive URL enumeration
         success = gau.scan_func(scan_input_obj)
-        
+
         # Import results
         imported = gau.import_func(scan_input_obj)
 
@@ -48,26 +48,24 @@ Note:
 
 """
 
-import json
-import os
-import netaddr
-import traceback
-import os.path
-import logging
-import hashlib
 import binascii
-
-from typing import List, Dict, Set, Optional, Any, Tuple
+import hashlib
+import json
+import logging
+import os
+import os.path
 from functools import partial
-from reverge_collector import scan_utils
-from reverge_collector import data_model
+from typing import Any, List, Optional
 from urllib.parse import urlparse
+
+import netaddr
+
+from reverge_collector import data_model, scan_utils
 from reverge_collector.proc_utils import process_wrapper
 from reverge_collector.tool_spec import ToolSpec
 
 
 class Gau(ToolSpec):
-
     name = 'gau'
     description = "getallurls (gau) fetches known URLs from AlienVault's Open Threat Exchange, the Wayback Machine, Common Crawl, and URLScan for any given domain. Inspired by Tomnomnom's waybackurls."
     project_url = 'https://github.com/lc/gau'
@@ -108,14 +106,15 @@ def get_output_path(scan_input: Any) -> str:
     scan_id = scan_input.id
     tool_name = scan_input.current_tool.name
     dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-    return f"{dir_path}{os.path.sep}{tool_name}_meta_{scan_id}.json"
+    return f'{dir_path}{os.path.sep}{tool_name}_meta_{scan_id}.json'
 
 
 def execute_scan(scan_input: Any) -> None:
     gau_meta_file_path = get_output_path(scan_input)
     if os.path.exists(gau_meta_file_path):
         logging.getLogger(__name__).debug(
-            "Output path %s already exists, skipping gau scan execution", gau_meta_file_path)
+            'Output path %s already exists, skipping gau scan execution', gau_meta_file_path
+        )
         return
 
     scheduled_scan_obj = scan_input
@@ -125,16 +124,14 @@ def execute_scan(scan_input: Any) -> None:
     domain_list_str = None
     all_endpoint_port_obj_map = scope_obj.get_url_metadata_map()
     if len(all_endpoint_port_obj_map) > 0:
-
         # Filter URLs to only include base URLs (path is None or "/")
         for url, port_data in all_endpoint_port_obj_map.items():
             # Only include URLs with no specific path or root path
             if port_data.get('path') is None or port_data.get('path').endswith('/'):
-
                 u = urlparse(url)
                 domain_str = u.netloc
-                if ":" in domain_str:
-                    domain_arr = domain_str.split(":")
+                if ':' in domain_str:
+                    domain_arr = domain_str.split(':')
                     domain_str = domain_arr[0].lower()
                 else:
                     domain_str = domain_str.lower()
@@ -145,36 +142,34 @@ def execute_scan(scan_input: Any) -> None:
             domain_list_str = '\n'.join(domain_host_map.keys())
 
     else:
-
         domain_obj_list = scope_obj.get_domains(
-            [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+            [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value]
+        )
 
         # Create a list of domains to pass to gau
-        domain_list_str = '\n'.join(
-            domain.name for domain in domain_obj_list)
+        domain_list_str = '\n'.join(domain.name for domain in domain_obj_list)
 
     tool_args = scheduled_scan_obj.current_tool.args
     if tool_args:
-        tool_args = tool_args.split(" ")
+        tool_args = tool_args.split(' ')
 
     dir_path = os.path.dirname(gau_meta_file_path)
-    gau_scan_output_path = f"{dir_path}{os.path.sep}{scheduled_scan_obj.current_tool.name}_outputs_{scheduled_scan_obj.id}.json"
+    gau_scan_output_path = f'{dir_path}{os.path.sep}{scheduled_scan_obj.current_tool.name}_outputs_{scheduled_scan_obj.id}.json'
 
     # Add env variables for HOME
     my_env = os.environ.copy()
 
     if os.name != 'nt':
         home_dir = os.path.expanduser('~')
-        my_env["HOME"] = home_dir
+        my_env['HOME'] = home_dir
 
     # Add the lines
     if len(domain_list_str) > 0:
-
         command = []
         command_arr = [
-            "gau",
-            "--json",
-            "--o",
+            'gau',
+            '--json',
+            '--o',
             gau_scan_output_path,
         ]
 
@@ -185,16 +180,25 @@ def execute_scan(scan_input: Any) -> None:
             command.extend(tool_args)
 
         callback_with_tool_id = partial(
-            scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
+            scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id
+        )
 
         # Add process dict to process array
         future = scan_utils.executor.submit(
-            process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id, stdin_data=domain_list_str, my_env=my_env, print_output=False, store_output=False)
+            process_wrapper,
+            cmd_args=command,
+            pid_callback=callback_with_tool_id,
+            stdin_data=domain_list_str,
+            my_env=my_env,
+            print_output=False,
+            store_output=False,
+        )
 
         # Register futures
         scan_proc_inst = data_model.ToolExecutor([future])
         scheduled_scan_obj.register_tool_executor(
-            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst
+        )
 
         ret_dict = future.result()
         if ret_dict and 'exit_code' in ret_dict:
@@ -204,14 +208,19 @@ def execute_scan(scan_input: Any) -> None:
                 if 'stderr' in ret_dict and ret_dict['stderr']:
                     err_msg = ret_dict['stderr']
                 logging.getLogger(__name__).error(
-                    "Gau scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
-                raise RuntimeError("Gau scan for scan ID %s exited with code %d: %s" % (
-                    scheduled_scan_obj.id, exit_code, err_msg))
+                    'Gau scan for scan ID %s exited with code %d: %s'
+                    % (scheduled_scan_obj.id, exit_code, err_msg)
+                )
+                raise RuntimeError(
+                    'Gau scan for scan ID %s exited with code %d: %s'
+                    % (scheduled_scan_obj.id, exit_code, err_msg)
+                )
 
         # Write the output file
         with open(gau_meta_file_path, 'w') as output_fd:
-            output_fd.write(json.dumps(
-                {'domain_map': domain_host_map, 'output_file': gau_scan_output_path}))
+            output_fd.write(
+                json.dumps({'domain_map': domain_host_map, 'output_file': gau_scan_output_path})
+            )
 
 
 def parse_gau_output(
@@ -258,21 +267,21 @@ def parse_gau_output(
                             hashobj = hash_alg()
                             hashobj.update(web_path_str.encode())
                             path_hash = hashobj.digest()
-                            web_path_hash = binascii.hexlify(
-                                path_hash).decode()
+                            web_path_hash = binascii.hexlify(path_hash).decode()
 
                         host = u.netloc
                         port_str = None
-                        if ":" in host:
-                            host_arr = host.split(":")
+                        if ':' in host:
+                            host_arr = host.split(':')
                             domain_str = host_arr[0].lower()
                             port_str = host_arr[1]
                         else:
                             domain_str = host.lower()
 
                         if not port_str:
-                            port_str = str(u.port) if u.port else (
-                                '443' if u.scheme == 'https' else '80')
+                            port_str = (
+                                str(u.port) if u.port else ('443' if u.scheme == 'https' else '80')
+                            )
                         secure = u.scheme == 'https'
 
                         try:
@@ -288,8 +297,7 @@ def parse_gau_output(
                         if 'host_id' in port_data:
                             host_id = port_data['host_id']
                         else:
-                            ret_list = scan_utils.dns_wrapper(
-                                set([domain_str]))
+                            ret_list = scan_utils.dns_wrapper(set([domain_str]))
                             if ret_list and len(ret_list) > 0:
                                 ip_addr = ret_list[0]['ip']
                                 if ip_addr in host_ip_id_map:
@@ -323,8 +331,7 @@ def parse_gau_output(
                             if domain_str in domain_name_id_map:
                                 domain_id = domain_name_id_map[domain_str]
                             else:
-                                domain_obj = data_model.Domain(
-                                    parent_id=host_id)
+                                domain_obj = data_model.Domain(parent_id=host_id)
                                 domain_obj.collection_tool_instance_id = tool_instance_id
                                 domain_obj.name = domain_str
                                 domain_id = domain_obj.id
@@ -343,14 +350,14 @@ def parse_gau_output(
 
                         web_path_id = path_obj.id
 
-                        http_endpoint_obj = data_model.HttpEndpoint(
-                            parent_id=port_id)
+                        http_endpoint_obj = data_model.HttpEndpoint(parent_id=port_id)
                         http_endpoint_obj.collection_tool_instance_id = tool_instance_id
                         http_endpoint_obj.web_path_id = web_path_id
                         ret_arr.append(http_endpoint_obj)
 
                         http_endpoint_data_obj = data_model.HttpEndpointData(
-                            parent_id=http_endpoint_obj.id)
+                            parent_id=http_endpoint_obj.id
+                        )
                         http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
                         http_endpoint_data_obj.domain_id = domain_id
                         ret_arr.append(http_endpoint_data_obj)

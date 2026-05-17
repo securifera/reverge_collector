@@ -18,7 +18,7 @@ The module includes:
 
 Classes:
     Subfinder: Main tool class for subdomain discovery
-    SubfinderScan: Luigi task for executing subdomain scans  
+    SubfinderScan: Luigi task for executing subdomain scans
     SubfinderImport: Luigi task for importing scan results
 
 Functions:
@@ -28,24 +28,22 @@ Functions:
     dns_wrapper: Perform DNS resolution for discovered domains
 """
 
-from functools import partial
 import json
-import os
-import netaddr
-import traceback
-import os.path
-import yaml
 import logging
-from typing import List, Dict, Set, Optional, Any, Tuple
+import os
+import os.path
+from functools import partial
+from typing import Any, Dict, List, Optional, Set
 
-from reverge_collector import scan_utils
-from reverge_collector import data_model
+import netaddr
+import yaml
+
+from reverge_collector import data_model, scan_utils
 from reverge_collector.proc_utils import process_wrapper
 from reverge_collector.tool_spec import ToolSpec
 
 
 class Subfinder(ToolSpec):
-
     name = 'subfinder'
     description = 'subfinder is a subdomain discovery tool that returns valid subdomains for websites, using passive online sources. It has a simple, modular architecture and is optimized for speed.'
     project_url = 'https://github.com/projectdiscovery/subfinder'
@@ -72,8 +70,13 @@ class Subfinder(ToolSpec):
         )
 
 
-def subfinder_wrapper(scheduled_scan_obj: Any, scan_output_file_path: str,
-                      command: List[str], use_shell: bool, my_env: Dict[str, str]) -> List[Dict[str, str]]:
+def subfinder_wrapper(
+    scheduled_scan_obj: Any,
+    scan_output_file_path: str,
+    command: List[str],
+    use_shell: bool,
+    my_env: Dict[str, str],
+) -> List[Dict[str, str]]:
     """
     Execute Subfinder command and parse results.
 
@@ -104,10 +107,12 @@ def subfinder_wrapper(scheduled_scan_obj: Any, scan_output_file_path: str,
     ret_list = []
     # Call subfinder process
     callback_with_tool_id = partial(
-        scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
+        scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id
+    )
 
     ret_dict = process_wrapper(
-        cmd_args=command, use_shell=use_shell, my_env=my_env, pid_callback=callback_with_tool_id)
+        cmd_args=command, use_shell=use_shell, my_env=my_env, pid_callback=callback_with_tool_id
+    )
 
     if ret_dict and 'exit_code' in ret_dict:
         exit_code = ret_dict['exit_code']
@@ -116,9 +121,13 @@ def subfinder_wrapper(scheduled_scan_obj: Any, scan_output_file_path: str,
             if 'stderr' in ret_dict and ret_dict['stderr']:
                 err_msg = ret_dict['stderr']
             logging.getLogger(__name__).error(
-                "Subfinder scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
-            raise RuntimeError("Subfinder scan for scan ID %s exited with code %d: %s" % (
-                scheduled_scan_obj.id, exit_code, err_msg))
+                'Subfinder scan for scan ID %s exited with code %d: %s'
+                % (scheduled_scan_obj.id, exit_code, err_msg)
+            )
+            raise RuntimeError(
+                'Subfinder scan for scan ID %s exited with code %d: %s'
+                % (scheduled_scan_obj.id, exit_code, err_msg)
+            )
 
     # Parse the output
     obj_arr = scan_utils.parse_json_blob_file(scan_output_file_path)
@@ -129,7 +138,8 @@ def subfinder_wrapper(scheduled_scan_obj: Any, scan_output_file_path: str,
             # subfinder emits empty ip for unresolved domains — skip them
             # so they don't corrupt the ip_map with an empty-string key
             logging.getLogger(__name__).debug(
-                "Subfinder: skipping entry with missing host/ip: %s", domain_entry)
+                'Subfinder: skipping entry with missing host/ip: %s', domain_entry
+            )
             continue
         ret_list.append({'ip': ip_str, 'domain': domain_name})
 
@@ -163,11 +173,12 @@ def get_subfinder_input(scheduled_scan_obj: Any) -> Dict[str, str]:
     scan_id = scheduled_scan_obj.id
     tool_name = scheduled_scan_obj.current_tool.name
     dir_path = scan_utils.init_tool_folder(tool_name, 'inputs', scan_id)
-    dns_url_file = dir_path + os.path.sep + "dns_urls_" + scan_id
+    dns_url_file = dir_path + os.path.sep + 'dns_urls_' + scan_id
 
     scope_obj = scheduled_scan_obj.scan_data
     domain_list = scope_obj.get_domains(
-        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value]
+    )
 
     with open(dns_url_file, 'w') as file_fd:
         for domain in domain_list:
@@ -207,18 +218,16 @@ def update_config_file(collection_tools: Optional[List[Any]], my_env: Dict[str, 
     """
 
     home_dir = os.path.expanduser('~')
-    config_file_path = "%s/.config/subfinder/provider-config.yaml" % home_dir
+    config_file_path = '%s/.config/subfinder/provider-config.yaml' % home_dir
 
     # If no file then run subfinder to generate the template
     if os.path.isfile(config_file_path) == False:
-        cmd_arr = ["subfinder", "-d", "localhost", "-timeout", "1"]
-        future = scan_utils.executor.submit(
-            process_wrapper, cmd_args=cmd_arr, my_env=my_env)
+        cmd_arr = ['subfinder', '-d', 'localhost', '-timeout', '1']
+        future = scan_utils.executor.submit(process_wrapper, cmd_args=cmd_arr, my_env=my_env)
         future.result()
 
-        cmd_arr = ["subfinder", "-h"]
-        future = scan_utils.executor.submit(
-            process_wrapper, cmd_args=cmd_arr, my_env=my_env)
+        cmd_arr = ['subfinder', '-h']
+        future = scan_utils.executor.submit(process_wrapper, cmd_args=cmd_arr, my_env=my_env)
         future.result()
 
     # Update provider config file
@@ -244,14 +253,15 @@ def get_output_path(scan_input: Any) -> str:
     scan_id = scan_input.id
     tool_name = scan_input.current_tool.name
     dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-    return f"{dir_path}{os.path.sep}subfinder_outputs_{scan_id}.json"
+    return f'{dir_path}{os.path.sep}subfinder_outputs_{scan_id}.json'
 
 
 def execute_scan(scan_input: Any) -> None:
     meta_file_path = get_output_path(scan_input)
     if os.path.exists(meta_file_path):
         logging.getLogger(__name__).debug(
-            "Output path %s already exists, skipping Subfinder scan execution", meta_file_path)
+            'Output path %s already exists, skipping Subfinder scan execution', meta_file_path
+        )
         return
 
     scheduled_scan_obj = scan_input
@@ -259,7 +269,7 @@ def execute_scan(scan_input: Any) -> None:
 
     tool_args = scheduled_scan_obj.current_tool.args
     if tool_args:
-        tool_args = tool_args.split(" ")
+        tool_args = tool_args.split(' ')
 
     dir_path = os.path.dirname(meta_file_path)
 
@@ -274,11 +284,10 @@ def execute_scan(scan_input: Any) -> None:
     use_shell = False
     if os.name != 'nt':
         home_dir = os.path.expanduser('~')
-        my_env["HOME"] = home_dir
+        my_env['HOME'] = home_dir
 
     # Set the API keys
-    update_config_file(
-        list(scheduled_scan_obj.collection_tool_map.values()), my_env)
+    update_config_file(list(scheduled_scan_obj.collection_tool_map.values()), my_env)
 
     futures = []
 
@@ -293,23 +302,23 @@ def execute_scan(scan_input: Any) -> None:
         for line in sub_lines:
             domain_str = line.strip()
             if len(domain_str) > 0 and domain_str not in domain_set:
-
                 # Add to the set
                 domain_set.add(domain_str)
                 # Create unique output file path
-                scan_output_file_path = dir_path + os.path.sep + \
-                    "subfinder_results_" + str(counter) + ".json"
+                scan_output_file_path = (
+                    dir_path + os.path.sep + 'subfinder_results_' + str(counter) + '.json'
+                )
 
                 command = []
                 command_arr = [
-                    "subfinder",
-                    "-json",
-                    "-d",
+                    'subfinder',
+                    '-json',
+                    '-d',
                     domain_str,
-                    "-o",
+                    '-o',
                     scan_output_file_path,
-                    "-active",
-                    "-ip"
+                    '-active',
+                    '-ip',
                 ]
 
                 command.extend(command_arr)
@@ -318,15 +327,24 @@ def execute_scan(scan_input: Any) -> None:
                 if tool_args and len(tool_args) > 0:
                     command.extend(tool_args)
 
-                futures.append(scan_utils.executor.submit(
-                    subfinder_wrapper, scheduled_scan_obj, scan_output_file_path, command, use_shell, my_env))
+                futures.append(
+                    scan_utils.executor.submit(
+                        subfinder_wrapper,
+                        scheduled_scan_obj,
+                        scan_output_file_path,
+                        command,
+                        use_shell,
+                        my_env,
+                    )
+                )
 
                 counter += 1
 
         # Register futures
         scan_proc_inst = data_model.ToolExecutor(futures)
         scheduled_scan_obj.register_tool_executor(
-            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst
+        )
 
         for future in futures:
             temp_list = future.result()
@@ -383,7 +401,8 @@ def parse_subfinder_output(
                     ip_object = netaddr.IPAddress(ip_addr)
                 except (netaddr.AddrFormatError, ValueError):
                     logging.getLogger(__name__).debug(
-                        "Subfinder: skipping unparseable IP %r for domains %s", ip_addr, domains)
+                        'Subfinder: skipping unparseable IP %r for domains %s', ip_addr, domains
+                    )
                     continue
 
                 host_obj = data_model.Host()

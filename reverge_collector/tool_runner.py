@@ -68,6 +68,7 @@ logger = logging.getLogger(__name__)
 # Idempotency helpers
 # ---------------------------------------------------------------------------
 
+
 def get_pre_import_marker(output_path: str) -> str:
     """Return the path of the ``tool_pre_import_json`` file for *output_path*.
 
@@ -75,7 +76,7 @@ def get_pre_import_marker(output_path: str) -> str:
     import can be retried without re-parsing the raw tool output.  It lives in
     the same directory as the scan output file.
     """
-    return os.path.join(os.path.dirname(output_path), "tool_pre_import_json")
+    return os.path.join(os.path.dirname(output_path), 'tool_pre_import_json')
 
 
 def get_import_marker(output_path: str) -> str:
@@ -85,7 +86,7 @@ def get_import_marker(output_path: str) -> str:
     Luigi's ``ImportToolXOutput.output()`` placement so that marker files
     written by previous Luigi-based runs are still recognised.
     """
-    return os.path.join(os.path.dirname(output_path), "tool_import_json")
+    return os.path.join(os.path.dirname(output_path), 'tool_import_json')
 
 
 def import_already_done(scheduled_scan_obj: Any, output_path: str) -> bool:
@@ -121,14 +122,14 @@ def import_already_done(scheduled_scan_obj: Any, output_path: str) -> bool:
             if import_arr:
                 scheduled_scan_obj.scan_data.update(import_arr)
     except Exception as exc:
-        logger.warning(
-            "Could not restore scope from marker %s: %s", marker, exc)
+        logger.warning('Could not restore scope from marker %s: %s', marker, exc)
     return True
 
 
 # ---------------------------------------------------------------------------
 # Result import
 # ---------------------------------------------------------------------------
+
 
 def load_pre_import_arr(output_path: str) -> Any:
     """Return the cached pre-import array if ``tool_pre_import_json`` exists.
@@ -152,7 +153,7 @@ def load_pre_import_arr(output_path: str) -> Any:
         if raw:
             return json.loads(raw)
     except Exception as exc:
-        logger.warning("Could not read pre-import marker %s: %s", marker, exc)
+        logger.warning('Could not read pre-import marker %s: %s', marker, exc)
     return None
 
 
@@ -169,9 +170,7 @@ def _remap_import_arr(
     if not updated_record_map:
         return import_arr
     id_map = {
-        r["orig_id"]: r["db_id"]
-        for r in updated_record_map
-        if r.get("orig_id") != r.get("db_id")
+        r['orig_id']: r['db_id'] for r in updated_record_map if r.get('orig_id') != r.get('db_id')
     }
     if not id_map:
         return import_arr
@@ -211,7 +210,7 @@ def post_pre_import(
     updated_import_arr = _remap_import_arr(import_arr, updated_record_map)
 
     import_marker = get_import_marker(output_path)
-    with open(import_marker, "w") as fh:
+    with open(import_marker, 'w') as fh:
         fh.write(json.dumps(updated_import_arr))
 
     scheduled_scan_obj.scan_data.update(updated_import_arr)
@@ -247,7 +246,7 @@ def import_results(
     tool_id = scheduled_scan_obj.current_tool.id
 
     if not obj_arr:
-        logger.warning("No objects to import for scan %s", scan_id)
+        logger.warning('No objects to import for scan %s', scan_id)
         return
 
     record_map: dict = {}
@@ -260,20 +259,18 @@ def import_results(
     # interrupted POST can be retried via post_pre_import() without
     # re-parsing the raw tool output.
     pre_import_marker = get_pre_import_marker(output_path)
-    with open(pre_import_marker, "w") as fh:
+    with open(pre_import_marker, 'w') as fh:
         fh.write(json.dumps(import_arr))
 
     # POST to server and get back the server-assigned ID mapping.
-    updated_record_map = recon_manager.import_data(
-        scan_id, tool_id, import_arr)
+    updated_record_map = recon_manager.import_data(scan_id, tool_id, import_arr)
 
     # Remap local UUIDs → server IDs and collect the updated flat records.
-    updated_import_arr = data_model.update_scope_array(
-        record_map, updated_record_map)
+    updated_import_arr = data_model.update_scope_array(record_map, updated_record_map)
 
     # Write the import marker (enables idempotent restarts).
     import_marker = get_import_marker(output_path)
-    with open(import_marker, "w") as fh:
+    with open(import_marker, 'w') as fh:
         fh.write(json.dumps(updated_import_arr))
 
     # Update the in-memory scope so later tools in the same session see the

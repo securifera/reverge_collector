@@ -52,21 +52,18 @@ Constants:
     recon_mgr_inst: Global singleton instance of ReconManager
 """
 
-from types import SimpleNamespace
-from threading import Event, Thread
-from reverge_collector import scan_cleanup
-from reverge_collector import data_model
-from reverge_collector.api_client import ApiClient
-from functools import partial, cmp_to_key
-
 import logging
-import os
-import netifaces
-import requests
 import threading
 import traceback
-from typing import Optional, Dict, List, Any, Union, Tuple
+from functools import cmp_to_key, partial
+from threading import Event, Thread
+from typing import Any, Dict, List, Optional, Tuple
 
+import netifaces
+import requests
+
+from reverge_collector import data_model, scan_cleanup
+from reverge_collector.api_client import ApiClient
 
 # Global Configuration: Disable SSL warnings for target sites with SSL issues
 requests.packages.urllib3.disable_warnings()
@@ -99,7 +96,7 @@ class SessionException(Exception):
         check connectivity with the management server.
     """
 
-    def __init__(self, message: str = "Unable to get session token") -> None:
+    def __init__(self, message: str = 'Unable to get session token') -> None:
         """
         Initialize SessionException with error message.
 
@@ -134,7 +131,7 @@ class ScanNotFoundException(Exception):
         and should be removed from local tracking.
     """
 
-    def __init__(self, message: str = "Scan not found on server") -> None:
+    def __init__(self, message: str = 'Scan not found on server') -> None:
         """
         Initialize ScanNotFoundException with error message.
 
@@ -234,7 +231,9 @@ class ScheduledScanThread(threading.Thread):
         - Supports graceful shutdown via stop() method
     """
 
-    def __init__(self, recon_manager: 'ReconManager', connection_manager: Optional[Any] = None) -> None:
+    def __init__(
+        self, recon_manager: 'ReconManager', connection_manager: Optional[Any] = None
+    ) -> None:
         """
         Initialize ScheduledScanThread with required managers and configuration.
 
@@ -278,22 +277,25 @@ class ScheduledScanThread(threading.Thread):
             try:
                 self.recon_manager.update_job_status(
                     job_id,
-                    payload["status"],
-                    status_message=payload["err_msg"] or "",
-                    result=payload["result"],
+                    payload['status'],
+                    status_message=payload['err_msg'] or '',
+                    result=payload['result'],
                 )
                 logging.getLogger(__name__).debug(
-                    "Job %s pending result flushed successfully", job_id)
+                    'Job %s pending result flushed successfully', job_id
+                )
                 with self.scan_thread_lock:
                     self.pending_job_completions.pop(job_id, None)
                     self.scheduled_scan_map.pop(job_id, None)
             except Exception:
                 logging.getLogger(__name__).warning(
-                    "Job %s result flush failed; will retry next poll", job_id)
+                    'Job %s result flush failed; will retry next poll', job_id
+                )
 
     def _process_job_with_slot(self, job_item) -> None:
         """Execute a CollectorJob and post results back to the server."""
         from reverge_collector.job_executor import run_job
+
         err_msg = None
         result = None
         try:
@@ -302,7 +304,7 @@ class ScheduledScanThread(threading.Thread):
 
             # connect_to_extender before any server communication
             if self.connection_manager and self.connection_manager.connect_to_extender() == False:
-                raise RuntimeError("Failed connecting to extender")
+                raise RuntimeError('Failed connecting to extender')
 
             # Configure connection target for this scan
             target_id = job_item.target_id
@@ -311,18 +313,21 @@ class ScheduledScanThread(threading.Thread):
             # down we proceed anyway rather than blocking or aborting the job).
             try:
                 self.recon_manager.update_job_status(
-                    job_item.id, data_model.ScanStatus.RUNNING.value)
+                    job_item.id, data_model.ScanStatus.RUNNING.value
+                )
             except Exception:
                 logging.getLogger(__name__).warning(
-                    "Job %s: failed to set RUNNING status; proceeding anyway",
+                    'Job %s: failed to set RUNNING status; proceeding anyway',
                     job_item.id,
                 )
 
             try:
                 # connect_to_target before executing the job
-                if self.connection_manager and self.connection_manager.connect_to_target(target_id) == False:
-                    raise RuntimeError(
-                        "Failed connecting to target %s" % job_item.target_id)
+                if (
+                    self.connection_manager
+                    and self.connection_manager.connect_to_target(target_id) == False
+                ):
+                    raise RuntimeError('Failed connecting to target %s' % job_item.target_id)
 
                 result = run_job(job_item.job_type, job_item.args)
 
@@ -340,7 +345,7 @@ class ScheduledScanThread(threading.Thread):
                     result=result,
                 )
                 logging.getLogger(__name__).debug(
-                    "Job %s completed (exit_code=%s)",
+                    'Job %s completed (exit_code=%s)',
                     job_item.id,
                     result.get('exit_code'),
                 )
@@ -349,22 +354,21 @@ class ScheduledScanThread(threading.Thread):
                 # the poll loop won't re-dispatch it, and store the result so
                 # the next poll iteration can retry the POST without re-running.
                 logging.getLogger(__name__).warning(
-                    "Job %s status POST failed; will retry on next poll",
+                    'Job %s status POST failed; will retry on next poll',
                     job_item.id,
                 )
                 with self.scan_thread_lock:
                     self.pending_job_completions[job_item.id] = {
-                        "status": data_model.ScanStatus.COMPLETED.value,
-                        "result": result,
-                        "err_msg": None,
+                        'status': data_model.ScanStatus.COMPLETED.value,
+                        'result': result,
+                        'err_msg': None,
                     }
                 # Return without popping the job — it stays in scheduled_scan_map.
                 return
 
         except Exception as e:
             err_msg = str(e)
-            logging.getLogger(__name__).error(
-                "Job %s failed: %s", job_item.id, e)
+            logging.getLogger(__name__).error('Job %s failed: %s', job_item.id, e)
             logging.getLogger(__name__).debug(traceback.format_exc())
             try:
                 self.recon_manager.update_job_status(
@@ -375,14 +379,14 @@ class ScheduledScanThread(threading.Thread):
             except Exception:
                 # Server unreachable — store the error result for retry.
                 logging.getLogger(__name__).warning(
-                    "Job %s error-status POST failed; will retry on next poll",
+                    'Job %s error-status POST failed; will retry on next poll',
                     job_item.id,
                 )
                 with self.scan_thread_lock:
                     self.pending_job_completions[job_item.id] = {
-                        "status": data_model.ScanStatus.ERROR.value,
-                        "result": None,
-                        "err_msg": err_msg,
+                        'status': data_model.ScanStatus.ERROR.value,
+                        'result': None,
+                        'err_msg': err_msg,
                     }
                 return
         finally:
@@ -412,10 +416,10 @@ class ScheduledScanThread(threading.Thread):
         """
         if self._enabled:
             self._enabled = False
-            logging.getLogger(__name__).debug("Scan poller disabled.")
+            logging.getLogger(__name__).debug('Scan poller disabled.')
         else:
             self._enabled = True
-            logging.getLogger(__name__).debug("Scan poller enabled.")
+            logging.getLogger(__name__).debug('Scan poller enabled.')
 
     def execute_scan_jobs(self, scheduled_scan_obj: data_model.ScheduledScan) -> Optional[str]:
         """
@@ -461,18 +465,16 @@ class ScheduledScanThread(threading.Thread):
 
         # Sort tools by execution order for proper dependency handling
         collection_tools = scheduled_scan_obj.collection_tool_map.values()
-        sorted_list = sorted(collection_tools,
-                             key=cmp_to_key(tool_order_cmp))
+        sorted_list = sorted(collection_tools, key=cmp_to_key(tool_order_cmp))
 
         # Establish connection to extender for scan status monitoring
         if self.connection_manager and self.connection_manager.connect_to_extender() == False:
-            err_msg = "Failed connecting to extender"
+            err_msg = 'Failed connecting to extender'
             logging.getLogger(__name__).error(err_msg)
             return err_msg
 
         ret_status = None
         for collection_tool_inst in sorted_list:
-
             # Execute each tool with proper error handling
             try:
                 tool_obj = collection_tool_inst.collection_tool
@@ -480,7 +482,9 @@ class ScheduledScanThread(threading.Thread):
                 # Skip disabled tools or tools without scan order
                 if tool_obj.scan_order == None or collection_tool_inst.enabled == 0:
                     logging.getLogger(__name__).debug(
-                        "Skipping tool %s due to disabled status or missing scan order", tool_obj.name)
+                        'Skipping tool %s due to disabled status or missing scan order',
+                        tool_obj.name,
+                    )
                     continue
 
                 # Set initial status after continue checks
@@ -496,9 +500,11 @@ class ScheduledScanThread(threading.Thread):
                 scheduled_scan_obj.current_tool_api_key = collection_tool_inst.api_key
 
                 # Check for scan cancellation from server
-                scan_status = self.recon_manager.get_scan_status(
-                    scheduled_scan_obj.scan_id)
-                if scan_status is None or scan_status.scan_status == data_model.ScanStatus.CANCELLED.value:
+                scan_status = self.recon_manager.get_scan_status(scheduled_scan_obj.scan_id)
+                if (
+                    scan_status is None
+                    or scan_status.scan_status == data_model.ScanStatus.CANCELLED.value
+                ):
                     err_msg = "Scan cancelled or doesn't exist"
                     logging.getLogger(__name__).debug(err_msg)
                     # Perform cleanup for cancelled scan
@@ -509,79 +515,91 @@ class ScheduledScanThread(threading.Thread):
                 cancelled_tool_ids = scan_status.cancelled_tool_ids
                 if collection_tool_inst.id in cancelled_tool_ids:
                     logging.getLogger(__name__).debug(
-                        """Tool %s cancelled before execution, skipping""" % tool_obj.name)
+                        """Tool %s cancelled before execution, skipping""" % tool_obj.name
+                    )
                     continue
 
                 # Update tool status to running
                 scheduled_scan_obj.update_tool_status(
-                    collection_tool_inst.id, data_model.CollectionToolStatus.RUNNING.value)
+                    collection_tool_inst.id, data_model.CollectionToolStatus.RUNNING.value
+                )
 
                 try:
                     # Connect to target only for active scanning tools
                     if tool_obj.tool_type == 2:
-                        if self.connection_manager and self.connection_manager.connect_to_target(target_id) == False:
-                            err_msg = "Failed connecting to target"
+                        if (
+                            self.connection_manager
+                            and self.connection_manager.connect_to_target(target_id) == False
+                        ):
+                            err_msg = 'Failed connecting to target'
                             logging.getLogger(__name__).error(err_msg)
                             return err_msg
 
                     # Execute the actual scanning function
                     try:
                         if self.recon_manager.scan_func(scheduled_scan_obj) == False:
-                            err_msg = "Scan function failed"
+                            err_msg = 'Scan function failed'
                             logging.getLogger(__name__).debug(err_msg)
                             ret_status = data_model.CollectionToolStatus.ERROR.value
 
                     except Exception as e:
-                        err_msg = "Error calling scan function: %s" % str(e)
+                        err_msg = 'Error calling scan function: %s' % str(e)
                         logging.getLogger(__name__).error(err_msg)
-                        logging.getLogger(__name__).debug(
-                            traceback.format_exc())
+                        logging.getLogger(__name__).debug(traceback.format_exc())
                         ret_status = data_model.CollectionToolStatus.ERROR.value
 
                     # Check for task failures
                     if self.failed_task_exception:
-                        task_err = f"{self.failed_task_exception[0]}\n{self.failed_task_exception[1]}"
+                        task_err = (
+                            f'{self.failed_task_exception[0]}\n{self.failed_task_exception[1]}'
+                        )
                         self.failed_task_exception = None
-                        err_msg = task_err if not err_msg else f"{err_msg}\n{task_err}"
+                        err_msg = task_err if not err_msg else f'{err_msg}\n{task_err}'
 
                 finally:
-                    if self.connection_manager and self.connection_manager.connect_to_extender() == False:
-                        err_msg = "Failed connecting to extender"
+                    if (
+                        self.connection_manager
+                        and self.connection_manager.connect_to_extender() == False
+                    ):
+                        err_msg = 'Failed connecting to extender'
                         logging.getLogger(__name__).error(err_msg)
                         return err_msg
 
                 # If scan failed, update status and stop tool loop
                 if ret_status == data_model.CollectionToolStatus.ERROR.value:
                     scheduled_scan_obj.update_tool_status(
-                        collection_tool_inst.id, ret_status, err_msg)
+                        collection_tool_inst.id, ret_status, err_msg
+                    )
                     break
 
                 # Import scan results regardless of tool type
                 import_err_msg = None
                 try:
                     if self.recon_manager.import_func(scheduled_scan_obj) == False:
-                        import_err_msg = "Import function failed"
+                        import_err_msg = 'Import function failed'
                         logging.getLogger(__name__).debug(import_err_msg)
                         ret_status = data_model.CollectionToolStatus.IMPORT_FAILED.value
                     else:
                         ret_status = data_model.CollectionToolStatus.COMPLETED.value
                 except Exception as e:
-                    import_err_msg = "Error calling import function: %s" % str(
-                        e)
+                    import_err_msg = 'Error calling import function: %s' % str(e)
                     logging.getLogger(__name__).error(import_err_msg)
                     logging.getLogger(__name__).debug(traceback.format_exc())
                     ret_status = data_model.CollectionToolStatus.IMPORT_FAILED.value
 
                 # Check for task failures from import
                 if self.failed_task_exception:
-                    task_err = f"{self.failed_task_exception[0]}\n{self.failed_task_exception[1]}"
+                    task_err = f'{self.failed_task_exception[0]}\n{self.failed_task_exception[1]}'
                     self.failed_task_exception = None
-                    import_err_msg = task_err if not import_err_msg else f"{import_err_msg}\n{task_err}"
+                    import_err_msg = (
+                        task_err if not import_err_msg else f'{import_err_msg}\n{task_err}'
+                    )
                     ret_status = data_model.CollectionToolStatus.IMPORT_FAILED.value
 
                 # Update tool status once after import
                 scheduled_scan_obj.update_tool_status(
-                    collection_tool_inst.id, ret_status, import_err_msg if import_err_msg else '')
+                    collection_tool_inst.id, ret_status, import_err_msg if import_err_msg else ''
+                )
 
                 if ret_status == data_model.CollectionToolStatus.IMPORT_FAILED.value:
                     # The scan phase completed but the server POST failed (e.g.
@@ -593,7 +611,7 @@ class ScheduledScanThread(threading.Thread):
                     break
 
             except Exception:
-                logging.getLogger(__name__).error("Error executing scan job")
+                logging.getLogger(__name__).error('Error executing scan job')
                 logging.getLogger(__name__).error(traceback.format_exc())
             finally:
                 # Clean up current tool references
@@ -638,15 +656,19 @@ class ScheduledScanThread(threading.Thread):
             if 'poll_interval' in collector_settings:
                 poll_interval = int(collector_settings['poll_interval'])
                 # Validate poll interval range (1 second to 1 hour)
-                if self.checkin_interval != poll_interval and poll_interval > 0 and poll_interval < 3600:
+                if (
+                    self.checkin_interval != poll_interval
+                    and poll_interval > 0
+                    and poll_interval < 3600
+                ):
                     # Update the polling interval
                     self.checkin_interval = poll_interval
                     logging.getLogger(__name__).debug(
-                        f"Updated poll interval to {poll_interval} seconds")
+                        f'Updated poll interval to {poll_interval} seconds'
+                    )
 
         except Exception as e:
-            logging.getLogger(__name__).error(
-                "Error processing collector settings: %s" % str(e))
+            logging.getLogger(__name__).error('Error processing collector settings: %s' % str(e))
             logging.getLogger(__name__).debug(traceback.format_exc())
 
     def process_scan_obj(self, scheduled_scan_obj: data_model.ScheduledScan) -> None:
@@ -689,8 +711,7 @@ class ScheduledScanThread(threading.Thread):
 
             # Ensure connection to extender for status updates
             if self.connection_manager and self.connection_manager.connect_to_extender() == False:
-                logging.getLogger(__name__).error(
-                    "Failed connecting to extender")
+                logging.getLogger(__name__).error('Failed connecting to extender')
                 return False
 
             if err_msg is None and not scheduled_scan_obj.has_pending_imports:
@@ -707,18 +728,16 @@ class ScheduledScanThread(threading.Thread):
                 # Do NOT call cleanup() so wordlists and output files survive.
                 scan_status = data_model.ScanStatus.RUNNING.value
                 logging.getLogger(__name__).warning(
-                    "Scan %s has pending imports; leaving RUNNING for retry "
-                    "on next poll iteration",
+                    'Scan %s has pending imports; leaving RUNNING for retry on next poll iteration',
                     scheduled_scan_obj.id,
                 )
 
         except Exception as e:
-            logging.getLogger(__name__).error("Error executing scan job")
+            logging.getLogger(__name__).error('Error executing scan job')
             logging.getLogger(__name__).debug(traceback.format_exc())
             if 'outage' in str(e):
                 scan_status = data_model.ScanStatus.CANCELLED.value
         finally:
-
             try:
                 # Always release connection lock
                 if self.connection_manager:
@@ -730,7 +749,8 @@ class ScheduledScanThread(threading.Thread):
             except ScanNotFoundException as e:
                 # Scan was deleted from server, remove from local tracking
                 logging.getLogger(__name__).warning(
-                    f"Scan {scheduled_scan_obj.id} not found on server, removing from local map: {e}")
+                    f'Scan {scheduled_scan_obj.id} not found on server, removing from local map: {e}'
+                )
                 with self.scan_thread_lock:
                     if scheduled_scan_obj.id in self.scheduled_scan_map:
                         del self.scheduled_scan_map[scheduled_scan_obj.id]
@@ -782,16 +802,13 @@ class ScheduledScanThread(threading.Thread):
             - Thread-safe operations with proper locking
         """
         if not self._is_running:
-
             # Validate recon manager availability
             recon_manager = self.recon_manager
             if recon_manager:
-
                 # Set running flag and enter main loop
                 self._is_running = True
                 first_poll = True
                 while self._is_running:
-
                     # Poll immediately on first iteration, then wait
                     if first_poll:
                         first_poll = False
@@ -813,17 +830,14 @@ class ScheduledScanThread(threading.Thread):
                             result_list = []
                             if self.log_queue:
                                 while not self.log_queue.empty() and len(result_list) < 100:
-                                    result_list.append(
-                                        self.log_queue.get())
+                                    result_list.append(self.log_queue.get())
                             if len(result_list) > 0:
-                                result_str = "\n".join(result_list)
+                                result_str = '\n'.join(result_list)
 
                             # Poll server for collector settings updates
-                            collector_settings = recon_manager.collector_poll(
-                                result_str)
+                            collector_settings = recon_manager.collector_poll(result_str)
                             if collector_settings:
-                                self.process_collector_settings(
-                                    collector_settings)
+                                self.process_collector_settings(collector_settings)
 
                             # Retry any job completions whose earlier POST failed.
                             # (handled above, outside the connection lock)
@@ -832,14 +846,14 @@ class ScheduledScanThread(threading.Thread):
                             with self.scan_thread_lock:
                                 sched_scan_obj_arr = recon_manager.get_scheduled_scans()
                                 for sched_scan_obj in sched_scan_obj_arr:
-
-                                    item_type = getattr(
-                                        sched_scan_obj, '_type', 'scan')
+                                    item_type = getattr(sched_scan_obj, '_type', 'scan')
 
                                     # --- Collector Job dispatch ---
                                     if item_type == 'job':
                                         if sched_scan_obj.id not in self.scheduled_scan_map:
-                                            self.scheduled_scan_map[sched_scan_obj.id] = sched_scan_obj
+                                            self.scheduled_scan_map[sched_scan_obj.id] = (
+                                                sched_scan_obj
+                                            )
                                             Thread(
                                                 target=partial(
                                                     self._process_job_with_slot,
@@ -851,14 +865,17 @@ class ScheduledScanThread(threading.Thread):
                                     # --- Scan dispatch (unchanged) ---
                                     # Handle new scans
                                     if sched_scan_obj.id not in self.scheduled_scan_map:
-
                                         logging.getLogger(__name__).debug(
-                                            "Processing new scan: %s", sched_scan_obj.id)
+                                            'Processing new scan: %s', sched_scan_obj.id
+                                        )
 
                                         # Create new scheduled scan instance
                                         scheduled_scan_obj = data_model.ScheduledScan(
-                                            self, sched_scan_obj)
-                                        self.scheduled_scan_map[sched_scan_obj.id] = scheduled_scan_obj
+                                            self, sched_scan_obj
+                                        )
+                                        self.scheduled_scan_map[sched_scan_obj.id] = (
+                                            scheduled_scan_obj
+                                        )
 
                                         # Start scan processing in separate thread
                                         Thread(
@@ -869,16 +886,21 @@ class ScheduledScanThread(threading.Thread):
                                         ).start()
 
                                     else:
-
                                         # Handle existing scans - check for cancellation
-                                        scheduled_scan_obj = self.scheduled_scan_map[sched_scan_obj.id]
+                                        scheduled_scan_obj = self.scheduled_scan_map[
+                                            sched_scan_obj.id
+                                        ]
                                         status_obj = self.recon_manager.get_scan_status(
-                                            scheduled_scan_obj.scan_id)
+                                            scheduled_scan_obj.scan_id
+                                        )
 
                                         # Process scan cancellation
-                                        if status_obj is None or status_obj.scan_status == data_model.ScanStatus.CANCELLED.value:
-                                            logging.getLogger(__name__).debug(
-                                                "Scan cancelled")
+                                        if (
+                                            status_obj is None
+                                            or status_obj.scan_status
+                                            == data_model.ScanStatus.CANCELLED.value
+                                        ):
+                                            logging.getLogger(__name__).debug('Scan cancelled')
                                             scheduled_scan_obj.kill_scan_processes()
 
                                             # Remove from the map
@@ -891,18 +913,18 @@ class ScheduledScanThread(threading.Thread):
                                             # Terminate cancelled tools
                                             if len(cancelled_tool_ids) > 0:
                                                 logging.getLogger(__name__).debug(
-                                                    "Killing cancelled tools")
+                                                    'Killing cancelled tools'
+                                                )
                                                 scheduled_scan_obj.kill_scan_processes(
-                                                    cancelled_tool_ids)
+                                                    cancelled_tool_ids
+                                                )
 
                         except requests.exceptions.ConnectionError as e:
-                            logging.getLogger(__name__).error(
-                                "Unable to connect to server.")
+                            logging.getLogger(__name__).error('Unable to connect to server.')
                             if self.connection_manager:
                                 self.connection_manager.connect_to_extender()
                         except Exception as e:
-                            logging.getLogger(__name__).debug(
-                                traceback.format_exc())
+                            logging.getLogger(__name__).debug(traceback.format_exc())
                         finally:
                             # Always release connection lock
                             if self.connection_manager:
@@ -1071,8 +1093,7 @@ class ReconManager:
         # (fingerprinting, version checks, module enumeration) which is
         # expensive.  Cached here so retries don't repeat the work.
         self._collector_tools: List[Dict[str, Any]] = [
-            tool_obj.to_jsonable()
-            for tool_obj in self._tool_name_inst_map.values()
+            tool_obj.to_jsonable() for tool_obj in self._tool_name_inst_map.values()
         ]
 
     def register_with_server(self) -> None:
@@ -1091,8 +1112,7 @@ class ReconManager:
         try:
             self._api_client = ApiClient(self.token, self.manager_url)
         except Exception as e:
-            raise SessionException(
-                "Failed to establish session with server: %s" % e) from e
+            raise SessionException('Failed to establish session with server: %s' % e) from e
 
         collector_data = {
             'interfaces': self.network_ifaces,
@@ -1103,8 +1123,7 @@ class ReconManager:
         try:
             ret_obj = self._api_client.update_collector(collector_data)
         except Exception as e:
-            raise SessionException(
-                "Failed to register collector with server: %s" % e) from e
+            raise SessionException('Failed to register collector with server: %s' % e) from e
         if ret_obj:
             if 'tool_name_id_map' in ret_obj:
                 tool_name_id_map = ret_obj['tool_name_id_map']
@@ -1118,11 +1137,12 @@ class ReconManager:
                             self.tool_map[tool_id_hex] = self._tool_name_inst_map[tool_name]
                         else:
                             logging.getLogger(__name__).debug(
-                                "%s tool not found in tool name instance map." % tool_name)
+                                '%s tool not found in tool name instance map.' % tool_name
+                            )
                     return
 
         # If we reach here, registration failed
-        raise SessionException("Failed to register collector with server")
+        raise SessionException('Failed to register collector with server')
 
     def get_tool_map(self) -> Dict[str, Any]:
         """
@@ -1169,8 +1189,7 @@ class ReconManager:
             # Delegate to tool-specific scan function
             ret_val = tool_inst.scan_func(scan_input)
         else:
-            logging.getLogger(__name__).warning(
-                "%s tool does not exist in table." % tool_id)
+            logging.getLogger(__name__).warning('%s tool does not exist in table.' % tool_id)
 
         return ret_val
 
@@ -1205,8 +1224,7 @@ class ReconManager:
             # Delegate to tool-specific import function
             ret_val = tool_inst.import_func(scan_input)
         else:
-            logging.getLogger(__name__).debug(
-                f"Error: {tool_id} tool does not exist in table.")
+            logging.getLogger(__name__).debug(f'Error: {tool_id} tool does not exist in table.')
 
         return ret_val
 
@@ -1255,7 +1273,7 @@ class ReconManager:
                     netmask = ipv4_obj['netmask']
 
                     # Skip loopback interfaces
-                    if ip_str == "127.0.0.1":
+                    if ip_str == '127.0.0.1':
                         loop_back = True
 
                     # Use first IP address found
@@ -1269,7 +1287,7 @@ class ReconManager:
                 continue
 
             # Extract MAC address if available
-            mac_addr_str = ""
+            mac_addr_str = ''
             if netifaces.AF_LINK in addrs:
                 hardware_addr_arr = addrs[netifaces.AF_LINK]
                 for hardware_addr_obj in hardware_addr_arr:
@@ -1281,7 +1299,7 @@ class ReconManager:
             interface_dict[if_name] = {
                 'ipv4_addr': ip_str,
                 'netmask': netmask,
-                'mac_address': mac_addr_str
+                'mac_address': mac_addr_str,
             }
 
         return interface_dict
@@ -1345,7 +1363,9 @@ class ReconManager:
     def update_collector(self, collector_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return self._api_client.update_collector(collector_data)
 
-    def update_scan_status(self, schedule_scan_id: str, status: int, err_msg: Optional[str] = None) -> bool:
+    def update_scan_status(
+        self, schedule_scan_id: str, status: int, err_msg: Optional[str] = None
+    ) -> bool:
         return self._api_client.update_scan_status(schedule_scan_id, status, err_msg)
 
     def get_tool_status(self, tool_id: str) -> Optional[int]:
@@ -1360,7 +1380,9 @@ class ReconManager:
     def import_ports_ext(self, scan_results_dict: Dict[str, Any]) -> bool:
         return self._api_client.import_ports_ext(scan_results_dict)
 
-    def import_data(self, scan_id: str, tool_id: str, scan_results: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    def import_data(
+        self, scan_id: str, tool_id: str, scan_results: List[Dict[str, Any]]
+    ) -> List[Dict[str, str]]:
         return self._api_client.import_data(scan_id, tool_id, scan_results)
 
     def import_shodan_data(self, scan_id: str, shodan_arr: List[Any]) -> bool:
@@ -1369,8 +1391,11 @@ class ReconManager:
     def import_screenshot(self, data_dict: Dict[str, Any]) -> bool:
         return self._api_client.import_screenshot(data_dict)
 
-    def update_job_status(self, job_id: str, status: int,
-                          status_message: str = "",
-                          result: Optional[Dict[str, Any]] = None) -> bool:
-        return self._api_client.update_job_status(
-            job_id, status, status_message, result)
+    def update_job_status(
+        self,
+        job_id: str,
+        status: int,
+        status_message: str = '',
+        result: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        return self._api_client.update_job_status(job_id, status, status_message, result)

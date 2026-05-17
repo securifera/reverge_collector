@@ -19,7 +19,7 @@ class ProcessHandle:
 
     future: Optional[Any] = None
     pid: Optional[int] = None
-    on_cleanup: Optional[Callable[["ProcessHandle"], None]] = None
+    on_cleanup: Optional[Callable[['ProcessHandle'], None]] = None
 
     def add_done_callback(self, callback: Callable[[Any], None]) -> None:
         """Attach a callback to the underlying future if present."""

@@ -33,26 +33,25 @@ Functions:
     reduce_subnets: Optimize subnet queries for efficiency
 """
 
-import json
-import os
-import shodan
-import netaddr
-import time
-import ipaddress
-import hashlib
 import binascii
+import hashlib
+import ipaddress
+import json
 import logging
-from typing import List, Dict, Set, Optional, Any, Union
-
-from reverge_collector import scan_utils
-from reverge_collector import data_model
+import os
+import time
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit, urlunsplit
+
+import netaddr
+import shodan
+
+from reverge_collector import data_model, scan_utils
 from reverge_collector.tool_spec import ToolSpec
 
 
 class Shodan(ToolSpec):
-
     name = 'shodan'
     description = 'Shodan is a search engine for Internet-connected devices'
     project_url = 'https://www.shodan.io/'
@@ -98,7 +97,7 @@ def _prepare_shodan_scope(scheduled_scan_obj) -> str:
     scan_id = scheduled_scan_obj.id
     tool_name = scheduled_scan_obj.current_tool.name
     dir_path = scan_utils.init_tool_folder(tool_name, 'inputs', scan_id)
-    shodan_ip_file = dir_path + os.path.sep + "shodan_ips_" + scan_id
+    shodan_ip_file = dir_path + os.path.sep + 'shodan_ips_' + scan_id
 
     if os.path.isfile(shodan_ip_file):
         return shodan_ip_file
@@ -108,17 +107,17 @@ def _prepare_shodan_scope(scheduled_scan_obj) -> str:
     subnet_map = scope_obj.subnet_map
     for subnet_id in subnet_map:
         subnet_obj = subnet_map[subnet_id]
-        subnet_str = "%s/%s" % (subnet_obj.subnet, subnet_obj.mask)
+        subnet_str = '%s/%s' % (subnet_obj.subnet, subnet_obj.mask)
         target_list.append(subnet_str)
 
     host_list = scope_obj.get_hosts(
-        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value]
+    )
     for host_obj in host_list:
-        host_str = "%s/32" % (host_obj.ipv4_addr)
+        host_str = '%s/32' % (host_obj.ipv4_addr)
         target_list.append(host_str)
 
-    logging.getLogger(__name__).debug(
-        "[+] Retrieved %d subnets from database" % len(target_list))
+    logging.getLogger(__name__).debug('[+] Retrieved %d subnets from database' % len(target_list))
     input_data = {'host_list': target_list}
     with open(shodan_ip_file, 'w') as shodan_fd:
         shodan_fd.write(json.dumps(input_data))
@@ -130,14 +129,15 @@ def get_output_path(scan_input) -> str:
     scan_id = scan_input.id
     tool_name = scan_input.current_tool.name
     dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-    return dir_path + os.path.sep + "shodan_out_" + scan_id
+    return dir_path + os.path.sep + 'shodan_out_' + scan_id
 
 
 def execute_scan(scan_input) -> None:
     output_file_path = get_output_path(scan_input)
     if os.path.exists(output_file_path):
         logging.getLogger(__name__).debug(
-            "Output path %s already exists, skipping Shodan scan execution", output_file_path)
+            'Output path %s already exists, skipping Shodan scan execution', output_file_path
+        )
         return
 
     scheduled_scan_obj = scan_input
@@ -148,41 +148,42 @@ def execute_scan(scan_input) -> None:
 
     shodan_key = scheduled_scan_obj.current_tool_api_key
     if not shodan_key or len(shodan_key) == 0:
-        logging.getLogger(__name__).error("No shodan API key provided.")
-        raise Exception("No shodan API key provided")
+        logging.getLogger(__name__).error('No shodan API key provided.')
+        raise Exception('No shodan API key provided')
 
     output_arr = []
     result = shodan_wrapper(shodan_key, '8.8.8.8', 32)
     if result is not None:
         ip_subnets = input_data['host_list']
-        logging.getLogger(__name__).debug(
-            "Consolidating subnets queried by Shodan")
+        logging.getLogger(__name__).debug('Consolidating subnets queried by Shodan')
         if len(ip_subnets) > 50:
             ip_subnets = reduce_subnets(ip_subnets)
 
         futures = []
         for subnet in ip_subnets:
             subnet = str(subnet)
-            subnet_arr = subnet.split("/")
+            subnet_arr = subnet.split('/')
             ip = subnet_arr[0].strip()
             cidr = 32
             if len(subnet_arr) > 1:
                 cidr = int(subnet_arr[1])
-            ip_network = ipaddress.ip_network(str(ip) + "/" + str(cidr))
+            ip_network = ipaddress.ip_network(str(ip) + '/' + str(cidr))
             if ip_network.is_private:
                 continue
-            futures.append(scan_utils.executor.submit(
-                shodan_wrapper, shodan_key=shodan_key, ip=ip, cidr=cidr))
+            futures.append(
+                scan_utils.executor.submit(shodan_wrapper, shodan_key=shodan_key, ip=ip, cidr=cidr)
+            )
 
         scan_proc_inst = data_model.ToolExecutor(futures)
         scheduled_scan_obj.register_tool_executor(
-            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst
+        )
 
         for future in futures:
             result = future.result()
             output_arr.extend(result)
 
-    output_data = {"data": output_arr}
+    output_data = {'data': output_arr}
     with open(output_file_path, 'w') as f:
         f.write(json.dumps(output_data))
 
@@ -216,33 +217,31 @@ def shodan_dns_query(api: shodan.Shodan, domain: str) -> List[str]:
     info = None
     while True:
         try:
-            info = api.dns.domain_info(domain, history=False, type="A")
+            info = api.dns.domain_info(domain, history=False, type='A')
             break
         except shodan.exception.APIError as e:
             err_msg = str(e).lower()
 
-            if "limit reached" in err_msg:
+            if 'limit reached' in err_msg:
                 time.sleep(1)
                 continue
-            if "invalid api key" in err_msg or 'access denied' in err_msg:
+            if 'invalid api key' in err_msg or 'access denied' in err_msg:
                 raise e
-            if "no information" not in err_msg:
-                logging.getLogger(__name__).error(
-                    "Shodan API Error DNS: %s" % err_msg)
+            if 'no information' not in err_msg:
+                logging.getLogger(__name__).error('Shodan API Error DNS: %s' % err_msg)
             break
 
     # Grab the host information for any IP records that were returned
     results = []
     if info:
-        ip_arr = [record['value']
-                  for record in info['data'] if record['type'] in ['A', 'AAAA']]
+        ip_arr = [record['value'] for record in info['data'] if record['type'] in ['A', 'AAAA']]
         ip_set = set(ip_arr)
         results = list(ip_set)
 
     return results
 
 
-def shodan_host_query(api: shodan.Shodan, ip: Union[str, netaddr.IPAddress]) -> List[Dict[str, Any]]:
+def shodan_host_query(api: shodan.Shodan, ip: str | netaddr.IPAddress) -> List[Dict[str, Any]]:
     """
     Query Shodan API for detailed host information.
 
@@ -281,21 +280,21 @@ def shodan_host_query(api: shodan.Shodan, ip: Union[str, netaddr.IPAddress]) -> 
             break
         except shodan.exception.APIError as e:
             err_msg = str(e).lower()
-            if "limit reached" in err_msg:
+            if 'limit reached' in err_msg:
                 time.sleep(1)
                 continue
-            if "invalid api key" in err_msg or 'access denied' in err_msg:
+            if 'invalid api key' in err_msg or 'access denied' in err_msg:
                 raise e
-            if "no information" not in err_msg:
-                logging.getLogger(__name__).error(
-                    "Shodan API Error Host: %s" % err_msg)
+            if 'no information' not in err_msg:
+                logging.getLogger(__name__).error('Shodan API Error Host: %s' % err_msg)
             break
 
     return service_list
 
 
-def shodan_subnet_query(api: shodan.Shodan, subnet: Union[str, netaddr.IPAddress],
-                        cidr: int) -> List[Dict[str, Any]]:
+def shodan_subnet_query(
+    api: shodan.Shodan, subnet: str | netaddr.IPAddress, cidr: int
+) -> List[Dict[str, Any]]:
     """
     Query Shodan API for information about hosts within a subnet.
 
@@ -327,7 +326,7 @@ def shodan_subnet_query(api: shodan.Shodan, subnet: Union[str, netaddr.IPAddress
     """
 
     # Query the subnet
-    query = "net:%s/%s" % (str(subnet), str(cidr))
+    query = 'net:%s/%s' % (str(subnet), str(cidr))
 
     # Loop through the matches and print each IP
     service_list = []
@@ -339,21 +338,24 @@ def shodan_subnet_query(api: shodan.Shodan, subnet: Union[str, netaddr.IPAddress
         except shodan.exception.APIError as e:
             err_msg = str(e).lower()
 
-            if "limit reached" in err_msg:
+            if 'limit reached' in err_msg:
                 time.sleep(1)
                 continue
-            if "invalid api key" in err_msg or 'access denied' in err_msg:
+            if 'invalid api key' in err_msg or 'access denied' in err_msg:
                 raise e
-            if "no information" not in err_msg:
-                logging.getLogger(__name__).error(
-                    "[-] Shodan API Error Subnet: %s" % err_msg)
+            if 'no information' not in err_msg:
+                logging.getLogger(__name__).error('[-] Shodan API Error Subnet: %s' % err_msg)
             break
 
     return service_list
 
 
-def shodan_wrapper(shodan_key: str, ip: Optional[str] = None,
-                   cidr: Optional[int] = None, domain: Optional[str] = None) -> List[Any]:
+def shodan_wrapper(
+    shodan_key: str,
+    ip: Optional[str] = None,
+    cidr: Optional[int] = None,
+    domain: Optional[str] = None,
+) -> List[Any]:
     """
     Unified wrapper function for Shodan API queries.
 
@@ -376,7 +378,7 @@ def shodan_wrapper(shodan_key: str, ip: Optional[str] = None,
     Example:
         >>> # Host query
         >>> services = shodan_wrapper("api_key", ip="8.8.8.8", cidr=32)
-        >>> # Subnet query  
+        >>> # Subnet query
         >>> services = shodan_wrapper("api_key", ip="192.168.1.0", cidr=24)
         >>> # DNS query
         >>> ips = shodan_wrapper("api_key", domain="example.com")
@@ -392,7 +394,7 @@ def shodan_wrapper(shodan_key: str, ip: Optional[str] = None,
     api = shodan.Shodan(shodan_key)
     if ip and cidr:
         if cidr > 28:
-            subnet = netaddr.IPNetwork(str(ip)+"/"+str(cidr))
+            subnet = netaddr.IPNetwork(str(ip) + '/' + str(cidr))
             for ip in subnet.iter_hosts():
                 results.extend(shodan_host_query(api, ip))
         else:
@@ -449,7 +451,7 @@ def reduce_subnets(ip_subnets: List[str]) -> List[netaddr.IPNetwork]:
         net_ip = str(net_inst.network)
 
         if net_inst.prefixlen < i:
-            network = netaddr.IPNetwork(net_ip + "/%d" % i)
+            network = netaddr.IPNetwork(net_ip + '/%d' % i)
             c_network = network.cidr
             subnet_list.append(c_network)
         else:
@@ -519,8 +521,7 @@ def parse_shodan_output(
                             if 'CN' in subject:
                                 domain_str = subject['CN'].lower()
 
-                                domain_obj = data_model.Domain(
-                                    parent_id=host_id)
+                                domain_obj = data_model.Domain(parent_id=host_id)
                                 domain_obj.collection_tool_instance_id = tool_instance_id
                                 domain_obj.name = domain_str
 
@@ -546,14 +547,14 @@ def parse_shodan_output(
                         if server_str:
                             server = server_str.strip().lower()
                             if len(server) > 0:
-                                if " " in server:
-                                    server_tech = server.split(" ")[0]
+                                if ' ' in server:
+                                    server_tech = server.split(' ')[0]
                                 else:
                                     server_tech = server
 
                                 server_version = None
-                                if "/" in server_tech:
-                                    server_tech_arr = server_tech.split("/")
+                                if '/' in server_tech:
+                                    server_tech_arr = server_tech.split('/')
                                     server_tech = server_tech_arr[0]
                                     temp_val = server_tech_arr[-1].strip()
                                     if len(temp_val) > 0:
@@ -596,22 +597,18 @@ def parse_shodan_output(
                         if 'cert' in ssl:
                             cert = ssl['cert']
 
-                            cert_obj = data_model.Certificate(
-                                parent_id=port_obj.id)
+                            cert_obj = data_model.Certificate(parent_id=port_obj.id)
                             cert_obj.collection_tool_instance_id = tool_instance_id
 
                             if 'issued' in cert:
                                 issued = cert['issued']
                                 dt = datetime.strptime(issued, '%Y%m%d%H%M%SZ')
-                                cert_obj.issued = int(
-                                    time.mktime(dt.timetuple()))
+                                cert_obj.issued = int(time.mktime(dt.timetuple()))
 
                             if 'expires' in cert:
                                 expires = cert['expires']
-                                dt = datetime.strptime(
-                                    expires, '%Y%m%d%H%M%SZ')
-                                cert_obj.expires = int(
-                                    time.mktime(dt.timetuple()))
+                                dt = datetime.strptime(expires, '%Y%m%d%H%M%SZ')
+                                cert_obj.expires = int(time.mktime(dt.timetuple()))
 
                             if 'fingerprint' in cert:
                                 cert_hash_map = cert['fingerprint']
@@ -625,7 +622,8 @@ def parse_shodan_output(
                                     domain_str = subject['CN'].lower()
 
                                     domain_obj = cert_obj.add_domain(
-                                        host_id, domain_str, tool_instance_id)
+                                        host_id, domain_str, tool_instance_id
+                                    )
                                     if domain_obj:
                                         ret_arr.append(domain_obj)
                                         endpoint_domain_id = domain_obj.id
@@ -649,7 +647,7 @@ def parse_shodan_output(
                             split_url = urlsplit(path_location)
                             trimmed_url = split_url._replace(query='')
                             trimmed_path = urlunsplit(trimmed_url)
-                            if tmp_fav_hash and trimmed_path == "/":
+                            if tmp_fav_hash and trimmed_path == '/':
                                 favicon_hash = tmp_fav_hash
 
                             hashobj = hash_alg()
@@ -670,15 +668,15 @@ def parse_shodan_output(
 
                             web_path_id = path_obj.id
 
-                    http_endpoint_obj = data_model.HttpEndpoint(
-                        parent_id=port_obj.id)
+                    http_endpoint_obj = data_model.HttpEndpoint(parent_id=port_obj.id)
                     http_endpoint_obj.collection_tool_instance_id = tool_instance_id
                     http_endpoint_obj.web_path_id = web_path_id
 
                     ret_arr.append(http_endpoint_obj)
 
                     http_endpoint_data_obj = data_model.HttpEndpointData(
-                        parent_id=http_endpoint_obj.id)
+                        parent_id=http_endpoint_obj.id
+                    )
                     http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
                     http_endpoint_data_obj.domain_id = endpoint_domain_id
                     http_endpoint_data_obj.title = title

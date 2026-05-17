@@ -9,33 +9,32 @@ The module implements both scanning and data import functionality through Luigi 
 supporting parallel HTTP probing and comprehensive web asset enumeration.
 
 Classes:
-    Httpx: Tool configuration class for HTTPX scanner  
+    Httpx: Tool configuration class for HTTPX scanner
     HttpXScan: Luigi task for executing HTTPX web scans
     ImportHttpXOutput: Luigi task for processing and importing HTTPX scan results
 
 """
 
+import base64
+import binascii
+import hashlib
+import json
+import logging
+import os
+import time
 from datetime import datetime
 from functools import partial
-import json
-import os
-from typing import Dict, Any, List, Set, Optional, Union
-import hashlib
-import binascii
-import base64
-import netaddr
-import time
-import logging
-
-from reverge_collector import scan_utils
-from reverge_collector import data_model
-from reverge_collector.proc_utils import process_wrapper
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
+
+import netaddr
+
+from reverge_collector import data_model, scan_utils
+from reverge_collector.proc_utils import process_wrapper
 from reverge_collector.tool_spec import ToolSpec
 
 
 class Httpx(ToolSpec):
-
     name = 'httpx'
     description = 'HTTPX is a fast and multi-purpose HTTP toolkit that allows you to run multiple requests in parallel.'
     project_url = 'https://github.com/projectdiscovery/httpx'
@@ -86,7 +85,7 @@ def get_output_path(scan_input) -> str:
     scan_id: str = scan_input.id
     tool_name: str = scan_input.current_tool.name
     dir_path: str = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-    return dir_path + os.path.sep + "httpx_outputs_" + scan_id
+    return dir_path + os.path.sep + 'httpx_outputs_' + scan_id
 
 
 def execute_scan(scan_input) -> None:
@@ -103,16 +102,19 @@ def execute_scan(scan_input) -> None:
 
     script_args = scheduled_scan_obj.current_tool.args
     if script_args:
-        script_args = script_args.split(" ")
+        script_args = script_args.split(' ')
 
     scope_urls = scheduled_scan_obj.scan_data.get_url_metadata_map()
 
     host_list = scope_obj.get_hosts(
-        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value]
+    )
     domain_list = scope_obj.get_domains(
-        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value]
+    )
     port_list = scope_obj.get_ports(
-        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value]
+    )
 
     mass_scan_ran = False
     for collection_tool in scheduled_scan_obj.collection_tool_map.values():
@@ -188,30 +190,30 @@ def execute_scan(scan_input) -> None:
 
     futures = []
     for port_str in port_target_list_map:
-        scan_output_file_path = output_dir + os.path.sep + "httpx_out_" + port_str
+        scan_output_file_path = output_dir + os.path.sep + 'httpx_out_' + port_str
         output_file_list.append(scan_output_file_path)
 
         ip_list = port_target_list_map[port_str]
-        scan_input_file_path = output_dir + os.path.sep + "httpx_in_" + port_str
+        scan_input_file_path = output_dir + os.path.sep + 'httpx_in_' + port_str
         with open(scan_input_file_path, 'w') as file_fd:
             for ip in ip_list:
-                file_fd.write(ip + "\n")
+                file_fd.write(ip + '\n')
 
         command = []
         if os.name != 'nt':
-            command.append("sudo")
+            command.append('sudo')
 
         command_arr = [
-            "/usr/local/bin/httpx",
-            "-json",
-            "-silent",
-            "-irr",
-            "-s",
-            "-sd",
-            "-l",
+            '/usr/local/bin/httpx',
+            '-json',
+            '-silent',
+            '-irr',
+            '-s',
+            '-sd',
+            '-l',
             scan_input_file_path,
-            "-o",
-            scan_output_file_path
+            '-o',
+            scan_output_file_path,
         ]
         command.extend(command_arr)
 
@@ -219,14 +221,19 @@ def execute_scan(scan_input) -> None:
             command.extend(script_args)
 
         callback_with_tool_id = partial(
-            scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id)
+            scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id
+        )
 
-        futures.append(scan_utils.executor.submit(
-            process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id))
+        futures.append(
+            scan_utils.executor.submit(
+                process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id
+            )
+        )
 
     scan_proc_inst = data_model.ToolExecutor(futures)
     scheduled_scan_obj.register_tool_executor(
-        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst
+    )
 
     for future in futures:
         ret_dict = future.result()
@@ -237,9 +244,13 @@ def execute_scan(scan_input) -> None:
                 if 'stderr' in ret_dict and ret_dict['stderr']:
                     err_msg = ret_dict['stderr']
                 logging.getLogger(__name__).error(
-                    "HTTPX scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
-                raise RuntimeError("HTTPX scan for scan ID %s exited with code %d: %s" % (
-                    scheduled_scan_obj.id, exit_code, err_msg))
+                    'HTTPX scan for scan ID %s exited with code %d: %s'
+                    % (scheduled_scan_obj.id, exit_code, err_msg)
+                )
+                raise RuntimeError(
+                    'HTTPX scan for scan ID %s exited with code %d: %s'
+                    % (scheduled_scan_obj.id, exit_code, err_msg)
+                )
 
     results_dict = {'output_file_list': output_file_list}
     with open(output_file_path, 'w') as file_fd:
@@ -271,10 +282,8 @@ def parse_httpx_output(
     cert_map: Dict[str, Any] = {}
 
     for output_file in output_file_list:
-
         obj_arr = scan_utils.parse_json_blob_file(output_file)
         for httpx_scan in obj_arr:
-
             target_str = httpx_scan['input']
             port_str = httpx_scan['port']
 
@@ -319,7 +328,7 @@ def parse_httpx_output(
             port_obj.proto = 0
             port_obj.port = port_str
 
-            if 'scheme' in httpx_scan and httpx_scan['scheme'] == "https":
+            if 'scheme' in httpx_scan and httpx_scan['scheme'] == 'https':
                 port_obj.secure = True
 
             title = None
@@ -341,7 +350,8 @@ def parse_httpx_output(
                     content_length = None
 
             if (status_code and status_code == 400) and (
-                    title and 'The plain HTTP request was sent to HTTPS port' in title):
+                title and 'The plain HTTP request was sent to HTTPS port' in title
+            ):
                 port_obj.secure = True
 
             ret_arr.append(port_obj)
@@ -353,9 +363,9 @@ def parse_httpx_output(
                     last_modified_str = header_dict['last_modified']
                     try:
                         timestamp_datetime = datetime.strptime(
-                            last_modified_str, "%A, %d-%b-%Y %H:%M:%S GMT")
-                        last_modified = int(time.mktime(
-                            timestamp_datetime.timetuple()))
+                            last_modified_str, '%A, %d-%b-%Y %H:%M:%S GMT'
+                        )
+                        last_modified = int(time.mktime(timestamp_datetime.timetuple()))
                     except Exception:
                         pass
 
@@ -372,7 +382,7 @@ def parse_httpx_output(
                 hashobj.update(web_path.encode())
                 web_path_hash = binascii.hexlify(hashobj.digest()).decode()
 
-                if tmp_fav_hash and web_path == "/":
+                if tmp_fav_hash and web_path == '/':
                     favicon_hash = tmp_fav_hash
 
                 if web_path_hash in path_hash_map:
@@ -409,8 +419,8 @@ def parse_httpx_output(
             if 'url' in httpx_scan:
                 u = urlparse(httpx_scan['url'].lower())
                 domain_used = u.netloc
-                if ":" in domain_used:
-                    domain_used = domain_used.split(":")[0]
+                if ':' in domain_used:
+                    domain_used = domain_used.split(':')[0]
 
             cert_obj = None
             if 'tls' in httpx_scan:
@@ -424,8 +434,7 @@ def parse_httpx_output(
                             cert_obj = cert_map[sha_cert_hash]
                             new_cert = False
                         else:
-                            cert_obj = data_model.Certificate(
-                                parent_id=port_obj.id)
+                            cert_obj = data_model.Certificate(parent_id=port_obj.id)
                             cert_obj.collection_tool_instance_id = tool_instance_id
                             cert_obj.fingerprint_hash = sha_cert_hash
                             cert_map[sha_cert_hash] = cert_obj
@@ -433,8 +442,7 @@ def parse_httpx_output(
                 if new_cert:
                     if 'subject_an' in tls_data:
                         for dns_name in tls_data['subject_an']:
-                            domain_obj = cert_obj.add_domain(
-                                host_id, dns_name, tool_instance_id)
+                            domain_obj = cert_obj.add_domain(host_id, dns_name, tool_instance_id)
                             if domain_obj:
                                 ret_arr.append(domain_obj)
 
@@ -443,12 +451,12 @@ def parse_httpx_output(
                         if type(common_name) == list:
                             for common_name_inst in common_name:
                                 domain_obj = cert_obj.add_domain(
-                                    host_id, common_name_inst, tool_instance_id)
+                                    host_id, common_name_inst, tool_instance_id
+                                )
                                 if domain_obj:
                                     ret_arr.append(domain_obj)
                         else:
-                            domain_obj = cert_obj.add_domain(
-                                host_id, common_name, tool_instance_id)
+                            domain_obj = cert_obj.add_domain(host_id, common_name, tool_instance_id)
                             if domain_obj:
                                 ret_arr.append(domain_obj)
 
@@ -457,12 +465,12 @@ def parse_httpx_output(
                         if type(common_name) == list:
                             for common_name_inst in common_name:
                                 domain_obj = cert_obj.add_domain(
-                                    host_id, common_name_inst, tool_instance_id)
+                                    host_id, common_name_inst, tool_instance_id
+                                )
                                 if domain_obj:
                                     ret_arr.append(domain_obj)
                         else:
-                            domain_obj = cert_obj.add_domain(
-                                host_id, common_name, tool_instance_id)
+                            domain_obj = cert_obj.add_domain(host_id, common_name, tool_instance_id)
                             if domain_obj:
                                 ret_arr.append(domain_obj)
 
@@ -470,13 +478,11 @@ def parse_httpx_output(
                         cert_obj.issuer = tls_data['issuer_dn']
 
                     if 'not_before' in tls_data:
-                        dt = datetime.strptime(
-                            tls_data['not_before'], '%Y-%m-%dT%H:%M:%SZ')
+                        dt = datetime.strptime(tls_data['not_before'], '%Y-%m-%dT%H:%M:%SZ')
                         cert_obj.issued = int(time.mktime(dt.timetuple()))
 
                     if 'not_after' in tls_data:
-                        dt = datetime.strptime(
-                            tls_data['not_after'], '%Y-%m-%dT%H:%M:%SZ')
+                        dt = datetime.strptime(tls_data['not_after'], '%Y-%m-%dT%H:%M:%SZ')
                         cert_obj.expires = int(time.mktime(dt.timetuple()))
 
                     ret_arr.append(cert_obj)
@@ -505,8 +511,8 @@ def parse_httpx_output(
                     comp = data_model.Cpe(parent_id=port_obj.id)
                     comp.collection_tool_instance_id = tool_instance_id
                     comp.part = 'a'
-                    if ":" in tech_entry:
-                        tech_parts = tech_entry.split(":", 1)
+                    if ':' in tech_entry:
+                        tech_parts = tech_entry.split(':', 1)
                         comp.product = tech_parts[0].lower()
                         comp.version = tech_parts[1].lower()
                     else:
@@ -525,8 +531,7 @@ def parse_httpx_output(
                     module_obj.collection_tool_instance_id = tool_instance_id
                     module_obj.name = 'http-response-headers'
                     ret_arr.append(module_obj)
-                    module_output_obj = data_model.CollectionModuleOutput(
-                        parent_id=module_obj.id)
+                    module_output_obj = data_model.CollectionModuleOutput(parent_id=module_obj.id)
                     module_output_obj.collection_tool_instance_id = tool_instance_id
                     module_output_obj.output = output
                     module_output_obj.port_id = port_obj.id
@@ -539,8 +544,7 @@ def parse_httpx_output(
                     module_obj.collection_tool_instance_id = tool_instance_id
                     module_obj.name = 'http-response-body'
                     ret_arr.append(module_obj)
-                    module_output_obj = data_model.CollectionModuleOutput(
-                        parent_id=module_obj.id)
+                    module_output_obj = data_model.CollectionModuleOutput(parent_id=module_obj.id)
                     module_output_obj.collection_tool_instance_id = tool_instance_id
                     module_output_obj.output = output
                     module_output_obj.port_id = port_obj.id
@@ -551,8 +555,7 @@ def parse_httpx_output(
             http_endpoint_obj.web_path_id = web_path_id
             ret_arr.append(http_endpoint_obj)
 
-            http_endpoint_data_obj = data_model.HttpEndpointData(
-                parent_id=http_endpoint_obj.id)
+            http_endpoint_data_obj = data_model.HttpEndpointData(parent_id=http_endpoint_obj.id)
             http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
             http_endpoint_data_obj.domain_id = endpoint_domain_id
             http_endpoint_data_obj.title = title
