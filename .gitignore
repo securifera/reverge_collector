@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# uv lock (this project uses Poetry for runtime deps; uv is dev-only)
+uv.lock
+
+# Virtual environments
+venv/
+.venv/
+
+# Test + coverage artifacts
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Ruff cache
+.ruff_cache/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
