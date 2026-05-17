@@ -1172,6 +1172,19 @@ class ScanData:
         return self._store.host_id_port_map
 
     @property
+    def application_protocol_map(self) -> Dict[str, Any]:
+        # Post-CPE-refactor: service name (http/ssh/smb/...) is now its
+        # own record type. RecordStore initialises this index; mirror the
+        # delegation pattern of the other *_map properties so external
+        # callers (scan_utils, scanner modules) can read it via the
+        # ScanData facade.
+        return self._store.application_protocol_map
+
+    @property
+    def application_protocol_port_id_map(self) -> Dict[str, List[Any]]:
+        return self._store.application_protocol_port_id_map
+
+    @property
     def component_map(self) -> Dict[str, Any]:
         return self._store.component_map
 
@@ -2155,10 +2168,12 @@ class Host(Record):
             if 'ipv4_addr' in input_data_dict:
                 ipv4_addr_str = input_data_dict['ipv4_addr']
                 self.ipv4_addr = str(netaddr.IPAddress(ipv4_addr_str))
-            # IPv6 support is commented out in original code
-            # elif 'ipv6_addr' in input_data_dict:
-            #     ipv6_addr_str = input_data_dict['ipv6_addr']
-            #     self.ipv6_addr = int(netaddr.IPAddress(input_data_dict['ipv6_addr_str']))
+            elif 'ipv6_addr' in input_data_dict:
+                # Symmetric with _data_to_jsonable, which serialises ipv6_addr
+                # whenever ipv4_addr is absent. Without this branch a Host
+                # with only an IPv6 address silently loses it on round-trip.
+                ipv6_addr_str = input_data_dict['ipv6_addr']
+                self.ipv6_addr = str(netaddr.IPAddress(ipv6_addr_str))
 
             if 'credential_id' in input_data_dict:
                 self.credential = {'credential_id': str(input_data_dict['credential_id'])}
