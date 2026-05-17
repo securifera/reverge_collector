@@ -229,6 +229,23 @@ verify_binary nuclei /usr/local/bin/nuclei
 # Clone our nuclei-templates fork so the scanner only uses our curated templates
 sudo git clone -c http.sslVerify=false https://github.com/securifera/nuclei-templates.git /root/nuclei-templates
 
+# nuclei expects a CSV `.templates-index` (template_id,/full/path) at the
+# root of the templates directory; without it Nuclei.nuclei_modules() in
+# the collector returns an empty list. Upstream nuclei creates this file
+# only as a side effect of `-update-templates`, which would replace our
+# securifera fork with ProjectDiscovery's official templates. So we
+# generate it ourselves from the cloned files: walk every *.yaml and
+# extract the first `id:` field. Each template's id is a single line near
+# the top of the file (always before the first blank line / `info:`).
+sudo find /root/nuclei-templates -name "*.yaml" -type f -print0 \
+    | sudo xargs -0 -P "$(nproc)" -I {} sh -c '
+        id=$(awk "/^id:[[:space:]]+/ {sub(/^id:[[:space:]]+/, \"\"); print; exit}" "$1")
+        [ -n "$id" ] && printf "%s,%s\n" "$id" "$1"
+    ' _ {} \
+    | sudo tee /root/nuclei-templates/.templates-index > /dev/null
+sudo chmod 600 /root/nuclei-templates/.templates-index
+echo "  generated .templates-index: $(sudo wc -l < /root/nuclei-templates/.templates-index) entries"
+
 # Install gau
 cd /tmp; gh_release_json lc/gau | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf gau*.tar.gz ; sudo mv gau /usr/local/bin/ ; sudo rm gau*.tar.gz
 sudo chmod +x /usr/local/bin/gau
@@ -331,14 +348,22 @@ sudo sed -i "s/add_runtime_dependency 'stringio', '3\.1\.1'/add_runtime_dependen
 # Mark the framework dir as safe so git doesn't reject it due to sudo ownership.
 sudo git config --global --add safe.directory "$MSF_FW_DIR"
 
-# Remove the vendored Gemfile.lock so bundler resolves gem versions fresh
-# against the omnibus Ruby (avoids conflicts like psych 5.2.6 vs 5.3.1).
-sudo rm -f "$MSF_FW_DIR/Gemfile.lock"
-
+# The omnibus Ruby 3.4 ships psych 5.3.1 as a default gem. The fork's
+# Gemfile.lock pins psych 5.2.6, and Ruby activates the default gem first —
+# so when bundler tries to require the locked 5.2.6 it crashes with
+# "already activated psych 5.3.1, but your Gemfile requires psych 5.2.6"
+# and msfdb init fails. We can't delete Gemfile.lock to dodge this: doing
+# so unpins Rails, and the fork's config/application.rb explicitly raises
+# unless ActionView is exactly 7.2.2.2 (a version-pinned monkey-patch).
+# Instead, surgically relax just the psych pin. --conservative tells
+# bundler to update only the named gem (and its direct deps), preserving
+# every other pin including Rails.
 # Bundle must be called with the omnibus bin/ in PATH so that the 'bundle'
 # shebang (#!/usr/bin/env ruby) resolves to the omnibus Ruby 3.4, not the
 # system Ruby which may be an older version.
-cd "$MSF_FW_DIR" && sudo env PATH=/opt/metasploit-framework/embedded/bin:$PATH bundle install --jobs 4
+cd "$MSF_FW_DIR"
+sudo env PATH=/opt/metasploit-framework/embedded/bin:$PATH bundle update --conservative psych
+sudo env PATH=/opt/metasploit-framework/embedded/bin:$PATH bundle install --jobs 4
 cd -
 
 # Create a dedicated non-root user for msfdb and the JSON RPC server.
