@@ -57,16 +57,16 @@ format-check: ## Check formatting without changes
 
 # -- Testing ------------------------------------------------------------------
 
-# Coverage gate: 80%. Local measurement (unit tests + the scanner integration
-# suite under tests/routes/) sits at ~80%; CI runs the same combo against the
+# Coverage gate: 90%. Local measurement (unit tests + the scanner integration
+# suite under tests/routes/) sits at ~90%; CI runs the same combo against the
 # install.sh-provisioned scanner binaries.
 .PHONY: test
-test: ## Run unit tests with coverage gate (80%)
-	$(PYTEST) $(TEST_DIRS) -x -q --cov=$(COV_PKG) --cov-fail-under=80
+test: ## Run unit tests with coverage gate (90%)
+	$(PYTEST) $(TEST_DIRS) -x -q --cov=$(COV_PKG) --cov-fail-under=90
 
 .PHONY: test-cov
 test-cov: ## Run tests with detailed coverage report (html + term-missing)
-	$(PYTEST) $(TEST_DIRS) --cov=$(COV_PKG) --cov-report=term-missing --cov-report=html --cov-fail-under=80
+	$(PYTEST) $(TEST_DIRS) --cov=$(COV_PKG) --cov-report=term-missing --cov-report=html --cov-fail-under=90
 
 .PHONY: test-no-cov
 test-no-cov: ## Run tests without the coverage gate (useful for fast local loops)
