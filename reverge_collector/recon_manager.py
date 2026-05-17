@@ -298,6 +298,13 @@ class ScheduledScanThread(threading.Thread):
 
         err_msg = None
         result = None
+        # When the COMPLETED/ERROR status POST fails we queue the result for
+        # retry in self.pending_job_completions AND keep the job in
+        # scheduled_scan_map so the poll loop doesn't re-dispatch it (which
+        # would re-run the side-effecting shell/python/file command). Set
+        # by the inner status-post except handlers; checked by the outer
+        # finally to skip the otherwise-unconditional pop.
+        job_queued_for_retry = False
         try:
             if self.connection_manager:
                 self.connection_manager.get_connection_lock()
@@ -363,7 +370,10 @@ class ScheduledScanThread(threading.Thread):
                         'result': result,
                         'err_msg': None,
                     }
-                # Return without popping the job — it stays in scheduled_scan_map.
+                # Skip the scheduled_scan_map pop in finally so the poll
+                # loop sees this id as still-in-progress and doesn't
+                # re-dispatch the (already-executed, side-effecting) job.
+                job_queued_for_retry = True
                 return
 
         except Exception as e:
@@ -388,12 +398,14 @@ class ScheduledScanThread(threading.Thread):
                         'result': None,
                         'err_msg': err_msg,
                     }
+                job_queued_for_retry = True
                 return
         finally:
             if self.connection_manager:
                 self.connection_manager.free_connection_lock()
-            with self.scan_thread_lock:
-                self.scheduled_scan_map.pop(job_item.id, None)
+            if not job_queued_for_retry:
+                with self.scan_thread_lock:
+                    self.scheduled_scan_map.pop(job_item.id, None)
 
     def catch_failure(self, task: Any, exception: Exception) -> None:
         """Capture tool task failures for inclusion in status updates."""
