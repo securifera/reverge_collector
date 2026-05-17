@@ -56,7 +56,6 @@ import binascii
 import hashlib
 import json
 import logging
-import math
 import os
 import shlex
 import traceback
@@ -182,51 +181,63 @@ async def webcap_asyncio(
     future_map: Dict[str, Tuple], meta_file_path: str, webcap_args: str
 ) -> None:
     """
-    Asynchronous Chrome-based screenshot capture operation.
+    Asynchronous Chrome-based screenshot capture with graduated recovery.
 
-    This async function manages the complete Chrome browser lifecycle and screenshot
-    capture process. It handles browser initialization, concurrent screenshot capture,
-    error recovery with browser restart, and metadata file generation.
-
-    Args:
-        future_map (Dict[str, Tuple]): Mapping of URLs to screenshot target metadata
-                                      containing port_id, endpoint_id, domain, and path
-        meta_file_path (str): File path where screenshot metadata will be written
-        webcap_args (str): Command-line arguments for Webcap configuration
-
-    Returns:
-        None: Screenshots and metadata are written to files during execution
-
-    Side Effects:
-        - Creates and manages Chrome browser instances
-        - Captures screenshots and saves metadata to JSON line format
-        - Handles browser restarts on WebCapError exceptions
-        - Logs errors and warnings for failed screenshot attempts
-
-    Raises:
-        WebCapError: Handled internally with browser restart
-        Exception: Various exceptions related to screenshot capture or file I/O
-
-    Example:
-        >>> target_map = {"https://example.com": (123, 456, "example.com", "/")}
-        >>> await webcap_asyncio(target_map, "/tmp/screenshots.json", "--timeout 10")
-
-    Note:
-        The function implements automatic browser restart on WebCapError to handle
-        Chrome crashes or unresponsive states. Each screenshot includes URL, image
-        data (Base64), status code, title, and associated metadata.
+    Recovery strategy (cheapest first, restart is last resort):
+      1. Per-screenshot wall timeout bounds hangs that slip past webcap's
+         internal per-CDP-command timeouts.
+      2. On WebCapError, timeout, or an orphaned-session flag, call
+         ``browser.force_target_cleanup()`` to close stale page targets in
+         place. This keeps the same Chrome process and avoids the Linux
+         login-keyring prompt that fires on every Chrome (re)launch.
+      3. Only after ``CONSECUTIVE_FAILURE_RESTART_THRESHOLD`` consecutive
+         failures do we tear down and relaunch Chrome — at that point the
+         process is presumed wedged.
     """
 
-    # Get the arguments for timeout and threads
     timeout, threads, image_format, quality = parse_args(webcap_args)
 
     from webcap import Browser  # noqa: PLC0415
     from webcap.errors import WebCapError  # noqa: PLC0415
 
-    # create a browser instance
+    log = logging.getLogger(__name__)
+
+    # Per-screenshot wall ceiling. Webcap already bounds each individual CDP
+    # request at ``timeout`` seconds; this covers the full open-tab/navigate/
+    # capture/close pipeline (~3 CDP round-trips worst case) with headroom.
+    per_screenshot_wall = max(timeout * 4, 30)
+    # How many back-to-back failures justify a full Chrome restart.
+    CONSECUTIVE_FAILURE_RESTART_THRESHOLD = 5
+
     browser = Browser(timeout=timeout, threads=threads, image_format=image_format, quality=quality)
-    # start the browser
     await browser.start()
+
+    consecutive_failures = 0
+
+    async def _light_recovery(reason: str) -> None:
+        """In-process cleanup — no Chrome restart, no keyring popup."""
+        log.debug('Light recovery (%s): force_target_cleanup', reason)
+        try:
+            await browser.force_target_cleanup()
+        except Exception as e:
+            log.warning('force_target_cleanup failed (%s): %s', reason, e)
+
+    async def _restart_browser(reason: str) -> None:
+        nonlocal browser, consecutive_failures
+        log.warning(
+            'Restarting Chrome (%s) after %d consecutive failures', reason, consecutive_failures
+        )
+        try:
+            await browser.stop()
+        except Exception:
+            pass
+        browser = Browser(
+            timeout=timeout, threads=threads, image_format=image_format, quality=quality
+        )
+        await browser.start()
+        consecutive_failures = 0
+        # Brief settle so the next request doesn't race the message handler.
+        await asyncio.sleep(1)
 
     try:
         with open(meta_file_path, 'w') as f:
@@ -239,66 +250,61 @@ async def webcap_asyncio(
                     'domain': domain_str,
                 }
 
-                async def _restart_browser():
-                    nonlocal browser
-                    try:
-                        await browser.stop()
-                    except Exception:
-                        pass
-                    browser = Browser(
-                        timeout=timeout, threads=threads, image_format=image_format, quality=quality
-                    )
-                    await browser.start()
-                    # Brief pause to let Chrome fully initialise before the
-                    # next request
-                    await asyncio.sleep(1)
-
-                # Take a screenshot, retrying once if the browser session is
-                # broken (WebCapError).  Using a retry avoids silently
-                # dropping the URL that triggered the restart.
                 webscreenshot = None
                 for _attempt in range(2):
                     try:
-                        webscreenshot = await browser.screenshot(url)
+                        webscreenshot = await asyncio.wait_for(
+                            browser.screenshot(url),
+                            timeout=per_screenshot_wall,
+                        )
                         break
+                    except asyncio.TimeoutError:
+                        log.warning(
+                            'Screenshot %s exceeded %ds wall timeout (attempt %d)',
+                            url,
+                            per_screenshot_wall,
+                            _attempt + 1,
+                        )
+                        await _light_recovery('screenshot wall timeout')
                     except WebCapError as e:
-                        logging.getLogger(__name__).error(
-                            f'WebCapError (attempt {_attempt + 1}), restarting browser: {str(e)}'
-                        )
-                        await _restart_browser()
-                        if _attempt == 1:
-                            logging.getLogger(__name__).warning(
-                                f'Skipping {url} after two browser restart attempts'
-                            )
+                        log.error('WebCapError on %s (attempt %d): %s', url, _attempt + 1, e)
+                        await _light_recovery('WebCapError')
                     except Exception as e:
-                        logging.getLogger(__name__).error(
-                            f'Error taking screenshot for {url}: {str(e)}'
-                        )
-                        logging.getLogger(__name__).debug(traceback.format_exc())
+                        log.error('Error taking screenshot for %s: %s', url, e)
+                        log.debug(traceback.format_exc())
                         break
 
                 if webscreenshot and webscreenshot.status_code != 0:
+                    consecutive_failures = 0
                     url_entry['url'] = url
                     try:
                         url_entry['image_data'] = base64.b64encode(webscreenshot.blob).decode()
-                    except ValueError as e:
-                        # Skip if there is no image data
+                    except ValueError:
                         continue
                     url_entry['status_code'] = webscreenshot.status_code
                     url_entry['title'] = webscreenshot.title
-
-                    # Write as JSON line
                     f.write(json.dumps(url_entry) + '\n')
                 else:
-                    logging.getLogger(__name__).warning(f'Failed to take screenshot for {url}')
+                    consecutive_failures += 1
+                    log.warning('Failed to take screenshot for %s', url)
 
+                # Orphan flag is mostly benign post-close event-race noise
+                # (handled inside webcap); when it does fire, drain the
+                # straggler targets in place rather than restarting Chrome.
                 if browser.orphaned_session:
-                    logging.getLogger(__name__).debug('Orphaned session detected. Restarting')
-                    await _restart_browser()
+                    log.debug('Orphaned session flag set; running light recovery')
+                    await _light_recovery('orphan flag')
+
+                # Escalate to a full restart only when Chrome appears truly
+                # wedged — many URLs in a row failing.
+                if consecutive_failures >= CONSECUTIVE_FAILURE_RESTART_THRESHOLD:
+                    await _restart_browser('consecutive-failure threshold')
 
     finally:
-        # Ensure browser is always stopped, even if there are errors
-        await browser.stop()
+        try:
+            await browser.stop()
+        except Exception:
+            pass
 
 
 def webcap_wrapper(future_map: Dict[str, Tuple], meta_file_path: str, webcap_scan_args: str) -> Any:
@@ -374,13 +380,17 @@ def execute_scan(scan_input) -> None:
         scheduled_scan_obj.current_tool_instance_id, scan_proc_inst
     )
 
-    # Derive a wall-clock timeout so we never hang indefinitely.
-    # Formula: ceil(urls / threads) * per_page_timeout * 3  (3× overhead for
-    # browser startup / slow pages), with a minimum of 60 s.
+    # Derive a wall-clock timeout so we never hang indefinitely. The inner
+    # loop processes URLs sequentially (the --threads value is forwarded to
+    # webcap but the recovery-aware loop intentionally walks one URL at a
+    # time so per-URL recovery is deterministic). Per URL the worst case is
+    # the per-screenshot wall ceiling (max(timeout*4, 30)) × 2 attempts,
+    # plus occasional Chrome restarts (~5s each, capped at 1 per N URLs).
     per_page_timeout, threads, _, _ = parse_args(webcap_scan_args)
     url_count = len(future_map)
-    batches = math.ceil(url_count / threads) if url_count and threads else 1
-    wall_timeout = max(batches * per_page_timeout * 3, 60)
+    per_url_wall = max(per_page_timeout * 4, 30)
+    restart_budget = max(url_count // 5, 1) * 10  # ~10s amortised per restart
+    wall_timeout = max(url_count * per_url_wall * 2 + restart_budget, 60)
 
     try:
         future_inst.result(timeout=wall_timeout)
