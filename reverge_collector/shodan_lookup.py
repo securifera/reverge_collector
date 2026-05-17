@@ -630,7 +630,7 @@ def parse_shodan_output(
 
                             ret_arr.append(cert_obj)
 
-                    hostname_arr = service['hostnames']
+                    hostname_arr = service.get('hostnames', [])
                     for domain_name in hostname_arr:
                         if len(domain_name) > 0:
                             domain_name = domain_name.lower()
