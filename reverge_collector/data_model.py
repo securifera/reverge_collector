@@ -2897,7 +2897,7 @@ class HttpEndpoint(Record):
                     host_ip = host_obj.ipv4_addr
 
         # Check for domain names in endpoint data
-        if self.id in self.scan_data.http_endpoint_map:
+        if self.id in self.scan_data.endpoint_data_endpoint_id_map:
             http_endpoint_data_obj_list = self.scan_data.endpoint_data_endpoint_id_map[self.id]
             for http_endpoint_data_obj in http_endpoint_data_obj_list:
                 if (
