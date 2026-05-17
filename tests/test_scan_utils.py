@@ -10,7 +10,6 @@ import json
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # is_cloud_domain
 # ---------------------------------------------------------------------------
@@ -86,10 +85,7 @@ def test_construct_url_https_non_default():
 def test_construct_url_query_string_appended():
     from reverge_collector.scan_utils import construct_url
 
-    assert (
-        construct_url('example.com', 443, True, '/api/v1')
-        == 'https://example.com/api/v1'
-    )
+    assert construct_url('example.com', 443, True, '/api/v1') == 'https://example.com/api/v1'
 
 
 def test_construct_url_returns_none_for_missing_required():
@@ -227,11 +223,7 @@ def test_parse_json_blob_file_stops_at_malformed(tmp_path):
     # entries AFTER are dropped.
     f = tmp_path / 'mixed.jsonl'
     f.write_text(
-        json.dumps({'good': True})
-        + '\n'
-        + 'not json\n'
-        + json.dumps({'after_bad': True})
-        + '\n'
+        json.dumps({'good': True}) + '\n' + 'not json\n' + json.dumps({'after_bad': True}) + '\n'
     )
     out = parse_json_blob_file(str(f))
     assert {'good': True} in out

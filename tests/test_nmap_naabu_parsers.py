@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 
-
 # ===========================================================================
 # nmap
 # ===========================================================================
@@ -193,10 +192,7 @@ def test_parse_naabu_output_skips_invalid_ip(tmp_path):
     from reverge_collector.naabu_scan import parse_naabu_output
 
     f = tmp_path / 'naabu.jsonl'
-    f.write_text(
-        json.dumps({'host': 'bogus', 'ip': 'definitely-not-an-ip', 'port': 80})
-        + '\n'
-    )
+    f.write_text(json.dumps({'host': 'bogus', 'ip': 'definitely-not-an-ip', 'port': 80}) + '\n')
     assert parse_naabu_output(str(f), tool_instance_id='tid') == []
 
 

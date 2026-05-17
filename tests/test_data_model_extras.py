@@ -15,7 +15,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.data_model import (
     CollectionModule,
@@ -30,7 +29,6 @@ from reverge_collector.data_model import (
     ToolExecutor,
 )
 from reverge_collector.scan_utils import get_port_byte_array
-
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -211,9 +209,8 @@ def test_complete_returns_false_when_marker_empty(tmp_path):
 def test_complete_returns_true_and_updates_scope(tmp_path):
     marker = tmp_path / 'done.json'
     marker.write_text(
-        json.dumps([
-            {'type': 'host', 'id': 'h1', 'data': {'ipv4_addr': '1.2.3.4'}, 'tags': []}
-        ]) + '\n'
+        json.dumps([{'type': 'host', 'id': 'h1', 'data': {'ipv4_addr': '1.2.3.4'}, 'tags': []}])
+        + '\n'
     )
     scan_data_mock = MagicMock()
     scan = SimpleNamespace(scan_data=scan_data_mock)
@@ -408,20 +405,24 @@ def test_http_endpoint_get_url_ip_when_no_endpoint_data():
 def test_http_endpoint_get_port():
     obj_list = [
         {
-            'type': 'host', 'id': 'h1',
+            'type': 'host',
+            'id': 'h1',
             'data': {'ipv4_addr': '10.0.0.5'},
             'tags': [RecordTag.SCOPE.value],
         },
         {
-            'type': 'port', 'id': 'p1',
+            'type': 'port',
+            'id': 'p1',
             'parent': {'type': 'host', 'id': 'h1'},
             'data': {'port': '8443', 'proto': 0, 'secure': True},
             'tags': [RecordTag.SCOPE.value],
         },
         {
-            'type': 'httpendpoint', 'id': 'ep1',
+            'type': 'httpendpoint',
+            'id': 'ep1',
             'parent': {'type': 'port', 'id': 'p1'},
-            'data': {}, 'tags': [RecordTag.SCOPE.value],
+            'data': {},
+            'tags': [RecordTag.SCOPE.value],
         },
     ]
     sd = ScanData(_scope(obj_list, port_list_str='8443'))
@@ -443,35 +444,41 @@ def test_http_endpoint_get_port_returns_empty_when_port_missing():
 def test_http_endpoint_data_get_url_with_domain_override():
     obj_list = [
         {
-            'type': 'host', 'id': 'h1',
+            'type': 'host',
+            'id': 'h1',
             'data': {'ipv4_addr': '10.0.0.5'},
             'tags': [RecordTag.SCOPE.value],
         },
         {
-            'type': 'port', 'id': 'p1',
+            'type': 'port',
+            'id': 'p1',
             'parent': {'type': 'host', 'id': 'h1'},
             'data': {'port': '443', 'proto': 0, 'secure': True},
             'tags': [RecordTag.SCOPE.value],
         },
         {
-            'type': 'domain', 'id': 'd1',
+            'type': 'domain',
+            'id': 'd1',
             'parent': {'type': 'host', 'id': 'h1'},
             'data': {'name': 'example.com'},
             'tags': [RecordTag.SCOPE.value],
         },
         {
-            'type': 'listitem', 'id': 'path-api',
+            'type': 'listitem',
+            'id': 'path-api',
             'data': {'path': '/api', 'path_hash': 'h-api'},
             'tags': [RecordTag.SCOPE.value],
         },
         {
-            'type': 'httpendpoint', 'id': 'ep1',
+            'type': 'httpendpoint',
+            'id': 'ep1',
             'parent': {'type': 'port', 'id': 'p1'},
             'data': {'web_path_id': 'path-api'},
             'tags': [RecordTag.SCOPE.value],
         },
         {
-            'type': 'httpendpointdata', 'id': 'epd1',
+            'type': 'httpendpointdata',
+            'id': 'epd1',
             'parent': {'type': 'httpendpoint', 'id': 'ep1'},
             'data': {'status': 200, 'domain_id': 'd1'},
             'tags': [RecordTag.SCOPE.value],
@@ -487,25 +494,31 @@ def test_http_endpoint_data_get_url_with_domain_override():
 def test_http_endpoint_data_get_url_falls_back_to_ip():
     obj_list = [
         {
-            'type': 'host', 'id': 'h1',
+            'type': 'host',
+            'id': 'h1',
             'data': {'ipv4_addr': '10.0.0.5'},
             'tags': [RecordTag.SCOPE.value],
         },
         {
-            'type': 'port', 'id': 'p1',
+            'type': 'port',
+            'id': 'p1',
             'parent': {'type': 'host', 'id': 'h1'},
             'data': {'port': '443', 'proto': 0, 'secure': True},
             'tags': [RecordTag.SCOPE.value],
         },
         {
-            'type': 'httpendpoint', 'id': 'ep1',
+            'type': 'httpendpoint',
+            'id': 'ep1',
             'parent': {'type': 'port', 'id': 'p1'},
-            'data': {}, 'tags': [RecordTag.SCOPE.value],
+            'data': {},
+            'tags': [RecordTag.SCOPE.value],
         },
         {
-            'type': 'httpendpointdata', 'id': 'epd1',
+            'type': 'httpendpointdata',
+            'id': 'epd1',
             'parent': {'type': 'httpendpoint', 'id': 'ep1'},
-            'data': {'status': 200}, 'tags': [RecordTag.SCOPE.value],
+            'data': {'status': 200},
+            'tags': [RecordTag.SCOPE.value],
         },
     ]
     sd = ScanData(_scope(obj_list))
@@ -531,19 +544,22 @@ def test_collection_module_get_host_port_obj_map_with_binding():
     that port shows up in the returned host_port map."""
     obj_list = [
         {
-            'type': 'host', 'id': 'h1',
+            'type': 'host',
+            'id': 'h1',
             'data': {'ipv4_addr': '10.0.0.5'},
             'tags': [RecordTag.SCOPE.value],
         },
         {
-            'type': 'port', 'id': 'p1',
+            'type': 'port',
+            'id': 'p1',
             'parent': {'type': 'host', 'id': 'h1'},
             'data': {'port': '8080', 'proto': 0, 'secure': False},
             'tags': [RecordTag.SCOPE.value],
         },
         {
             # Cpe (formerly WebComponent) record names a port via component_*_maps
-            'type': 'cpe', 'id': 'comp-nginx',
+            'type': 'cpe',
+            'id': 'comp-nginx',
             'parent': {'type': 'port', 'id': 'p1'},
             'data': {'name': 'nginx', 'vendor': 'nginx', 'product': 'nginx'},
             'tags': [RecordTag.SCOPE.value],

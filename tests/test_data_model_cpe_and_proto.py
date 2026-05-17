@@ -6,7 +6,6 @@ from __future__ import annotations
 import base64
 
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.data_model import (
     ApplicationProtocol,
@@ -186,7 +185,8 @@ def test_get_url_metadata_map_subnet_fallback_with_no_ports():
     """Subnet present but no port_list at all → fallback path returns empty."""
     obj_list = [
         {
-            'type': 'subnet', 'id': 's1',
+            'type': 'subnet',
+            'id': 's1',
             'data': {'subnet': '10.0.0.0', 'mask': 30},
             'tags': [RecordTag.SCOPE.value],
         },
@@ -200,7 +200,8 @@ def test_get_url_metadata_map_subnet_with_invalid_cidr_skipped():
     """A subnet with an unparseable subnet/mask combination is skipped."""
     obj_list = [
         {
-            'type': 'subnet', 'id': 's1',
+            'type': 'subnet',
+            'id': 's1',
             # mask='-1' will fail ipaddress.ip_network()
             'data': {'subnet': '10.0.0.0', 'mask': -1},
             'tags': [RecordTag.SCOPE.value],

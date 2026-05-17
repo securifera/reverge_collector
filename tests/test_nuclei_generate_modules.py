@@ -80,10 +80,7 @@ def test_generate_modules_builds_collection_modules(tmp_path):
     )
     # Index file: template_id,full_path
     index = root / '.templates-index'
-    index.write_text(
-        f'CVE-2024-0001,{t1}\n'
-        f'misc-fp,{t2}\n'
-    )
+    index.write_text(f'CVE-2024-0001,{t1}\nmisc-fp,{t2}\n')
 
     with patch(
         'reverge_collector.nuclei_scan.process_wrapper',
@@ -112,10 +109,7 @@ def test_generate_modules_skips_invalid_index_entries(tmp_path):
     t = root / 'ok.yaml'
     t.write_text('id: ok\ninfo:\n  name: ok\n')
     index = root / '.templates-index'
-    index.write_text(
-        'bad-line-without-comma\n'
-        f'ok,{t}\n'
-    )
+    index.write_text(f'bad-line-without-comma\nok,{t}\n')
     with patch(
         'reverge_collector.nuclei_scan.process_wrapper',
         return_value=_stub_nuclei_tv(str(root)),

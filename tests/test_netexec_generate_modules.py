@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-
 _NETEXEC_H_OUTPUT = """
 usage: netexec [-h] {ldap,smb,winrm,...}
 
@@ -33,16 +32,17 @@ def _stub(stdout='', stderr='', exit_code=0):
 def test_returns_empty_when_help_fails():
     from reverge_collector.netexec_scan import Netexec
 
-    with patch('reverge_collector.netexec_scan.process_wrapper',
-               return_value=_stub(exit_code=2)):
+    with patch('reverge_collector.netexec_scan.process_wrapper', return_value=_stub(exit_code=2)):
         assert Netexec._generate_netexec_modules() == []
 
 
 def test_returns_empty_when_no_protocols_section():
     from reverge_collector.netexec_scan import Netexec
 
-    with patch('reverge_collector.netexec_scan.process_wrapper',
-               return_value=_stub(stdout='no protocols here')):
+    with patch(
+        'reverge_collector.netexec_scan.process_wrapper',
+        return_value=_stub(stdout='no protocols here'),
+    ):
         assert Netexec._generate_netexec_modules() == []
 
 
@@ -120,6 +120,8 @@ def test_protocol_module_listing_exception_is_caught():
 def test_file_not_found_returns_empty():
     from reverge_collector.netexec_scan import Netexec
 
-    with patch('reverge_collector.netexec_scan.process_wrapper',
-               side_effect=FileNotFoundError('no netexec')):
+    with patch(
+        'reverge_collector.netexec_scan.process_wrapper',
+        side_effect=FileNotFoundError('no netexec'),
+    ):
         assert Netexec._generate_netexec_modules() == []

@@ -116,9 +116,7 @@ def test_nuclei_template_cpe_fallback_no_matcher_name(tmp_path):
                 'url': 'http://x.com',
                 'info': {
                     'name': 'Angular Detect',
-                    'classification': {
-                        'cpe': 'cpe:2.3:a:angularjs:angular.js:*:*:*:*:*:*:*:*'
-                    },
+                    'classification': {'cpe': 'cpe:2.3:a:angularjs:angular.js:*:*:*:*:*:*:*:*'},
                 },
             }
         )

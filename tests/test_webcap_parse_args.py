@@ -6,7 +6,6 @@ import base64
 import json
 import os
 
-
 # ===========================================================================
 # parse_args
 # ===========================================================================
@@ -88,22 +87,39 @@ class TestParseWebcapOutput:
         p = tmp_path / 'screenshots.json'
         with open(p, 'w') as f:
             f.write('\n\n')
-            f.write(json.dumps({
-                'path': '/', 'port_id': 'p1', 'status_code': 200,
-                'image_data': _b64(b'X'), 'title': 't',
-                'http_endpoint_data_id': None,
-            }) + '\n')
+            f.write(
+                json.dumps(
+                    {
+                        'path': '/',
+                        'port_id': 'p1',
+                        'status_code': 200,
+                        'image_data': _b64(b'X'),
+                        'title': 't',
+                        'http_endpoint_data_id': None,
+                    }
+                )
+                + '\n'
+            )
         records = parse_webcap_output(str(p), 'ti')
         assert any(type(r).__name__ == 'Screenshot' for r in records)
 
     def test_builds_full_record_chain(self, tmp_path):
         from reverge_collector.webcap_scan import parse_webcap_output
 
-        meta = _write_meta(tmp_path, [{
-            'path': '/admin', 'port_id': 'port-1', 'status_code': 200,
-            'image_data': _b64(b'IMG'), 'title': 'Welcome',
-            'http_endpoint_data_id': None, 'domain': 'example.com',
-        }])
+        meta = _write_meta(
+            tmp_path,
+            [
+                {
+                    'path': '/admin',
+                    'port_id': 'port-1',
+                    'status_code': 200,
+                    'image_data': _b64(b'IMG'),
+                    'title': 'Welcome',
+                    'http_endpoint_data_id': None,
+                    'domain': 'example.com',
+                }
+            ],
+        )
         records = parse_webcap_output(meta, 'ti')
         types = [type(r).__name__ for r in records]
         assert 'Screenshot' in types
@@ -116,12 +132,27 @@ class TestParseWebcapOutput:
         from reverge_collector.webcap_scan import parse_webcap_output
 
         same = _b64(b'SAMEBYTES')
-        meta = _write_meta(tmp_path, [
-            {'path': '/a', 'port_id': 'p1', 'status_code': 200,
-             'image_data': same, 'title': 't', 'http_endpoint_data_id': None},
-            {'path': '/b', 'port_id': 'p1', 'status_code': 200,
-             'image_data': same, 'title': 't', 'http_endpoint_data_id': None},
-        ])
+        meta = _write_meta(
+            tmp_path,
+            [
+                {
+                    'path': '/a',
+                    'port_id': 'p1',
+                    'status_code': 200,
+                    'image_data': same,
+                    'title': 't',
+                    'http_endpoint_data_id': None,
+                },
+                {
+                    'path': '/b',
+                    'port_id': 'p1',
+                    'status_code': 200,
+                    'image_data': same,
+                    'title': 't',
+                    'http_endpoint_data_id': None,
+                },
+            ],
+        )
         records = parse_webcap_output(meta, 'ti')
         unique = {id(r) for r in records if type(r).__name__ == 'Screenshot'}
         assert len(unique) == 1
@@ -129,11 +160,19 @@ class TestParseWebcapOutput:
     def test_preserves_endpoint_data_id_when_provided(self, tmp_path):
         from reverge_collector.webcap_scan import parse_webcap_output
 
-        meta = _write_meta(tmp_path, [{
-            'path': '/', 'port_id': 'p1', 'status_code': 200,
-            'image_data': _b64(b'X'), 'title': 'y',
-            'http_endpoint_data_id': 'epd-keep',
-        }])
+        meta = _write_meta(
+            tmp_path,
+            [
+                {
+                    'path': '/',
+                    'port_id': 'p1',
+                    'status_code': 200,
+                    'image_data': _b64(b'X'),
+                    'title': 'y',
+                    'http_endpoint_data_id': 'epd-keep',
+                }
+            ],
+        )
         records = parse_webcap_output(meta, 'ti')
         epds = [r for r in records if type(r).__name__ == 'HttpEndpointData']
         assert epds and epds[0].id == 'epd-keep'

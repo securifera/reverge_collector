@@ -11,7 +11,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from reverge_collector.recon_manager import ScheduledScanThread
 
 
@@ -27,9 +26,11 @@ def make_thread(connection_manager=None, recon_manager=None):
 
 def _stop_after_first_iter(thread):
     """Return a side_effect that stops the loop after recording the call."""
+
     def _side(*args, **kwargs):
         thread._is_running = False
         return []
+
     return _side
 
 

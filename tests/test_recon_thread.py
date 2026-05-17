@@ -50,9 +50,7 @@ def test_catch_failure_records_tuple():
 
 def test_flush_pending_job_completions_clears_on_success():
     t = _make_thread()
-    t.pending_job_completions = {
-        'j1': {'status': 2, 'result': {'x': 1}, 'err_msg': None}
-    }
+    t.pending_job_completions = {'j1': {'status': 2, 'result': {'x': 1}, 'err_msg': None}}
     t.recon_manager.update_job_status.return_value = True
 
     t._flush_pending_job_completions()
@@ -65,9 +63,7 @@ def test_flush_pending_job_completions_clears_on_success():
 
 def test_flush_pending_job_completions_keeps_on_failure():
     t = _make_thread()
-    t.pending_job_completions = {
-        'j1': {'status': 2, 'result': None, 'err_msg': 'oops'}
-    }
+    t.pending_job_completions = {'j1': {'status': 2, 'result': None, 'err_msg': 'oops'}}
     t.recon_manager.update_job_status.side_effect = RuntimeError('server down')
 
     t._flush_pending_job_completions()

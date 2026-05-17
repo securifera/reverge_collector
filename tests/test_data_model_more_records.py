@@ -7,7 +7,6 @@ Credential, Cpe edge cases.
 from __future__ import annotations
 
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.data_model import (
     Certificate,
@@ -21,7 +20,6 @@ from reverge_collector.data_model import (
     Port,
     Screenshot,
 )
-
 
 # ---------------------------------------------------------------------------
 # Screenshot

@@ -33,13 +33,18 @@ def test_parse_returns_empty_when_meta_missing(tmp_path):
 def test_parse_skips_lines_whose_image_doesnt_exist(tmp_path):
     from reverge_collector.pyshot_scan import parse_pyshot_output
 
-    meta = _write_meta(tmp_path, [{
-        'file_path': str(tmp_path / 'missing.png'),
-        'path': '/',
-        'port_id': 'p1',
-        'status_code': 200,
-        'endpoint_id': None,
-    }])
+    meta = _write_meta(
+        tmp_path,
+        [
+            {
+                'file_path': str(tmp_path / 'missing.png'),
+                'path': '/',
+                'port_id': 'p1',
+                'status_code': 200,
+                'endpoint_id': None,
+            }
+        ],
+    )
     assert parse_pyshot_output(meta, 'ti') == []
 
 
@@ -47,14 +52,19 @@ def test_parse_builds_full_record_chain(tmp_path):
     from reverge_collector.pyshot_scan import parse_pyshot_output
 
     img = _write_image(tmp_path)
-    meta = _write_meta(tmp_path, [{
-        'file_path': img,
-        'path': '/admin',
-        'port_id': 'p1',
-        'status_code': 200,
-        'endpoint_id': None,
-        'domain': 'example.com',
-    }])
+    meta = _write_meta(
+        tmp_path,
+        [
+            {
+                'file_path': img,
+                'path': '/admin',
+                'port_id': 'p1',
+                'status_code': 200,
+                'endpoint_id': None,
+                'domain': 'example.com',
+            }
+        ],
+    )
     records = parse_pyshot_output(meta, 'ti')
     types = [type(r).__name__ for r in records]
     assert 'Screenshot' in types
@@ -70,12 +80,25 @@ def test_parse_dedups_screenshots_with_same_hash(tmp_path):
     from reverge_collector.pyshot_scan import parse_pyshot_output
 
     img = _write_image(tmp_path)
-    meta = _write_meta(tmp_path, [
-        {'file_path': img, 'path': '/a', 'port_id': 'p1',
-         'status_code': 200, 'endpoint_id': None},
-        {'file_path': img, 'path': '/b', 'port_id': 'p1',
-         'status_code': 200, 'endpoint_id': None},
-    ])
+    meta = _write_meta(
+        tmp_path,
+        [
+            {
+                'file_path': img,
+                'path': '/a',
+                'port_id': 'p1',
+                'status_code': 200,
+                'endpoint_id': None,
+            },
+            {
+                'file_path': img,
+                'path': '/b',
+                'port_id': 'p1',
+                'status_code': 200,
+                'endpoint_id': None,
+            },
+        ],
+    )
     records = parse_pyshot_output(meta, 'ti')
     # Two appends per entry, but unique screenshot objects = 1
     unique_screenshots = {id(r) for r in records if type(r).__name__ == 'Screenshot'}
@@ -86,12 +109,27 @@ def test_parse_dedups_paths_and_domains(tmp_path):
     from reverge_collector.pyshot_scan import parse_pyshot_output
 
     img = _write_image(tmp_path)
-    meta = _write_meta(tmp_path, [
-        {'file_path': img, 'path': '/', 'port_id': 'p1',
-         'status_code': 200, 'endpoint_id': None, 'domain': 'x.example.com'},
-        {'file_path': img, 'path': '/', 'port_id': 'p2',
-         'status_code': 200, 'endpoint_id': None, 'domain': 'x.example.com'},
-    ])
+    meta = _write_meta(
+        tmp_path,
+        [
+            {
+                'file_path': img,
+                'path': '/',
+                'port_id': 'p1',
+                'status_code': 200,
+                'endpoint_id': None,
+                'domain': 'x.example.com',
+            },
+            {
+                'file_path': img,
+                'path': '/',
+                'port_id': 'p2',
+                'status_code': 200,
+                'endpoint_id': None,
+                'domain': 'x.example.com',
+            },
+        ],
+    )
     records = parse_pyshot_output(meta, 'ti')
     paths = {id(r) for r in records if type(r).__name__ == 'ListItem'}
     domains = {id(r) for r in records if type(r).__name__ == 'Domain'}
@@ -103,10 +141,18 @@ def test_parse_keeps_endpoint_data_id_when_provided(tmp_path):
     from reverge_collector.pyshot_scan import parse_pyshot_output
 
     img = _write_image(tmp_path)
-    meta = _write_meta(tmp_path, [{
-        'file_path': img, 'path': '/', 'port_id': 'p1',
-        'status_code': 200, 'endpoint_id': 'epd-fixed',
-    }])
+    meta = _write_meta(
+        tmp_path,
+        [
+            {
+                'file_path': img,
+                'path': '/',
+                'port_id': 'p1',
+                'status_code': 200,
+                'endpoint_id': 'epd-fixed',
+            }
+        ],
+    )
     records = parse_pyshot_output(meta, 'ti')
     epds = [r for r in records if type(r).__name__ == 'HttpEndpointData']
     assert epds and epds[0].id == 'epd-fixed'

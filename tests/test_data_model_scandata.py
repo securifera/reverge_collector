@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.data_model import (
     Cpe,
@@ -21,7 +20,6 @@ from reverge_collector.data_model import (
     ScanData,
 )
 from reverge_collector.scan_utils import get_port_byte_array
-
 
 # ---------------------------------------------------------------------------
 # Helpers

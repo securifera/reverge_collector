@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ===========================================================================
 # _load_session_key / _save_session_key
 # ===========================================================================
@@ -66,8 +65,7 @@ def test_save_session_key_swallows_write_failures(tmp_path, monkeypatch):
 def test_get_session_key_returns_cached_when_use_cached_true(tmp_path, monkeypatch):
     from reverge_collector import tool_utils
 
-    monkeypatch.setattr(tool_utils, '_SESSION_FILE',
-                        str(tmp_path / 'session'))
+    monkeypatch.setattr(tool_utils, '_SESSION_FILE', str(tmp_path / 'session'))
     cached = b'\xaa' * 32
     with patch.object(tool_utils, '_load_session_key', return_value=cached):
         out = tool_utils.get_session_key('https://server', {'Authorization': 't'})
@@ -77,8 +75,7 @@ def test_get_session_key_returns_cached_when_use_cached_true(tmp_path, monkeypat
 def test_get_session_key_raises_when_http_non_200(tmp_path, monkeypatch):
     from reverge_collector import tool_utils
 
-    monkeypatch.setattr(tool_utils, '_SESSION_FILE',
-                        str(tmp_path / 'no-cache'))
+    monkeypatch.setattr(tool_utils, '_SESSION_FILE', str(tmp_path / 'no-cache'))
     resp = MagicMock()
     resp.status_code = 500
     with patch('reverge_collector.tool_utils.requests.post', return_value=resp):
@@ -89,8 +86,7 @@ def test_get_session_key_raises_when_http_non_200(tmp_path, monkeypatch):
 def test_get_session_key_raises_when_no_data_in_response(tmp_path, monkeypatch):
     from reverge_collector import tool_utils
 
-    monkeypatch.setattr(tool_utils, '_SESSION_FILE',
-                        str(tmp_path / 'no-cache'))
+    monkeypatch.setattr(tool_utils, '_SESSION_FILE', str(tmp_path / 'no-cache'))
     resp = MagicMock()
     resp.status_code = 200
     resp.json.return_value = {'other': 'value'}

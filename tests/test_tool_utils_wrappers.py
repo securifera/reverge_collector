@@ -66,12 +66,7 @@ def test_parse_nuclei_output_to_jsonable_passes_through(tmp_path):
     from reverge_collector.tool_utils import parse_nuclei_output_to_jsonable
 
     f = tmp_path / 'n.jsonl'
-    f.write_text(
-        json.dumps(
-            {'template-id': 'x', 'url': 'http://1.1.1.1', 'info': {}}
-        )
-        + '\n'
-    )
+    f.write_text(json.dumps({'template-id': 'x', 'url': 'http://1.1.1.1', 'info': {}}) + '\n')
     out = parse_nuclei_output_to_jsonable(str(f), 'tid', 'toolid')
     assert isinstance(out, list)
 
@@ -149,9 +144,7 @@ def test_parse_webcap_output_to_jsonable_passes_through(tmp_path):
 def test_parse_netexec_output_to_jsonable_passes_through(tmp_path):
     from reverge_collector.tool_utils import parse_netexec_output_to_jsonable
 
-    out = parse_netexec_output_to_jsonable(
-        str(tmp_path / 'nope.json'), 'tid', 'toolid'
-    )
+    out = parse_netexec_output_to_jsonable(str(tmp_path / 'nope.json'), 'tid', 'toolid')
     assert out == []
 
 

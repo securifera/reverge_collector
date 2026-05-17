@@ -16,7 +16,6 @@ from unittest.mock import MagicMock, patch
 import netaddr
 import pytest
 
-
 # ===========================================================================
 # shodan_lookup
 # ===========================================================================
@@ -104,9 +103,7 @@ class TestParseShodanOutput:
                         {
                             'ip': ip_int,
                             'port': 443,
-                            'ssl': {
-                                'cert': {'subject': {'CN': 'WWW.EXAMPLE.COM'}}
-                            },
+                            'ssl': {'cert': {'subject': {'CN': 'WWW.EXAMPLE.COM'}}},
                         }
                     ]
                 }
@@ -137,30 +134,23 @@ class TestShodanDnsQuery:
 
     def test_returns_empty_on_no_information(self):
         import shodan as shodan_pkg
-
         from reverge_collector.shodan_lookup import shodan_dns_query
 
         api = MagicMock()
-        api.dns.domain_info.side_effect = shodan_pkg.exception.APIError(
-            'No information available'
-        )
+        api.dns.domain_info.side_effect = shodan_pkg.exception.APIError('No information available')
         assert shodan_dns_query(api, 'nope.example.com') == []
 
     def test_invalid_key_propagates(self):
         import shodan as shodan_pkg
-
         from reverge_collector.shodan_lookup import shodan_dns_query
 
         api = MagicMock()
-        api.dns.domain_info.side_effect = shodan_pkg.exception.APIError(
-            'Invalid API key'
-        )
+        api.dns.domain_info.side_effect = shodan_pkg.exception.APIError('Invalid API key')
         with pytest.raises(shodan_pkg.exception.APIError):
             shodan_dns_query(api, 'x.com')
 
     def test_rate_limit_retries_then_succeeds(self):
         import shodan as shodan_pkg
-
         from reverge_collector.shodan_lookup import shodan_dns_query
 
         api = MagicMock()
@@ -193,18 +183,14 @@ class TestShodanHostQuery:
 
     def test_returns_empty_on_no_information(self):
         import shodan as shodan_pkg
-
         from reverge_collector.shodan_lookup import shodan_host_query
 
         api = MagicMock()
-        api.host.side_effect = shodan_pkg.exception.APIError(
-            'No information available for that IP'
-        )
+        api.host.side_effect = shodan_pkg.exception.APIError('No information available for that IP')
         assert shodan_host_query(api, '8.8.8.8') == []
 
     def test_invalid_key_propagates(self):
         import shodan as shodan_pkg
-
         from reverge_collector.shodan_lookup import shodan_host_query
 
         api = MagicMock()
@@ -214,7 +200,6 @@ class TestShodanHostQuery:
 
     def test_rate_limit_retries_then_succeeds(self):
         import shodan as shodan_pkg
-
         from reverge_collector.shodan_lookup import shodan_host_query
 
         api = MagicMock()

@@ -376,9 +376,7 @@ def test_vuln_data_to_jsonable_name_only():
 
 def test_vuln_from_jsonsable_sets_optional_fields():
     v = data_model.Vuln(parent_id='p')
-    v.from_jsonsable(
-        {'name': 'XSS', 'vuln_details': 'Reflected XSS', 'endpoint_id': 'ep-1'}
-    )
+    v.from_jsonsable({'name': 'XSS', 'vuln_details': 'Reflected XSS', 'endpoint_id': 'ep-1'})
     assert v.name == 'XSS'
     assert v.vuln_details == 'Reflected XSS'
     assert v.endpoint_id == 'ep-1'

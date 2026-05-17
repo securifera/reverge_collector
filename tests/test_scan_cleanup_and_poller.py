@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ===========================================================================
 # scan_cleanup
 # ===========================================================================
@@ -150,9 +149,7 @@ class TestSetupLogging:
         original_level = root.level
         try:
             log_queue = setup_logging()
-            queue_handlers = [
-                h for h in root.handlers if isinstance(h, QueueHandler)
-            ]
+            queue_handlers = [h for h in root.handlers if isinstance(h, QueueHandler)]
             assert queue_handlers
             # setup_logging returns the queue object
             assert log_queue is queue_handlers[0].log_queue

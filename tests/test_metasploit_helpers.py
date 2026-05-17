@@ -10,7 +10,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ===========================================================================
 # _read_msf_token
 # ===========================================================================
@@ -83,8 +82,9 @@ class TestFingerprint:
         fake_bin.write_bytes(b'fake-binary-content')
         expected_hash = hashlib.sha256(b'fake-binary-content').hexdigest()
         with (
-            patch('reverge_collector.metasploit_scan.requests.post',
-                  side_effect=Exception('rpc-down')),
+            patch(
+                'reverge_collector.metasploit_scan.requests.post', side_effect=Exception('rpc-down')
+            ),
             patch('shutil.which', return_value=str(fake_bin)),
         ):
             out = Metasploit._fingerprint(bearer_token='t')
@@ -94,8 +94,9 @@ class TestFingerprint:
         from reverge_collector.metasploit_scan import Metasploit
 
         with (
-            patch('reverge_collector.metasploit_scan.requests.post',
-                  side_effect=Exception('rpc-down')),
+            patch(
+                'reverge_collector.metasploit_scan.requests.post', side_effect=Exception('rpc-down')
+            ),
             patch('shutil.which', return_value=None),
         ):
             assert Metasploit._fingerprint(bearer_token='t') is None

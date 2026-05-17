@@ -92,6 +92,7 @@ def test_subclass_missing_parse_output_cannot_instantiate():
 
         def execute_scan(self, scan_input):
             pass
+
         # parse_output deliberately missing
 
     with pytest.raises(TypeError):
@@ -106,9 +107,7 @@ def test_subclass_missing_parse_output_cannot_instantiate():
 def test_get_output_path_default_pattern(monkeypatch, tmp_path):
     """Default path is <init_tool_folder>/<tool>_outputs_<scan_id>."""
     t = _StubTool()
-    scan_input = SimpleNamespace(
-        id='scan-abc', current_tool=SimpleNamespace(name='stub')
-    )
+    scan_input = SimpleNamespace(id='scan-abc', current_tool=SimpleNamespace(name='stub'))
 
     def fake_init_folder(tool_name, kind, scan_id):
         return str(tmp_path / tool_name / kind / scan_id)
@@ -179,9 +178,7 @@ def test_run_scan_propagates_execute_scan_exception(tmp_path):
 def test_run_import_returns_true_when_output_missing(tmp_path):
     """No output file on disk → import is a no-op success."""
     t = _StubTool()
-    scan_input = SimpleNamespace(
-        id='s1', current_tool=SimpleNamespace(name='stub')
-    )
+    scan_input = SimpleNamespace(id='s1', current_tool=SimpleNamespace(name='stub'))
     nonexistent = str(tmp_path / 'never-written')
     with patch.object(t, 'get_output_path', return_value=nonexistent):
         result = t._run_import(scan_input)
@@ -192,9 +189,7 @@ def test_run_import_returns_true_when_output_missing(tmp_path):
 def test_run_import_calls_parse_output_when_output_exists(tmp_path):
     """Output file exists, no already-done flag, no pre-import cache → parse."""
     t = _StubTool()
-    scan_input = SimpleNamespace(
-        id='s1', current_tool=SimpleNamespace(name='stub')
-    )
+    scan_input = SimpleNamespace(id='s1', current_tool=SimpleNamespace(name='stub'))
     output_path = tmp_path / 'output.json'
     output_path.write_text('{}')
     with (
@@ -212,9 +207,7 @@ def test_run_import_calls_parse_output_when_output_exists(tmp_path):
 def test_run_import_skips_parse_when_already_done(tmp_path):
     """import_already_done returns True → short-circuit, parse never called."""
     t = _StubTool()
-    scan_input = SimpleNamespace(
-        id='s1', current_tool=SimpleNamespace(name='stub')
-    )
+    scan_input = SimpleNamespace(id='s1', current_tool=SimpleNamespace(name='stub'))
     output_path = tmp_path / 'output.json'
     output_path.write_text('{}')
     with (
@@ -229,9 +222,7 @@ def test_run_import_skips_parse_when_already_done(tmp_path):
 def test_run_import_uses_pre_import_cache_when_present(tmp_path):
     """Pre-import cache exists → re-POST without re-parsing."""
     t = _StubTool()
-    scan_input = SimpleNamespace(
-        id='s1', current_tool=SimpleNamespace(name='stub')
-    )
+    scan_input = SimpleNamespace(id='s1', current_tool=SimpleNamespace(name='stub'))
     output_path = tmp_path / 'output.json'
     output_path.write_text('{}')
     cached_records = [{'id': 'r1'}, {'id': 'r2'}]

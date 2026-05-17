@@ -25,10 +25,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.scan_utils import get_port_byte_array
-
 
 # ---------------------------------------------------------------------------
 # Helpers — fake ScheduledScan with a real ScanData
@@ -62,9 +60,7 @@ def make_scan(
 
     collection_tool_map = {}
     for peer in peer_tools:
-        collection_tool_map[peer] = SimpleNamespace(
-            collection_tool=SimpleNamespace(name=peer)
-        )
+        collection_tool_map[peer] = SimpleNamespace(collection_tool=SimpleNamespace(name=peer))
 
     return SimpleNamespace(
         id=scan_id,
@@ -122,9 +118,7 @@ def test_execute_scan_skips_when_output_exists(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_execute_scan_uses_host_port_map_when_masscan_present(
-    tmp_path, monkeypatch, stub_submit
-):
+def test_execute_scan_uses_host_port_map_when_masscan_present(tmp_path, monkeypatch, stub_submit):
     from reverge_collector.nmap_scan import execute_scan, get_output_path
 
     monkeypatch.chdir(tmp_path)
@@ -198,9 +192,7 @@ def test_execute_scan_subnet_branch(tmp_path, monkeypatch, stub_submit):
 # ---------------------------------------------------------------------------
 
 
-def test_execute_scan_host_port_branch_no_masscan(
-    tmp_path, monkeypatch, stub_submit
-):
+def test_execute_scan_host_port_branch_no_masscan(tmp_path, monkeypatch, stub_submit):
     from reverge_collector.nmap_scan import execute_scan, get_output_path
 
     monkeypatch.chdir(tmp_path)
@@ -245,9 +237,7 @@ def test_execute_scan_host_port_branch_no_masscan(
 # ---------------------------------------------------------------------------
 
 
-def test_execute_scan_hosts_only_branch_combined_scan(
-    tmp_path, monkeypatch, stub_submit
-):
+def test_execute_scan_hosts_only_branch_combined_scan(tmp_path, monkeypatch, stub_submit):
     from reverge_collector.nmap_scan import execute_scan, get_output_path
 
     monkeypatch.chdir(tmp_path)

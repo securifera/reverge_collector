@@ -15,7 +15,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers — build the JSON-RPC payloads the function consumes
 # ---------------------------------------------------------------------------

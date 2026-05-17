@@ -5,7 +5,6 @@ the route tests don't exercise."""
 from __future__ import annotations
 
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.data_model import (
     Certificate,
@@ -17,7 +16,6 @@ from reverge_collector.data_model import (
     Screenshot,
     Vuln,
 )
-
 
 # ===========================================================================
 # Vuln
@@ -45,11 +43,13 @@ class TestVuln:
 
     def test_from_jsonsable_loads_all_fields(self):
         v = Vuln()
-        v.from_jsonsable({
-            'name': 'CVE-X',
-            'vuln_details': 'd',
-            'endpoint_id': 'ep-x',
-        })
+        v.from_jsonsable(
+            {
+                'name': 'CVE-X',
+                'vuln_details': 'd',
+                'endpoint_id': 'ep-x',
+            }
+        )
         assert v.name == 'CVE-X'
         assert v.vuln_details == 'd'
         assert v.endpoint_id == 'ep-x'
@@ -90,15 +90,17 @@ class TestListItem:
 class TestHttpEndpointData:
     def test_from_jsonsable_loads_all_fields(self):
         e = HttpEndpointData()
-        e.from_jsonsable({
-            'title': 'Title',
-            'status': 200,
-            'last_modified': 12345,
-            'screenshot_id': 'ss-1',
-            'domain_id': 'd-1',
-            'fav_icon_hash': 'fh',
-            'content_length': 1024,
-        })
+        e.from_jsonsable(
+            {
+                'title': 'Title',
+                'status': 200,
+                'last_modified': 12345,
+                'screenshot_id': 'ss-1',
+                'domain_id': 'd-1',
+                'fav_icon_hash': 'fh',
+                'content_length': 1024,
+            }
+        )
         assert e.title == 'Title'
         assert e.status == 200
         assert e.last_modified == 12345
@@ -168,13 +170,15 @@ class TestCertificate:
 
     def test_from_jsonsable_loads_all_fields(self):
         c = Certificate()
-        c.from_jsonsable({
-            'issuer': 'X',
-            'issued': '50',
-            'expires': '150',
-            'fingerprint_hash': 'h',
-            'domain_id_list': ['d1', 'd2'],
-        })
+        c.from_jsonsable(
+            {
+                'issuer': 'X',
+                'issued': '50',
+                'expires': '150',
+                'fingerprint_hash': 'h',
+                'domain_id_list': ['d1', 'd2'],
+            }
+        )
         assert c.issuer == 'X'
         assert c.issued == 50
         assert c.expires == 150

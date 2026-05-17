@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 NMAP_SCRIPT_HELP_SAMPLE = """\
 http-title
 Categories: discovery default safe
@@ -71,9 +70,7 @@ class TestNmapGenerateModules:
         gen = getattr(Nmap, '_generate_nmap_modules', None)
         if not gen:
             pytest.skip()
-        with patch(
-            'reverge_collector.nmap_scan.process_wrapper', return_value=None
-        ):
+        with patch('reverge_collector.nmap_scan.process_wrapper', return_value=None):
             # Should handle None gracefully (no crash)
             try:
                 out = gen()

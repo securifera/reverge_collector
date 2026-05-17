@@ -24,14 +24,19 @@ class TestSubdomainRequestWrapper:
     def test_success_returns_domains(self):
         from reverge_collector.ip_thc_lookup import subdomain_request_wrapper
 
-        body = json.dumps({'domains': [
-            {'domain': 'a.example.com'},
-            {'domain': 'b.example.com'},
-        ]}).encode()
+        body = json.dumps(
+            {
+                'domains': [
+                    {'domain': 'a.example.com'},
+                    {'domain': 'b.example.com'},
+                ]
+            }
+        ).encode()
         conn = MagicMock()
         conn.getresponse.return_value = _resp(200, body)
-        with patch('reverge_collector.ip_thc_lookup.http.client.HTTPSConnection',
-                   return_value=conn):
+        with patch(
+            'reverge_collector.ip_thc_lookup.http.client.HTTPSConnection', return_value=conn
+        ):
             out = subdomain_request_wrapper('example.com')
         assert out['target'] == 'example.com'
         assert sorted(out['domains']) == ['a.example.com', 'b.example.com']
@@ -46,8 +51,7 @@ class TestSubdomainRequestWrapper:
         conn = MagicMock()
         conn.getresponse.side_effect = responses
         with (
-            patch('reverge_collector.ip_thc_lookup.http.client.HTTPSConnection',
-                  return_value=conn),
+            patch('reverge_collector.ip_thc_lookup.http.client.HTTPSConnection', return_value=conn),
             patch('time.sleep'),
         ):
             out = subdomain_request_wrapper('example.com')
@@ -63,8 +67,7 @@ class TestSubdomainRequestWrapper:
         conn = MagicMock()
         conn.getresponse.side_effect = responses
         with (
-            patch('reverge_collector.ip_thc_lookup.http.client.HTTPSConnection',
-                  return_value=conn),
+            patch('reverge_collector.ip_thc_lookup.http.client.HTTPSConnection', return_value=conn),
             patch('time.sleep'),
         ):
             out = subdomain_request_wrapper('example.com')
@@ -76,33 +79,36 @@ class TestSubdomainRequestWrapper:
 
         conn = MagicMock()
         conn.getresponse.return_value = _resp(406, b'not-acceptable')
-        with patch('reverge_collector.ip_thc_lookup.http.client.HTTPSConnection',
-                   return_value=conn):
+        with patch(
+            'reverge_collector.ip_thc_lookup.http.client.HTTPSConnection', return_value=conn
+        ):
             out = subdomain_request_wrapper('example.com')
         assert out == {'target': 'example.com', 'domains': []}
 
     def test_non_200_raises_runtime_error(self):
-        from reverge_collector.ip_thc_lookup import subdomain_request_wrapper
         import pytest
+        from reverge_collector.ip_thc_lookup import subdomain_request_wrapper
 
         conn = MagicMock()
         conn.getresponse.return_value = _resp(403, b'forbidden')
-        with patch('reverge_collector.ip_thc_lookup.http.client.HTTPSConnection',
-                   return_value=conn):
+        with patch(
+            'reverge_collector.ip_thc_lookup.http.client.HTTPSConnection', return_value=conn
+        ):
             with pytest.raises(RuntimeError, match='Error getting IP THC output'):
                 subdomain_request_wrapper('example.com')
 
     def test_non_200_with_undecodable_bytes_still_raises(self):
-        from reverge_collector.ip_thc_lookup import subdomain_request_wrapper
         import pytest
+        from reverge_collector.ip_thc_lookup import subdomain_request_wrapper
 
         conn = MagicMock()
         # bytes that aren't valid utf-8 → str(data) fallback
         conn.getresponse.return_value = _resp(500, b'\xff\xfe\xfa')
         # status 500 actually retries forever, so use 503 (other non-200)
         conn.getresponse.return_value = _resp(503, b'\xff\xfe\xfa')
-        with patch('reverge_collector.ip_thc_lookup.http.client.HTTPSConnection',
-                   return_value=conn):
+        with patch(
+            'reverge_collector.ip_thc_lookup.http.client.HTTPSConnection', return_value=conn
+        ):
             with pytest.raises(RuntimeError):
                 subdomain_request_wrapper('example.com')
 
@@ -116,14 +122,19 @@ class TestReverseDnsWrapper:
     def test_success_returns_domains(self):
         from reverge_collector.ip_thc_lookup import reverse_dns_request_wrapper
 
-        body = json.dumps({'domains': [
-            {'domain': 'a.example.com'},
-            {'domain': 'b.example.com'},
-        ]}).encode()
+        body = json.dumps(
+            {
+                'domains': [
+                    {'domain': 'a.example.com'},
+                    {'domain': 'b.example.com'},
+                ]
+            }
+        ).encode()
         conn = MagicMock()
         conn.getresponse.return_value = _resp(200, body)
-        with patch('reverge_collector.ip_thc_lookup.http.client.HTTPSConnection',
-                   return_value=conn):
+        with patch(
+            'reverge_collector.ip_thc_lookup.http.client.HTTPSConnection', return_value=conn
+        ):
             out = reverse_dns_request_wrapper('8.8.8.8')
         assert out['target'] == '8.8.8.8'
         assert 'a.example.com' in out['domains']
@@ -135,8 +146,7 @@ class TestReverseDnsWrapper:
         conn = MagicMock()
         conn.getresponse.side_effect = responses
         with (
-            patch('reverge_collector.ip_thc_lookup.http.client.HTTPSConnection',
-                  return_value=conn),
+            patch('reverge_collector.ip_thc_lookup.http.client.HTTPSConnection', return_value=conn),
             patch('time.sleep'),
         ):
             out = reverse_dns_request_wrapper('8.8.8.8')
@@ -147,19 +157,21 @@ class TestReverseDnsWrapper:
 
         conn = MagicMock()
         conn.getresponse.return_value = _resp(406, b'na')
-        with patch('reverge_collector.ip_thc_lookup.http.client.HTTPSConnection',
-                   return_value=conn):
+        with patch(
+            'reverge_collector.ip_thc_lookup.http.client.HTTPSConnection', return_value=conn
+        ):
             out = reverse_dns_request_wrapper('8.8.8.8')
         assert out == {'target': '8.8.8.8', 'domains': []}
 
     def test_non_200_raises(self):
-        from reverge_collector.ip_thc_lookup import reverse_dns_request_wrapper
         import pytest
+        from reverge_collector.ip_thc_lookup import reverse_dns_request_wrapper
 
         conn = MagicMock()
         conn.getresponse.return_value = _resp(403, b'denied')
-        with patch('reverge_collector.ip_thc_lookup.http.client.HTTPSConnection',
-                   return_value=conn):
+        with patch(
+            'reverge_collector.ip_thc_lookup.http.client.HTTPSConnection', return_value=conn
+        ):
             with pytest.raises(RuntimeError):
                 reverse_dns_request_wrapper('8.8.8.8')
 
@@ -173,15 +185,19 @@ class TestProcessResponse:
     def test_extracts_unique_domains(self):
         from reverge_collector.ip_thc_lookup import process_response
 
-        body = json.dumps({'domains': [
-            {'domain': 'a.example.com'},
-            {'domain': 'a.example.com'},
-            {'domain': 'b.example.com'},
-            # Non-dict entry skipped
-            'not-a-dict',
-            # Dict missing 'domain' key skipped
-            {'other': 'x'},
-        ]}).encode()
+        body = json.dumps(
+            {
+                'domains': [
+                    {'domain': 'a.example.com'},
+                    {'domain': 'a.example.com'},
+                    {'domain': 'b.example.com'},
+                    # Non-dict entry skipped
+                    'not-a-dict',
+                    # Dict missing 'domain' key skipped
+                    {'other': 'x'},
+                ]
+            }
+        ).encode()
         out = process_response(body)
         assert out == {'a.example.com', 'b.example.com'}
 

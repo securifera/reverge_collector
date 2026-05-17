@@ -7,7 +7,6 @@ import queue
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-
 # ===========================================================================
 # QueueHandler
 # ===========================================================================
@@ -20,8 +19,13 @@ class TestQueueHandler:
         q = queue.Queue()
         h = QueueHandler(q)
         rec = logging.LogRecord(
-            name='x', level=logging.INFO, pathname='', lineno=1,
-            msg='hello %s', args=('world',), exc_info=None,
+            name='x',
+            level=logging.INFO,
+            pathname='',
+            lineno=1,
+            msg='hello %s',
+            args=('world',),
+            exc_info=None,
         )
         h.emit(rec)
         msg = q.get_nowait()
@@ -34,8 +38,13 @@ class TestQueueHandler:
         q.put('blocking-message')  # queue now full
         h = QueueHandler(q)
         rec = logging.LogRecord(
-            name='x', level=logging.INFO, pathname='', lineno=1,
-            msg='dropped', args=None, exc_info=None,
+            name='x',
+            level=logging.INFO,
+            pathname='',
+            lineno=1,
+            msg='dropped',
+            args=None,
+            exc_info=None,
         )
         with patch.object(h, 'handleError') as he:
             h.emit(rec)
@@ -48,7 +57,7 @@ class TestQueueHandler:
 
 
 def test_setup_logging_returns_queue_with_attached_handler():
-    from reverge_collector.scan_poller import setup_logging, QueueHandler
+    from reverge_collector.scan_poller import QueueHandler, setup_logging
 
     q = setup_logging()
     assert isinstance(q, queue.Queue)

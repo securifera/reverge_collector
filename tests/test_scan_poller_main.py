@@ -19,10 +19,8 @@ class TestMainCommands:
         rm = MagicMock()
         thread = MagicMock()
         with (
-            patch.object(scan_poller.recon_manager, 'get_recon_manager',
-                         return_value=rm),
-            patch.object(scan_poller.recon_manager, 'ScheduledScanThread',
-                         return_value=thread),
+            patch.object(scan_poller.recon_manager, 'get_recon_manager', return_value=rm),
+            patch.object(scan_poller.recon_manager, 'ScheduledScanThread', return_value=thread),
             patch('builtins.input', side_effect=['q']),
             patch.object(scan_poller.time, 'sleep'),
         ):
@@ -37,10 +35,8 @@ class TestMainCommands:
         rm = MagicMock()
         thread = MagicMock()
         with (
-            patch.object(scan_poller.recon_manager, 'get_recon_manager',
-                         return_value=rm),
-            patch.object(scan_poller.recon_manager, 'ScheduledScanThread',
-                         return_value=thread),
+            patch.object(scan_poller.recon_manager, 'get_recon_manager', return_value=rm),
+            patch.object(scan_poller.recon_manager, 'ScheduledScanThread', return_value=thread),
             patch('builtins.input', side_effect=['h', 'q']),
             patch.object(scan_poller, 'print_usage') as pu,
             patch.object(scan_poller.time, 'sleep'),
@@ -54,10 +50,8 @@ class TestMainCommands:
         rm = MagicMock()
         thread = MagicMock()
         with (
-            patch.object(scan_poller.recon_manager, 'get_recon_manager',
-                         return_value=rm),
-            patch.object(scan_poller.recon_manager, 'ScheduledScanThread',
-                         return_value=thread),
+            patch.object(scan_poller.recon_manager, 'get_recon_manager', return_value=rm),
+            patch.object(scan_poller.recon_manager, 'ScheduledScanThread', return_value=thread),
             patch('builtins.input', side_effect=['d', 'd', 'q']),
             patch.object(scan_poller.time, 'sleep'),
         ):
@@ -74,10 +68,8 @@ class TestMainCommands:
         rm = MagicMock()
         thread = MagicMock()
         with (
-            patch.object(scan_poller.recon_manager, 'get_recon_manager',
-                         return_value=rm),
-            patch.object(scan_poller.recon_manager, 'ScheduledScanThread',
-                         return_value=thread),
+            patch.object(scan_poller.recon_manager, 'get_recon_manager', return_value=rm),
+            patch.object(scan_poller.recon_manager, 'ScheduledScanThread', return_value=thread),
             patch('builtins.input', side_effect=['x', 'q']),
             patch.object(scan_poller.time, 'sleep'),
         ):
@@ -90,10 +82,8 @@ class TestMainCommands:
         rm = MagicMock()
         thread = MagicMock()
         with (
-            patch.object(scan_poller.recon_manager, 'get_recon_manager',
-                         return_value=rm),
-            patch.object(scan_poller.recon_manager, 'ScheduledScanThread',
-                         return_value=thread),
+            patch.object(scan_poller.recon_manager, 'get_recon_manager', return_value=rm),
+            patch.object(scan_poller.recon_manager, 'ScheduledScanThread', return_value=thread),
             patch('builtins.input', side_effect=['unknown', '', 'q']),
             patch.object(scan_poller.time, 'sleep'),
         ):

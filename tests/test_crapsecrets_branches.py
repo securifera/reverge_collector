@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ===========================================================================
 # request_wrapper
 # ===========================================================================
@@ -20,10 +19,11 @@ class TestRequestWrapper:
 
         with patch(
             'reverge_collector.crapsecrets_scan.process_wrapper',
-            return_value={'exit_code': 0,
-                          'stdout': json.dumps([{'secret_type': 'aws_key',
-                                                  'secret': 'AKIA...'}]),
-                          'stderr': ''},
+            return_value={
+                'exit_code': 0,
+                'stdout': json.dumps([{'secret_type': 'aws_key', 'secret': 'AKIA...'}]),
+                'stderr': '',
+            },
         ):
             out = request_wrapper({'url': 'https://target/'})
         assert out['url'] == 'https://target/'
@@ -35,8 +35,7 @@ class TestRequestWrapper:
 
         with patch(
             'reverge_collector.crapsecrets_scan.process_wrapper',
-            return_value={'exit_code': 0, 'stdout': 'plain text not json',
-                          'stderr': ''},
+            return_value={'exit_code': 0, 'stdout': 'plain text not json', 'stderr': ''},
         ):
             out = request_wrapper({'url': 'https://target/'})
         assert out['output'] == [{'raw_output': 'plain text not json'}]
@@ -103,25 +102,37 @@ class TestParseCrapsecretsOutput:
         from reverge_collector.crapsecrets_scan import parse_crapsecrets_output
 
         p = tmp_path / 'cs.json'
-        p.write_text(json.dumps({'output_list': [
-            {'output': None, 'http_endpoint_id': 'ep1', 'port_id': 'p1'},
-        ]}))
+        p.write_text(
+            json.dumps(
+                {
+                    'output_list': [
+                        {'output': None, 'http_endpoint_id': 'ep1', 'port_id': 'p1'},
+                    ]
+                }
+            )
+        )
         assert parse_crapsecrets_output(str(p), 'ti', 'td') == []
 
     def test_dict_output_with_results_key(self, tmp_path):
         from reverge_collector.crapsecrets_scan import parse_crapsecrets_output
 
         p = tmp_path / 'cs.json'
-        p.write_text(json.dumps({'output_list': [
-            {
-                'output': {
-                    'target': 'https://target/',
-                    'results': [{'secret_type': 'aws_key', 'secret': 'AKIA...'}],
-                },
-                'http_endpoint_id': 'ep1',
-                'port_id': 'p1',
-            }
-        ]}))
+        p.write_text(
+            json.dumps(
+                {
+                    'output_list': [
+                        {
+                            'output': {
+                                'target': 'https://target/',
+                                'results': [{'secret_type': 'aws_key', 'secret': 'AKIA...'}],
+                            },
+                            'http_endpoint_id': 'ep1',
+                            'port_id': 'p1',
+                        }
+                    ]
+                }
+            )
+        )
         records = parse_crapsecrets_output(str(p), 'ti', 'td')
         types = {type(r).__name__ for r in records}
         assert 'Vuln' in types
@@ -132,13 +143,19 @@ class TestParseCrapsecretsOutput:
         from reverge_collector.crapsecrets_scan import parse_crapsecrets_output
 
         p = tmp_path / 'cs.json'
-        p.write_text(json.dumps({'output_list': [
-            {
-                'output': [{'secret_type': 'github_token', 'secret': 'ghp_...'}],
-                'http_endpoint_id': 'ep1',
-                'port_id': 'p1',
-            }
-        ]}))
+        p.write_text(
+            json.dumps(
+                {
+                    'output_list': [
+                        {
+                            'output': [{'secret_type': 'github_token', 'secret': 'ghp_...'}],
+                            'http_endpoint_id': 'ep1',
+                            'port_id': 'p1',
+                        }
+                    ]
+                }
+            )
+        )
         records = parse_crapsecrets_output(str(p), 'ti', 'td')
         vulns = [r for r in records if type(r).__name__ == 'Vuln']
         assert vulns and vulns[0].name == 'github_token'
@@ -149,13 +166,19 @@ class TestParseCrapsecretsOutput:
         from reverge_collector.crapsecrets_scan import parse_crapsecrets_output
 
         p = tmp_path / 'cs.json'
-        p.write_text(json.dumps({'output_list': [
-            {
-                'output': [{'secret_type': 'aws_key'}],
-                'http_endpoint_id': 'ep1',
-                'port_id': 'p1',
-            }
-        ]}))
+        p.write_text(
+            json.dumps(
+                {
+                    'output_list': [
+                        {
+                            'output': [{'secret_type': 'aws_key'}],
+                            'http_endpoint_id': 'ep1',
+                            'port_id': 'p1',
+                        }
+                    ]
+                }
+            )
+        )
         records = parse_crapsecrets_output(str(p), 'ti', 'td')
         vulns = [r for r in records if type(r).__name__ == 'Vuln']
         assert not vulns
@@ -165,13 +188,19 @@ class TestParseCrapsecretsOutput:
         from reverge_collector.crapsecrets_scan import parse_crapsecrets_output
 
         p = tmp_path / 'cs.json'
-        p.write_text(json.dumps({'output_list': [
-            {
-                'output': ['just a string', {'secret_type': 'ok', 'secret': 'x'}],
-                'http_endpoint_id': 'ep1',
-                'port_id': 'p1',
-            }
-        ]}))
+        p.write_text(
+            json.dumps(
+                {
+                    'output_list': [
+                        {
+                            'output': ['just a string', {'secret_type': 'ok', 'secret': 'x'}],
+                            'http_endpoint_id': 'ep1',
+                            'port_id': 'p1',
+                        }
+                    ]
+                }
+            )
+        )
         records = parse_crapsecrets_output(str(p), 'ti', 'td')
         # Only the second (dict) finding produces records
         vulns = [r for r in records if type(r).__name__ == 'Vuln']

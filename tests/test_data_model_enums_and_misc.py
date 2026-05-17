@@ -4,7 +4,6 @@ data_model that haven't been covered yet."""
 from __future__ import annotations
 
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.data_model import (
     CollectionToolStatus,
@@ -16,67 +15,81 @@ from reverge_collector.data_model import (
     update_scope_array,
 )
 
-
 # ===========================================================================
 # enum.__str__
 # ===========================================================================
 
 
 class TestScanStatusStr:
-    @pytest.mark.parametrize('value,expected', [
-        (ScanStatus.CREATED, 'CREATED'),
-        (ScanStatus.RUNNING, 'RUNNING'),
-        (ScanStatus.COMPLETED, 'COMPLETED'),
-        (ScanStatus.CANCELLED, 'CANCELLED'),
-        (ScanStatus.ERROR, 'ERROR'),
-    ])
+    @pytest.mark.parametrize(
+        'value,expected',
+        [
+            (ScanStatus.CREATED, 'CREATED'),
+            (ScanStatus.RUNNING, 'RUNNING'),
+            (ScanStatus.COMPLETED, 'COMPLETED'),
+            (ScanStatus.CANCELLED, 'CANCELLED'),
+            (ScanStatus.ERROR, 'ERROR'),
+        ],
+    )
     def test_str(self, value, expected):
         assert str(value) == expected
 
 
 class TestCollectionToolStatusStr:
-    @pytest.mark.parametrize('value,expected', [
-        (CollectionToolStatus.CREATED, 'CREATED'),
-        (CollectionToolStatus.RUNNING, 'RUNNING'),
-        (CollectionToolStatus.COMPLETED, 'COMPLETED'),
-        (CollectionToolStatus.ERROR, 'ERROR'),
-        (CollectionToolStatus.CANCELLED, 'CANCELLED'),
-        (CollectionToolStatus.IMPORT_FAILED, 'IMPORT_FAILED'),
-    ])
+    @pytest.mark.parametrize(
+        'value,expected',
+        [
+            (CollectionToolStatus.CREATED, 'CREATED'),
+            (CollectionToolStatus.RUNNING, 'RUNNING'),
+            (CollectionToolStatus.COMPLETED, 'COMPLETED'),
+            (CollectionToolStatus.ERROR, 'ERROR'),
+            (CollectionToolStatus.CANCELLED, 'CANCELLED'),
+            (CollectionToolStatus.IMPORT_FAILED, 'IMPORT_FAILED'),
+        ],
+    )
     def test_str(self, value, expected):
         assert str(value) == expected
 
 
 class TestCollectorTypeStr:
-    @pytest.mark.parametrize('value,expected', [
-        (CollectorType.PASSIVE, 'PASSIVE'),
-        (CollectorType.ACTIVE, 'ACTIVE'),
-    ])
+    @pytest.mark.parametrize(
+        'value,expected',
+        [
+            (CollectorType.PASSIVE, 'PASSIVE'),
+            (CollectorType.ACTIVE, 'ACTIVE'),
+        ],
+    )
     def test_str(self, value, expected):
         assert str(value) == expected
 
 
 class TestRecordTagStr:
-    @pytest.mark.parametrize('value,expected', [
-        (RecordTag.LOCAL, 'LOCAL'),
-        (RecordTag.REMOTE, 'REMOTE'),
-        (RecordTag.SCOPE, 'SCOPE'),
-    ])
+    @pytest.mark.parametrize(
+        'value,expected',
+        [
+            (RecordTag.LOCAL, 'LOCAL'),
+            (RecordTag.REMOTE, 'REMOTE'),
+            (RecordTag.SCOPE, 'SCOPE'),
+        ],
+    )
     def test_str(self, value, expected):
         assert str(value) == expected
 
 
 class TestServerRecordTypeStr:
-    @pytest.mark.parametrize('value,expected', [
-        (ServerRecordType.HOST, 'Host'),
-        (ServerRecordType.PORT, 'Port'),
-        (ServerRecordType.DOMAIN, 'Domain'),
-        (ServerRecordType.HTTP_ENDPOINT, 'HttpEndpoint'),
-        (ServerRecordType.VULNERABILITY, 'Vuln'),
-        (ServerRecordType.CERTIFICATE, 'Certificate'),
-        (ServerRecordType.CPE, 'Cpe'),
-        (ServerRecordType.SUBNET, 'Subnet'),
-    ])
+    @pytest.mark.parametrize(
+        'value,expected',
+        [
+            (ServerRecordType.HOST, 'Host'),
+            (ServerRecordType.PORT, 'Port'),
+            (ServerRecordType.DOMAIN, 'Domain'),
+            (ServerRecordType.HTTP_ENDPOINT, 'HttpEndpoint'),
+            (ServerRecordType.VULNERABILITY, 'Vuln'),
+            (ServerRecordType.CERTIFICATE, 'Certificate'),
+            (ServerRecordType.CPE, 'Cpe'),
+            (ServerRecordType.SUBNET, 'Subnet'),
+        ],
+    )
     def test_str(self, value, expected):
         assert str(value) == expected
 

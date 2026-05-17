@@ -16,10 +16,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.scan_utils import get_port_byte_array
-
 
 # ---------------------------------------------------------------------------
 # Fake-ScheduledScan helpers
@@ -28,9 +26,7 @@ from reverge_collector.scan_utils import get_port_byte_array
 
 def _scope_dict(obj_list, port_list_str='443'):
     return {
-        'b64_port_bitmap': base64.b64encode(
-            get_port_byte_array(port_list_str)
-        ).decode(),
+        'b64_port_bitmap': base64.b64encode(get_port_byte_array(port_list_str)).decode(),
         'obj_list': obj_list,
     }
 
@@ -159,9 +155,7 @@ def test_subfinder_execute_scan_empty_scope(tmp_path, monkeypatch):
         pass  # may raise — we just want the entry-path covered
 
 
-def test_subfinder_execute_scan_with_domain(
-    tmp_path, monkeypatch, patch_executor
-):
+def test_subfinder_execute_scan_with_domain(tmp_path, monkeypatch, patch_executor):
     from reverge_collector.subfinder_scan import execute_scan
 
     monkeypatch.chdir(tmp_path)
@@ -196,9 +190,7 @@ def test_nuclei_execute_scan_empty_scope(tmp_path, monkeypatch):
         pass
 
 
-def test_nuclei_execute_scan_with_host_port(
-    tmp_path, monkeypatch, patch_executor
-):
+def test_nuclei_execute_scan_with_host_port(tmp_path, monkeypatch, patch_executor):
     from reverge_collector.nuclei_scan import execute_scan
 
     monkeypatch.chdir(tmp_path)
@@ -240,9 +232,7 @@ def test_httpx_execute_scan_empty_scope(tmp_path, monkeypatch):
         pass
 
 
-def test_httpx_execute_scan_with_host_port(
-    tmp_path, monkeypatch, patch_executor
-):
+def test_httpx_execute_scan_with_host_port(tmp_path, monkeypatch, patch_executor):
     from reverge_collector.httpx_scan import execute_scan
 
     monkeypatch.chdir(tmp_path)
@@ -296,9 +286,7 @@ def test_nmap_execute_scan_with_subnet(tmp_path, monkeypatch, patch_executor):
             'tags': [data_model.RecordTag.SCOPE.value],
         },
     ]
-    scan = make_fake_scan(
-        tmp_path, 'nmap', obj_list=obj_list, args='-sT -sV'
-    )
+    scan = make_fake_scan(tmp_path, 'nmap', obj_list=obj_list, args='-sT -sV')
     try:
         execute_scan(scan)
     except Exception:
@@ -333,9 +321,7 @@ def test_naabu_execute_scan_with_subnet(tmp_path, monkeypatch, patch_executor):
             'tags': [data_model.RecordTag.SCOPE.value],
         },
     ]
-    scan = make_fake_scan(
-        tmp_path, 'naabu', obj_list=obj_list, args='-sD -sV'
-    )
+    scan = make_fake_scan(tmp_path, 'naabu', obj_list=obj_list, args='-sD -sV')
     try:
         execute_scan(scan)
     except Exception:

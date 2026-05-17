@@ -10,7 +10,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.scan_utils import get_port_byte_array
 
@@ -22,8 +21,9 @@ def _scope(obj_list, port_list_str='445'):
     }
 
 
-def make_scan(tmp_path, *, obj_list=None, args='auxiliary/scanner/smb/smb_version',
-              port_list_str='445'):
+def make_scan(
+    tmp_path, *, obj_list=None, args='auxiliary/scanner/smb/smb_version', port_list_str='445'
+):
     if obj_list is None:
         obj_list = []
     scan_id = 'msf-' + os.urandom(3).hex()
@@ -225,16 +225,20 @@ def test_parse_output_handles_ip_only_lines_no_port(tmp_path, monkeypatch):
     out_file = tmp_path / 'console.out'
     out_file.write_text('[*] 10.0.0.6 - some message without port\n')
     meta = tmp_path / 'meta.json'
-    meta.write_text(json.dumps({
-        'metasploit_scan_list': [
+    meta.write_text(
+        json.dumps(
             {
-                'output_file': str(out_file),
-                'protocol': 'auxiliary/scanner/x',
-                'port': '1234',
-                'ip_list': '',
+                'metasploit_scan_list': [
+                    {
+                        'output_file': str(out_file),
+                        'protocol': 'auxiliary/scanner/x',
+                        'port': '1234',
+                        'ip_list': '',
+                    }
+                ]
             }
-        ]
-    }))
+        )
+    )
     inst = Metasploit()
     scan = make_scan(tmp_path)
     result = inst.parse_output(str(meta), scan)
@@ -267,16 +271,20 @@ def test_parse_output_uses_existing_scope_host_id(tmp_path, monkeypatch):
     out_file = tmp_path / 'console.out'
     out_file.write_text('[*] 10.0.0.99:445 - probed\n')
     meta = tmp_path / 'meta.json'
-    meta.write_text(json.dumps({
-        'metasploit_scan_list': [
+    meta.write_text(
+        json.dumps(
             {
-                'output_file': str(out_file),
-                'protocol': 'auxiliary/scanner/smb/smb_version',
-                'port': '445',
-                'ip_list': '',
+                'metasploit_scan_list': [
+                    {
+                        'output_file': str(out_file),
+                        'protocol': 'auxiliary/scanner/smb/smb_version',
+                        'port': '445',
+                        'ip_list': '',
+                    }
+                ]
             }
-        ]
-    }))
+        )
+    )
     inst = Metasploit()
     scan = make_scan(tmp_path, obj_list=obj_list)
     result = inst.parse_output(str(meta), scan)
@@ -301,16 +309,20 @@ def test_parse_output_replaces_ambiguous_os_with_specific(tmp_path, monkeypatch)
     # Simpler: rely on the host-os break logic. We just test that creation
     # succeeds (and the replace-ambiguous branch is exercised by the table form).
     meta = tmp_path / 'meta.json'
-    meta.write_text(json.dumps({
-        'metasploit_scan_list': [
+    meta.write_text(
+        json.dumps(
             {
-                'output_file': str(out_file),
-                'protocol': 'auxiliary/scanner/smb/smb_version',
-                'port': '445',
-                'ip_list': '',
+                'metasploit_scan_list': [
+                    {
+                        'output_file': str(out_file),
+                        'protocol': 'auxiliary/scanner/smb/smb_version',
+                        'port': '445',
+                        'ip_list': '',
+                    }
+                ]
             }
-        ]
-    }))
+        )
+    )
     inst = Metasploit()
     scan = make_scan(tmp_path)
     result = inst.parse_output(str(meta), scan)

@@ -11,16 +11,13 @@ from unittest.mock import MagicMock, patch
 
 import netaddr
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.scan_utils import get_port_byte_array
 
 
 def _scope(obj_list, port_list_str='443'):
     return {
-        'b64_port_bitmap': base64.b64encode(
-            get_port_byte_array(port_list_str)
-        ).decode(),
+        'b64_port_bitmap': base64.b64encode(get_port_byte_array(port_list_str)).decode(),
         'obj_list': obj_list,
     }
 
@@ -117,15 +114,12 @@ class TestShodanSubnetQuery:
         from reverge_collector.shodan_lookup import shodan_subnet_query
 
         api = MagicMock()
-        api.search_cursor.return_value = iter(
-            [{'ip': 1, 'port': 80}, {'ip': 2, 'port': 443}]
-        )
+        api.search_cursor.return_value = iter([{'ip': 1, 'port': 80}, {'ip': 2, 'port': 443}])
         out = shodan_subnet_query(api, '8.8.8.0', 24)
         assert len(out) == 2
 
     def test_rate_limit_retries_then_succeeds(self):
         import shodan as shodan_pkg
-
         from reverge_collector.shodan_lookup import shodan_subnet_query
 
         api = MagicMock()
@@ -139,25 +133,19 @@ class TestShodanSubnetQuery:
 
     def test_invalid_key_propagates(self):
         import shodan as shodan_pkg
-
         from reverge_collector.shodan_lookup import shodan_subnet_query
 
         api = MagicMock()
-        api.search_cursor.side_effect = shodan_pkg.exception.APIError(
-            'invalid api key'
-        )
+        api.search_cursor.side_effect = shodan_pkg.exception.APIError('invalid api key')
         with pytest.raises(shodan_pkg.exception.APIError):
             shodan_subnet_query(api, '8.8.8.0', 24)
 
     def test_no_information_returns_empty(self):
         import shodan as shodan_pkg
-
         from reverge_collector.shodan_lookup import shodan_subnet_query
 
         api = MagicMock()
-        api.search_cursor.side_effect = shodan_pkg.exception.APIError(
-            'no information available'
-        )
+        api.search_cursor.side_effect = shodan_pkg.exception.APIError('no information available')
         assert shodan_subnet_query(api, '8.8.8.0', 24) == []
 
 
@@ -397,9 +385,7 @@ class TestParseShodanOutputDeep:
 
         ipv6 = netaddr.IPAddress('2606:2800:220:1:248:1893:25c8:1946')
         f = tmp_path / 's.json'
-        f.write_text(
-            json.dumps({'data': [{'ip': int(ipv6), 'port': 443}]})
-        )
+        f.write_text(json.dumps({'data': [{'ip': int(ipv6), 'port': 443}]}))
         records = parse_shodan_output(str(f), 'tid')
         hosts = [r for r in records if isinstance(r, Host)]
         assert hosts and hosts[0].ipv6_addr

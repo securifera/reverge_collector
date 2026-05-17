@@ -14,7 +14,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
-
 from reverge_collector import data_model
 from reverge_collector.scan_utils import get_port_byte_array
 
@@ -57,18 +56,21 @@ def test_get_subfinder_input_writes_one_domain_per_line(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     obj_list = [
         {
-            'type': 'host', 'id': 'h1',
+            'type': 'host',
+            'id': 'h1',
             'data': {'ipv4_addr': '10.0.0.1'},
             'tags': [data_model.RecordTag.SCOPE.value],
         },
         {
-            'type': 'domain', 'id': 'd1',
+            'type': 'domain',
+            'id': 'd1',
             'parent': {'type': 'host', 'id': 'h1'},
             'data': {'name': 'example.com'},
             'tags': [data_model.RecordTag.SCOPE.value],
         },
         {
-            'type': 'domain', 'id': 'd2',
+            'type': 'domain',
+            'id': 'd2',
             'parent': {'type': 'host', 'id': 'h1'},
             'data': {'name': 'other.com'},
             'tags': [data_model.RecordTag.SCOPE.value],

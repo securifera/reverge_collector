@@ -13,14 +13,12 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.data_model import (
     CollectionToolStatus,
     ScheduledScan,
     wordlist_path,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -317,9 +315,7 @@ def test_init_selected_interface_is_none_when_falsy():
     """An empty dict / falsy interface is treated as not-set."""
     tool = make_tool()
     sched = make_scheduled_input([tool])
-    thread = make_scan_thread(
-        scan_obj={'scan_id': 's', 'scope': empty_scope(), 'interface': {}}
-    )
+    thread = make_scan_thread(scan_obj={'scan_id': 's', 'scope': empty_scope(), 'interface': {}})
     s = ScheduledScan(thread, sched)
     assert s.selected_interface is None
 

@@ -14,7 +14,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.scan_utils import get_port_byte_array
 
@@ -69,14 +68,18 @@ def test_parse_skips_missing_or_empty_output_files(tmp_path):
     from reverge_collector.netexec_scan import parse_netexec_output
 
     meta = tmp_path / 'meta.json'
-    meta.write_text(json.dumps({
-        'netexec_scan_list': [
-            # Output file doesn't exist
-            {'output_file': str(tmp_path / 'missing'), 'protocol': 'smb'},
-            # Output file is empty
-            {'output_file': str(tmp_path / 'empty'), 'protocol': 'smb'},
-        ]
-    }))
+    meta.write_text(
+        json.dumps(
+            {
+                'netexec_scan_list': [
+                    # Output file doesn't exist
+                    {'output_file': str(tmp_path / 'missing'), 'protocol': 'smb'},
+                    # Output file is empty
+                    {'output_file': str(tmp_path / 'empty'), 'protocol': 'smb'},
+                ]
+            }
+        )
+    )
     (tmp_path / 'empty').write_text('')
     assert parse_netexec_output(str(meta), 'ti', 'td') == []
 
@@ -87,15 +90,19 @@ def test_parse_skips_invalid_json_lines(tmp_path):
     out = tmp_path / 'out.jsonl'
     out.write_text(
         '{not-json\n'
-        + json.dumps({'host': '10.0.0.1', 'port': 445, 'hostname': 'srv1',
-                      'message': 'ok'}) + '\n'
+        + json.dumps({'host': '10.0.0.1', 'port': 445, 'hostname': 'srv1', 'message': 'ok'})
+        + '\n'
     )
     meta = tmp_path / 'meta.json'
-    meta.write_text(json.dumps({
-        'netexec_scan_list': [
-            {'output_file': str(out), 'protocol': 'smb'},
-        ]
-    }))
+    meta.write_text(
+        json.dumps(
+            {
+                'netexec_scan_list': [
+                    {'output_file': str(out), 'protocol': 'smb'},
+                ]
+            }
+        )
+    )
     records = parse_netexec_output(str(meta), 'ti', 'td')
     # At least the valid line builds Host/Port/Module
     type_names = {type(r).__name__ for r in records}
@@ -108,15 +115,21 @@ def test_parse_skips_lines_missing_required_fields(tmp_path):
 
     out = tmp_path / 'out.jsonl'
     out.write_text(
-        json.dumps({'host': '10.0.0.1', 'port': 445}) + '\n'  # missing hostname
-        + json.dumps({'host': '10.0.0.2', 'port': 445, 'hostname': 'h2'}) + '\n'
+        json.dumps({'host': '10.0.0.1', 'port': 445})
+        + '\n'  # missing hostname
+        + json.dumps({'host': '10.0.0.2', 'port': 445, 'hostname': 'h2'})
+        + '\n'
     )
     meta = tmp_path / 'meta.json'
-    meta.write_text(json.dumps({
-        'netexec_scan_list': [
-            {'output_file': str(out), 'protocol': 'smb'},
-        ]
-    }))
+    meta.write_text(
+        json.dumps(
+            {
+                'netexec_scan_list': [
+                    {'output_file': str(out), 'protocol': 'smb'},
+                ]
+            }
+        )
+    )
     records = parse_netexec_output(str(meta), 'ti', 'td')
     hosts = [r for r in records if type(r).__name__ == 'Host']
     assert len(hosts) == 1
@@ -128,18 +141,23 @@ def test_parse_extracts_fqdn_from_info_message(tmp_path):
     from reverge_collector.netexec_scan import parse_netexec_output
 
     out = tmp_path / 'out.jsonl'
-    out.write_text(json.dumps({
-        'host': '10.0.0.10',
-        'port': 445,
-        'hostname': 'srv',
-        'message': '(name:WIN-FOO) (domain:CONTOSO)',
-        'level': 'INFO',
-        'type': '',
-    }) + '\n')
+    out.write_text(
+        json.dumps(
+            {
+                'host': '10.0.0.10',
+                'port': 445,
+                'hostname': 'srv',
+                'message': '(name:WIN-FOO) (domain:CONTOSO)',
+                'level': 'INFO',
+                'type': '',
+            }
+        )
+        + '\n'
+    )
     meta = tmp_path / 'meta.json'
-    meta.write_text(json.dumps({
-        'netexec_scan_list': [{'output_file': str(out), 'protocol': 'smb'}]
-    }))
+    meta.write_text(
+        json.dumps({'netexec_scan_list': [{'output_file': str(out), 'protocol': 'smb'}]})
+    )
     records = parse_netexec_output(str(meta), 'ti', 'td')
     domain_names = [r.name for r in records if type(r).__name__ == 'Domain']
     assert 'WIN-FOO.CONTOSO' in domain_names
@@ -150,18 +168,23 @@ def test_parse_extracts_credential_from_success_message(tmp_path):
     from reverge_collector.netexec_scan import parse_netexec_output
 
     out = tmp_path / 'out.jsonl'
-    out.write_text(json.dumps({
-        'host': '10.0.0.20',
-        'port': 445,
-        'hostname': 'srv',
-        'message': 'CONTOSO\\admin:p@ss (Pwn3d!)',
-        'level': 'SUCCESS',
-        'type': 'success',
-    }) + '\n')
+    out.write_text(
+        json.dumps(
+            {
+                'host': '10.0.0.20',
+                'port': 445,
+                'hostname': 'srv',
+                'message': 'CONTOSO\\admin:p@ss (Pwn3d!)',
+                'level': 'SUCCESS',
+                'type': 'success',
+            }
+        )
+        + '\n'
+    )
     meta = tmp_path / 'meta.json'
-    meta.write_text(json.dumps({
-        'netexec_scan_list': [{'output_file': str(out), 'protocol': 'smb'}]
-    }))
+    meta.write_text(
+        json.dumps({'netexec_scan_list': [{'output_file': str(out), 'protocol': 'smb'}]})
+    )
     records = parse_netexec_output(str(meta), 'ti', 'td')
     creds = [r for r in records if type(r).__name__ == 'Credential']
     assert len(creds) == 1
@@ -174,18 +197,23 @@ def test_parse_handles_credential_parse_failure(tmp_path):
     from reverge_collector.netexec_scan import parse_netexec_output
 
     out = tmp_path / 'out.jsonl'
-    out.write_text(json.dumps({
-        'host': '10.0.0.30',
-        'port': 445,
-        'hostname': 'srv',
-        'message': r'malformed\garbage no colon here',
-        'level': 'SUCCESS',
-        'type': 'success',
-    }) + '\n')
+    out.write_text(
+        json.dumps(
+            {
+                'host': '10.0.0.30',
+                'port': 445,
+                'hostname': 'srv',
+                'message': r'malformed\garbage no colon here',
+                'level': 'SUCCESS',
+                'type': 'success',
+            }
+        )
+        + '\n'
+    )
     meta = tmp_path / 'meta.json'
-    meta.write_text(json.dumps({
-        'netexec_scan_list': [{'output_file': str(out), 'protocol': 'smb'}]
-    }))
+    meta.write_text(
+        json.dumps({'netexec_scan_list': [{'output_file': str(out), 'protocol': 'smb'}]})
+    )
     records = parse_netexec_output(str(meta), 'ti', 'td')
     # Parsed line still produces Host/Port/Module even though cred parse failed
     types = {type(r).__name__ for r in records}
@@ -197,17 +225,22 @@ def test_parse_emits_operating_system_record(tmp_path):
     from reverge_collector.netexec_scan import parse_netexec_output
 
     out = tmp_path / 'out.jsonl'
-    out.write_text(json.dumps({
-        'host': '10.0.0.40',
-        'port': 445,
-        'hostname': 'srv',
-        'message': 'banner',
-        'server_os': 'Windows 10',
-    }) + '\n')
+    out.write_text(
+        json.dumps(
+            {
+                'host': '10.0.0.40',
+                'port': 445,
+                'hostname': 'srv',
+                'message': 'banner',
+                'server_os': 'Windows 10',
+            }
+        )
+        + '\n'
+    )
     meta = tmp_path / 'meta.json'
-    meta.write_text(json.dumps({
-        'netexec_scan_list': [{'output_file': str(out), 'protocol': 'smb'}]
-    }))
+    meta.write_text(
+        json.dumps({'netexec_scan_list': [{'output_file': str(out), 'protocol': 'smb'}]})
+    )
     records = parse_netexec_output(str(meta), 'ti', 'td')
     os_recs = [r for r in records if type(r).__name__ == 'OperatingSystem']
     assert len(os_recs) == 1
@@ -221,17 +254,22 @@ def test_parse_emits_module_when_module_name_present(tmp_path):
     from reverge_collector.netexec_scan import parse_netexec_output
 
     out = tmp_path / 'out.jsonl'
-    out.write_text(json.dumps({
-        'host': '10.0.0.50',
-        'port': 445,
-        'hostname': 'srv',
-        'message': 'finding',
-        'module_name': 'ENUM_AV',
-    }) + '\n')
+    out.write_text(
+        json.dumps(
+            {
+                'host': '10.0.0.50',
+                'port': 445,
+                'hostname': 'srv',
+                'message': 'finding',
+                'module_name': 'ENUM_AV',
+            }
+        )
+        + '\n'
+    )
     meta = tmp_path / 'meta.json'
-    meta.write_text(json.dumps({
-        'netexec_scan_list': [{'output_file': str(out), 'protocol': 'smb'}]
-    }))
+    meta.write_text(
+        json.dumps({'netexec_scan_list': [{'output_file': str(out), 'protocol': 'smb'}]})
+    )
     records = parse_netexec_output(str(meta), 'ti', 'td')
     modules = [r for r in records if type(r).__name__ == 'CollectionModule']
     assert modules
@@ -276,12 +314,14 @@ def test_execute_scan_with_host_port_submits(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     obj_list = [
         {
-            'type': 'host', 'id': 'h1',
+            'type': 'host',
+            'id': 'h1',
             'data': {'ipv4_addr': '10.0.0.5'},
             'tags': [data_model.RecordTag.SCOPE.value],
         },
         {
-            'type': 'port', 'id': 'p1',
+            'type': 'port',
+            'id': 'p1',
             'parent': {'type': 'host', 'id': 'h1'},
             'data': {'port': '445', 'proto': 0, 'secure': False},
             'tags': [data_model.RecordTag.SCOPE.value],
@@ -305,7 +345,8 @@ def test_execute_scan_subnet_only_path(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     obj_list = [
         {
-            'type': 'subnet', 'id': 's1',
+            'type': 'subnet',
+            'id': 's1',
             'data': {'subnet': '10.0.0.0', 'mask': 30},
             'tags': [data_model.RecordTag.SCOPE.value],
         },
@@ -324,12 +365,14 @@ def test_execute_scan_failure_raises(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     obj_list = [
         {
-            'type': 'host', 'id': 'h1',
+            'type': 'host',
+            'id': 'h1',
             'data': {'ipv4_addr': '10.0.0.5'},
             'tags': [data_model.RecordTag.SCOPE.value],
         },
         {
-            'type': 'port', 'id': 'p1',
+            'type': 'port',
+            'id': 'p1',
             'parent': {'type': 'host', 'id': 'h1'},
             'data': {'port': '445', 'proto': 0, 'secure': False},
             'tags': [data_model.RecordTag.SCOPE.value],

@@ -10,9 +10,7 @@ import json
 from unittest.mock import patch
 
 import pytest
-
 from reverge_collector import module_cache
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -253,9 +251,7 @@ def test_get_cached_modules_none_fingerprint_returns_stale_cache(patched_cache_d
 def test_get_cached_modules_none_fingerprint_no_cache_falls_through_to_generate(
     patched_cache_dir,
 ):
-    out = module_cache.get_cached_modules(
-        'tool', lambda: None, lambda: [_Mod(name='live')]
-    )
+    out = module_cache.get_cached_modules('tool', lambda: None, lambda: [_Mod(name='live')])
     assert [m.name for m in out] == ['live']
 
 
@@ -263,9 +259,7 @@ def test_get_cached_modules_fingerprint_raises_treated_as_none(patched_cache_dir
     def fingerprint_func():
         raise RuntimeError('boom')
 
-    out = module_cache.get_cached_modules(
-        'tool', fingerprint_func, lambda: [_Mod(name='fallback')]
-    )
+    out = module_cache.get_cached_modules('tool', fingerprint_func, lambda: [_Mod(name='fallback')])
     assert [m.name for m in out] == ['fallback']
 
 
@@ -281,7 +275,5 @@ def test_get_cached_modules_writes_logging_on_failure(patched_cache_dir, caplog)
         # get_cached_modules doesn't itself swallow; the swallow lives inside
         # _write_cache. So instead, ensure we just test it was called.
         with pytest.raises(Exception, match='disk full'):
-            module_cache.get_cached_modules(
-                't', lambda: 'fp', lambda: [_Mod(name='m')]
-            )
+            module_cache.get_cached_modules('t', lambda: 'fp', lambda: [_Mod(name='m')])
         assert mock_write.called

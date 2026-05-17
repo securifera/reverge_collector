@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 
-
 # ===========================================================================
 # sqlmap
 # ===========================================================================
@@ -161,9 +160,7 @@ def test_iis_short_scan_parses_results(tmp_path):
             }
         )
     )
-    records = parse_iis_short_scan_output(
-        str(f), tool_instance_id='tid', tool_id='tool-uuid'
-    )
+    records = parse_iis_short_scan_output(str(f), tool_instance_id='tid', tool_id='tool-uuid')
     modules = [r for r in records if isinstance(r, CollectionModule)]
     hosts = [r for r in records if isinstance(r, Host)]
     ports = [r for r in records if isinstance(r, Port)]
@@ -216,13 +213,7 @@ def test_netexec_parses_credential_success(tmp_path):
     )
     meta = tmp_path / 'netexec.meta'
     meta.write_text(
-        json.dumps(
-            {
-                'netexec_scan_list': [
-                    {'output_file': str(netexec_jsonl), 'protocol': 'smb'}
-                ]
-            }
-        )
+        json.dumps({'netexec_scan_list': [{'output_file': str(netexec_jsonl), 'protocol': 'smb'}]})
     )
     # Should not raise; returns a list of records
     records = parse_netexec_output(str(meta), tool_instance_id='tid', tool_id='toolid')
@@ -242,13 +233,7 @@ def test_netexec_skips_lines_missing_required_fields(tmp_path):
     )
     meta = tmp_path / 'm.meta'
     meta.write_text(
-        json.dumps(
-            {
-                'netexec_scan_list': [
-                    {'output_file': str(netexec_jsonl), 'protocol': 'smb'}
-                ]
-            }
-        )
+        json.dumps({'netexec_scan_list': [{'output_file': str(netexec_jsonl), 'protocol': 'smb'}]})
     )
     out = parse_netexec_output(str(meta), tool_instance_id='tid', tool_id='toolid')
     assert isinstance(out, list)
@@ -316,9 +301,7 @@ def test_nuclei_with_endpoint_port_map(tmp_path):
         )
         + '\n'
     )
-    endpoint_map = {
-        'https://target.example.com': {'port_id': 'port-uuid-1'}
-    }
+    endpoint_map = {'https://target.example.com': {'port_id': 'port-uuid-1'}}
     records = parse_nuclei_output(str(f), endpoint_map, 'tid')
     # With map provided, no Host record should be created from URL
     hosts = [r for r in records if isinstance(r, Host)]
@@ -329,12 +312,11 @@ def test_nuclei_endpoint_not_in_map_is_skipped(tmp_path):
     from reverge_collector.nuclei_scan import parse_nuclei_output
 
     f = tmp_path / 'n.jsonl'
-    f.write_text(
-        json.dumps({'template-id': 'x', 'url': 'https://stranger.com', 'info': {}})
-        + '\n'
-    )
+    f.write_text(json.dumps({'template-id': 'x', 'url': 'https://stranger.com', 'info': {}}) + '\n')
     # Endpoint not in the supplied map → entry is skipped
-    out = parse_nuclei_output(str(f), endpoint_port_obj_map={'https://other.com': {'port_id': 'p1'}})
+    out = parse_nuclei_output(
+        str(f), endpoint_port_obj_map={'https://other.com': {'port_id': 'p1'}}
+    )
     assert out == []
 
 

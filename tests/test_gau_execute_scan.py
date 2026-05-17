@@ -10,7 +10,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.scan_utils import get_port_byte_array
 
@@ -64,12 +63,14 @@ def test_execute_scan_with_scope_domain_submits(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     obj_list = [
         {
-            'type': 'host', 'id': 'h1',
+            'type': 'host',
+            'id': 'h1',
             'data': {'ipv4_addr': '10.0.0.1'},
             'tags': [data_model.RecordTag.SCOPE.value],
         },
         {
-            'type': 'domain', 'id': 'd1',
+            'type': 'domain',
+            'id': 'd1',
             'parent': {'type': 'host', 'id': 'h1'},
             'data': {'name': 'example.com'},
             'tags': [data_model.RecordTag.SCOPE.value],
@@ -95,12 +96,14 @@ def test_execute_scan_with_url_metadata_submits(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     obj_list = [
         {
-            'type': 'host', 'id': 'h1',
+            'type': 'host',
+            'id': 'h1',
             'data': {'ipv4_addr': '10.0.0.1'},
             'tags': [data_model.RecordTag.SCOPE.value],
         },
         {
-            'type': 'port', 'id': 'p1',
+            'type': 'port',
+            'id': 'p1',
             'parent': {'type': 'host', 'id': 'h1'},
             'data': {'port': '443', 'proto': 0, 'secure': True},
             'tags': [data_model.RecordTag.SCOPE.value],
@@ -123,12 +126,14 @@ def test_execute_scan_failure_raises(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     obj_list = [
         {
-            'type': 'host', 'id': 'h1',
+            'type': 'host',
+            'id': 'h1',
             'data': {'ipv4_addr': '10.0.0.1'},
             'tags': [data_model.RecordTag.SCOPE.value],
         },
         {
-            'type': 'domain', 'id': 'd1',
+            'type': 'domain',
+            'id': 'd1',
             'parent': {'type': 'host', 'id': 'h1'},
             'data': {'name': 'example.com'},
             'tags': [data_model.RecordTag.SCOPE.value],

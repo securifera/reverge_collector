@@ -16,7 +16,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ===========================================================================
 # sqlmap_scan._extract_vuln_details
 # ===========================================================================
@@ -53,10 +52,7 @@ def test_extract_vuln_details_fallback_when_no_block():
 def test_extract_vuln_details_caps_at_30_lines():
     from reverge_collector.sqlmap_scan import _extract_vuln_details
 
-    long_block = (
-        'sqlmap identified the following injection point ...\n'
-        + ('extra line\n' * 100)
-    )
+    long_block = 'sqlmap identified the following injection point ...\n' + ('extra line\n' * 100)
     out = _extract_vuln_details(long_block, 'http://x/')
     # Should be bounded
     assert out.count('\n') < 100

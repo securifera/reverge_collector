@@ -22,7 +22,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # masscan
 # ---------------------------------------------------------------------------
@@ -177,11 +176,7 @@ def test_gau_parses_metadata_file(tmp_path):
     meta = tmp_path / 'gau.meta'
     meta.write_text(
         json.dumps(
-            {
-                'gau_scan_list': [
-                    {'output_file': str(raw_out), 'port_id': None, 'host_id': None}
-                ]
-            }
+            {'gau_scan_list': [{'output_file': str(raw_out), 'port_id': None, 'host_id': None}]}
         )
     )
     records = parse_gau_output(str(meta), tool_instance_id='tid')
@@ -400,9 +395,7 @@ def test_nuclei_parses_url_with_port_80_default(tmp_path):
     from reverge_collector.nuclei_scan import parse_nuclei_output
 
     f = tmp_path / 'n.jsonl'
-    f.write_text(
-        json.dumps({'template-id': 'x', 'url': 'http://1.1.1.1', 'info': {}}) + '\n'
-    )
+    f.write_text(json.dumps({'template-id': 'x', 'url': 'http://1.1.1.1', 'info': {}}) + '\n')
     records = parse_nuclei_output(str(f), None, 'tid')
     ports = [r for r in records if isinstance(r, Port)]
     assert any(p.port == '80' for p in ports)
@@ -413,8 +406,10 @@ def test_nuclei_skips_entries_without_url_or_template(tmp_path):
 
     f = tmp_path / 'n.jsonl'
     f.write_text(
-        json.dumps({'no_url': True}) + '\n'
-        + json.dumps({'url': 'http://x', 'info': {}}) + '\n'  # no template-id
+        json.dumps({'no_url': True})
+        + '\n'
+        + json.dumps({'url': 'http://x', 'info': {}})
+        + '\n'  # no template-id
     )
     records = parse_nuclei_output(str(f), None, 'tid')
     # Both records should be skipped → no template/cpe-derived records

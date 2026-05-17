@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.scan_utils import get_port_byte_array
 
@@ -144,9 +143,7 @@ def test_parse_emits_collection_module_only_when_no_target_map(tmp_path):
 
     f = tmp_path / 'out.txt'
     f.write_text('result\n')
-    out = parse_python_scan_output(
-        str(f), tool_instance_id='ti', tool_id='td', target_map=None
-    )
+    out = parse_python_scan_output(str(f), tool_instance_id='ti', tool_id='td', target_map=None)
     # One CollectionModule object, no CollectionModuleOutput
     types = {type(r).__name__ for r in out}
     assert types == {'CollectionModule'}

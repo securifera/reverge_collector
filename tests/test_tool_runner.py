@@ -8,9 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-
 from reverge_collector import tool_runner
-
 
 # ---------------------------------------------------------------------------
 # Path helpers
@@ -19,18 +17,12 @@ from reverge_collector import tool_runner
 
 def test_get_pre_import_marker_lives_alongside_output():
     out = '/scans/abc/tool-outputs/nmap_out.xml'
-    assert (
-        tool_runner.get_pre_import_marker(out)
-        == '/scans/abc/tool-outputs/tool_pre_import_json'
-    )
+    assert tool_runner.get_pre_import_marker(out) == '/scans/abc/tool-outputs/tool_pre_import_json'
 
 
 def test_get_import_marker_lives_alongside_output():
     out = '/scans/abc/tool-outputs/nmap_out.xml'
-    assert (
-        tool_runner.get_import_marker(out)
-        == '/scans/abc/tool-outputs/tool_import_json'
-    )
+    assert tool_runner.get_import_marker(out) == '/scans/abc/tool-outputs/tool_import_json'
 
 
 # ---------------------------------------------------------------------------
@@ -153,9 +145,7 @@ def test_post_pre_import_calls_recon_manager_and_writes_marker(tmp_path):
     import_arr = [{'id': 'orig'}]
 
     recon_manager = MagicMock()
-    recon_manager.import_data.return_value = [
-        {'orig_id': 'orig', 'db_id': 'db-x'}
-    ]
+    recon_manager.import_data.return_value = [{'orig_id': 'orig', 'db_id': 'db-x'}]
 
     scan_data = MagicMock()
     scan_obj = SimpleNamespace(

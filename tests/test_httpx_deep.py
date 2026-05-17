@@ -147,25 +147,26 @@ def test_httpx_certificate_deduped_by_sha1(tmp_path):
     from reverge_collector.data_model import Certificate
     from reverge_collector.httpx_scan import parse_httpx_output
 
-    entry = lambda host: {
-        'input': host,
-        'host_ip': '1.2.3.4',
-        'port': '443',
-        'url': f'https://{host}',
-        'scheme': 'https',
-        'tls': {
-            'fingerprint_hash': {'sha1': 'SAMESHA'},
-            'subject_an': [host],
-            'subject_cn': host,
-            'issuer_dn': 'test',
-            'not_before': '2030-01-01T00:00:00Z',
-            'not_after': '2030-04-01T00:00:00Z',
-        },
-    }
+    def entry(host):
+        return {
+            'input': host,
+            'host_ip': '1.2.3.4',
+            'port': '443',
+            'url': f'https://{host}',
+            'scheme': 'https',
+            'tls': {
+                'fingerprint_hash': {'sha1': 'SAMESHA'},
+                'subject_an': [host],
+                'subject_cn': host,
+                'issuer_dn': 'test',
+                'not_before': '2030-01-01T00:00:00Z',
+                'not_after': '2030-04-01T00:00:00Z',
+            },
+        }
+
     f = tmp_path / 'h.json'
     f.write_text(
-        json.dumps(entry('a.example.com')) + '\n'
-        + json.dumps(entry('b.example.com')) + '\n'
+        json.dumps(entry('a.example.com')) + '\n' + json.dumps(entry('b.example.com')) + '\n'
     )
     records = parse_httpx_output([str(f)], 'tid')
     certs = [r for r in records if isinstance(r, Certificate)]

@@ -17,10 +17,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from reverge_collector import data_model
 from reverge_collector.recon_manager import ScheduledScanThread
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -69,10 +67,7 @@ class TestProcessJobWithSlot:
         # COMPLETED status was POSTed
         calls = t.recon_manager.update_job_status.call_args_list
         # Two calls: RUNNING then COMPLETED
-        assert any(
-            c.args[1] == data_model.ScanStatus.COMPLETED.value
-            for c in calls
-        )
+        assert any(c.args[1] == data_model.ScanStatus.COMPLETED.value for c in calls)
         # Map cleaned up
         assert job.id not in t.scheduled_scan_map
         # No pending retries
@@ -134,10 +129,7 @@ class TestProcessJobWithSlot:
 
         calls = t.recon_manager.update_job_status.call_args_list
         # ERROR was posted
-        assert any(
-            c.args[1] == data_model.ScanStatus.ERROR.value
-            for c in calls
-        )
+        assert any(c.args[1] == data_model.ScanStatus.ERROR.value for c in calls)
 
     def test_error_status_post_failure_queues_for_retry(self):
         t = make_thread()
@@ -155,10 +147,7 @@ class TestProcessJobWithSlot:
 
         # Queued with ERROR status
         assert job.id in t.pending_job_completions
-        assert (
-            t.pending_job_completions[job.id]['status']
-            == data_model.ScanStatus.ERROR.value
-        )
+        assert t.pending_job_completions[job.id]['status'] == data_model.ScanStatus.ERROR.value
 
     def test_connect_to_extender_failure_raises_runtime_error(self):
         cm = MagicMock()
@@ -169,9 +158,7 @@ class TestProcessJobWithSlot:
         t._process_job_with_slot(job)
         # Should have posted ERROR
         calls = t.recon_manager.update_job_status.call_args_list
-        assert any(
-            c.args[1] == data_model.ScanStatus.ERROR.value for c in calls
-        )
+        assert any(c.args[1] == data_model.ScanStatus.ERROR.value for c in calls)
 
     def test_connect_to_target_failure_routes_to_error(self):
         cm = MagicMock()
@@ -181,9 +168,7 @@ class TestProcessJobWithSlot:
         job = make_job()
         t._process_job_with_slot(job)
         calls = t.recon_manager.update_job_status.call_args_list
-        assert any(
-            c.args[1] == data_model.ScanStatus.ERROR.value for c in calls
-        )
+        assert any(c.args[1] == data_model.ScanStatus.ERROR.value for c in calls)
 
     def test_connection_lock_released_in_finally(self):
         cm = MagicMock()
@@ -328,9 +313,7 @@ class TestExecuteScanJobs:
         cm = MagicMock()
         cm.connect_to_extender.return_value = False
         t = make_thread(connection_manager=cm)
-        scan = make_scheduled_scan(
-            collection_tool_map={'ct1': make_collection_tool()}
-        )
+        scan = make_scheduled_scan(collection_tool_map={'ct1': make_collection_tool()})
         out = t.execute_scan_jobs(scan)
         assert out == 'Failed connecting to extender'
 
@@ -340,9 +323,7 @@ class TestExecuteScanJobs:
         t.recon_manager.get_scan_status.return_value = _scan_status(
             scan_status=data_model.ScanStatus.CANCELLED.value
         )
-        scan = make_scheduled_scan(
-            collection_tool_map={'ct1': make_collection_tool()}
-        )
+        scan = make_scheduled_scan(collection_tool_map={'ct1': make_collection_tool()})
         out = t.execute_scan_jobs(scan)
         assert out == "Scan cancelled or doesn't exist"
         t.recon_manager.scan_func.assert_not_called()
@@ -378,9 +359,7 @@ class TestExecuteScanJobs:
         monkeypatch.chdir(tmp_path)
         ct1 = make_collection_tool(name='first', scan_order=1, inst_id='ct1')
         ct2 = make_collection_tool(name='second', scan_order=2, inst_id='ct2')
-        scan = make_scheduled_scan(
-            collection_tool_map={'a': ct1, 'b': ct2}
-        )
+        scan = make_scheduled_scan(collection_tool_map={'a': ct1, 'b': ct2})
         t = make_thread()
         t.recon_manager.get_scan_status.return_value = _scan_status()
         # First tool fails scan_func
@@ -441,9 +420,7 @@ class TestExecuteScanJobs:
         # Tool's args were overridden before scan_func was called
         assert ct.collection_tool.args == '-custom'
 
-    def test_target_connect_failure_returns_error_for_active_tool(
-        self, tmp_path, monkeypatch
-    ):
+    def test_target_connect_failure_returns_error_for_active_tool(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         cm = MagicMock()
         cm.connect_to_extender.return_value = True
@@ -502,9 +479,7 @@ class TestProcessScanObj:
         with patch.object(t, 'execute_scan_jobs', return_value=None):
             t.process_scan_obj(scan)
         # Status updated to COMPLETED
-        scan.update_scan_status.assert_called_once_with(
-            data_model.ScanStatus.COMPLETED.value
-        )
+        scan.update_scan_status.assert_called_once_with(data_model.ScanStatus.COMPLETED.value)
         scan.cleanup.assert_called_once()
         # Map cleaned up
         assert scan.id not in t.scheduled_scan_map
@@ -516,9 +491,7 @@ class TestProcessScanObj:
         with patch.object(t, 'execute_scan_jobs', return_value=None):
             t.process_scan_obj(scan)
         # Status stays RUNNING
-        scan.update_scan_status.assert_called_once_with(
-            data_model.ScanStatus.RUNNING.value
-        )
+        scan.update_scan_status.assert_called_once_with(data_model.ScanStatus.RUNNING.value)
         # No cleanup so output files survive for retry
         scan.cleanup.assert_not_called()
 
@@ -528,9 +501,7 @@ class TestProcessScanObj:
         t.scheduled_scan_map[scan.id] = scan
         with patch.object(t, 'execute_scan_jobs', return_value='something failed'):
             t.process_scan_obj(scan)
-        scan.update_scan_status.assert_called_once_with(
-            data_model.ScanStatus.ERROR.value
-        )
+        scan.update_scan_status.assert_called_once_with(data_model.ScanStatus.ERROR.value)
 
     def test_outage_exception_marks_scan_cancelled(self):
         t = make_thread()
@@ -542,9 +513,7 @@ class TestProcessScanObj:
             side_effect=RuntimeError('detected upstream outage during scan'),
         ):
             t.process_scan_obj(scan)
-        scan.update_scan_status.assert_called_once_with(
-            data_model.ScanStatus.CANCELLED.value
-        )
+        scan.update_scan_status.assert_called_once_with(data_model.ScanStatus.CANCELLED.value)
 
     def test_scan_not_found_exception_removes_scan_from_map(self):
         from reverge_collector.recon_manager import ScanNotFoundException
@@ -563,9 +532,7 @@ class TestProcessScanObj:
         t = make_thread()
         scan = self._scan()
         t.scheduled_scan_map[scan.id] = scan
-        with patch.object(
-            t, 'execute_scan_jobs', side_effect=ValueError('boom')
-        ):
+        with patch.object(t, 'execute_scan_jobs', side_effect=ValueError('boom')):
             t.process_scan_obj(scan)
         # Always popped at the end
         assert scan.id not in t.scheduled_scan_map
