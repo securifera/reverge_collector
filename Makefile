@@ -57,16 +57,21 @@ format-check: ## Check formatting without changes
 
 # -- Testing ------------------------------------------------------------------
 
-# Coverage gate: 20% baseline. The existing test suite is per-scanner with
-# many tools skipped when their binary is missing; raise this as the suite
-# grows toward something like the 70% reverge has reached.
+# Coverage gate: 70%. Local measurement (unit tests + the scanner integration
+# suite under tests/routes/) sits at ~70%; CI runs the same combo against the
+# install.sh-provisioned scanner binaries. Push higher by:
+#   - moving execute_scan() coverage from routes/ integration tests into unit
+#     tests with mocked subprocess (the biggest remaining gap, especially for
+#     nmap_scan, recon_manager, metasploit_scan, shodan_lookup)
+#   - covering ScheduledScanThread.process_scan_obj / execute_scan_jobs
+#     in recon_manager (currently exercised end-to-end only)
 .PHONY: test
-test: ## Run unit tests with coverage gate (20% baseline)
-	$(PYTEST) $(TEST_DIRS) -x -q --cov=$(COV_PKG) --cov-fail-under=20
+test: ## Run unit tests with coverage gate (70%)
+	$(PYTEST) $(TEST_DIRS) -x -q --cov=$(COV_PKG) --cov-fail-under=70
 
 .PHONY: test-cov
 test-cov: ## Run tests with detailed coverage report (html + term-missing)
-	$(PYTEST) $(TEST_DIRS) --cov=$(COV_PKG) --cov-report=term-missing --cov-report=html --cov-fail-under=20
+	$(PYTEST) $(TEST_DIRS) --cov=$(COV_PKG) --cov-report=term-missing --cov-report=html --cov-fail-under=70
 
 .PHONY: test-no-cov
 test-no-cov: ## Run tests without the coverage gate (useful for fast local loops)
