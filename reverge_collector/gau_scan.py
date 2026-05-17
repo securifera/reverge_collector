@@ -257,7 +257,13 @@ def parse_gau_output(
                     port_id = None
                     host_id = None
                     domain_id = None
-                    url_entry = json.loads(line)
+                    try:
+                        url_entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        logging.getLogger(__name__).warning(
+                            'Skipping non-JSON line in gau output: %s', line[:120]
+                        )
+                        continue
                     if 'url' in url_entry:
                         endpoint_url = url_entry['url']
 
