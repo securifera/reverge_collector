@@ -456,20 +456,26 @@ def parse_nuclei_output(
             # a Cpe with only product set (vendor stays empty).
             comp = data_model.Cpe(parent_id=port_id)
             comp.collection_tool_instance_id = tool_instance_id
-            comp.product = matcher_name.lower()
             comp.part = 'a'
+            # Apply the CPE string first (it sets vendor/version/part and a
+            # CPE-style product like "http_server"), then overlay the human
+            # matcher_name as the product so downstream identification gets
+            # the friendlier "apache" rather than "http_server".
             structured = matcher_cpe or template_cpe
             if structured:
                 comp.cpe = structured
+            comp.product = matcher_name.lower()
             ret_arr.append(comp)
         elif template_cpe:
             # Individual detect templates (e.g. angular-detect) have no named
-            # matcher but carry a CPE in info.classification.
+            # matcher but carry a CPE in info.classification. Same field-
+            # overlay rule: apply CPE first, then prefer info.name (lower)
+            # as the human-readable product.
             comp = data_model.Cpe(parent_id=port_id)
             comp.collection_tool_instance_id = tool_instance_id
-            comp.product = (info.get('name') or template_id).lower()
             comp.part = 'a'
             comp.cpe = template_cpe
+            comp.product = (info.get('name') or template_id).lower()
             ret_arr.append(comp)
 
         if template_id.startswith('cve-'):
