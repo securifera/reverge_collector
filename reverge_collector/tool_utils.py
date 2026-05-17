@@ -21,16 +21,12 @@ import binascii
 import json
 import logging
 import os
-import traceback
 import zlib
 from typing import Any, Dict, List, Optional
 
 import requests
-from Cryptodome.Cipher import AES
-from Cryptodome.Cipher import PKCS1_OAEP
+from Cryptodome.Cipher import AES, PKCS1_OAEP
 from Cryptodome.PublicKey import RSA
-
-from reverge_collector import data_model
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +34,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
 
 def remove_dups_from_dict(dict_array: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Remove duplicate dictionaries from a list by comparing JSON representations.
@@ -94,6 +91,7 @@ def consolidate_ports(port_list: List[str]) -> str:
 # Nmap XML parsing (delegates to nmap_scan module)
 # ---------------------------------------------------------------------------
 
+
 def parse_nmap_xml_to_jsonable(
     xml_path: str,
     scope_obj: Optional[Any] = None,
@@ -102,6 +100,7 @@ def parse_nmap_xml_to_jsonable(
 ) -> List[Dict[str, Any]]:
     """Parse a single nmap XML file and return JSON-serialisable dicts."""
     from reverge_collector.nmap_scan import parse_nmap_xml
+
     records = parse_nmap_xml(xml_path, scope_obj, tool_instance_id, tool_id)
     return [obj.to_jsonable() for obj in records]
 
@@ -110,9 +109,7 @@ def parse_nmap_xml_to_jsonable(
 # Reverge session-key and encryption utilities
 # ---------------------------------------------------------------------------
 # Session key is stored adjacent to the reverge_collector package root.
-_SESSION_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "session"
-)
+_SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'session')
 
 
 def _load_session_key() -> Optional[bytes]:
@@ -131,12 +128,11 @@ def _save_session_key(key: bytes) -> None:
     """Persist the AES session key to disk as a hex string."""
     session_path = os.path.abspath(_SESSION_FILE)
     try:
-        fd = os.open(session_path, os.O_CREAT |
-                     os.O_WRONLY | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as fh:
+        fd = os.open(session_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as fh:
             fh.write(binascii.hexlify(key).decode())
     except Exception as exc:
-        logger.warning("Could not save session key to disk: %s", exc)
+        logger.warning('Could not save session key to disk: %s', exc)
 
 
 def get_session_key(
@@ -169,28 +165,24 @@ def get_session_key(
             return cached
 
     key = RSA.generate(2048)
-    private_key_der = key.export_key(format="DER")
-    public_key_b64 = base64.b64encode(
-        key.publickey().export_key(format="DER")
-    ).decode()
+    private_key_der = key.export_key(format='DER')
+    public_key_b64 = base64.b64encode(key.publickey().export_key(format='DER')).decode()
 
     r = requests.post(
-        "%s/api/session" % manager_url,
+        '%s/api/session' % manager_url,
         headers=headers,
-        json={"data": public_key_b64},
+        json={'data': public_key_b64},
         verify=False,
         timeout=30,
     )
     if r.status_code != 200:
-        raise RuntimeError(
-            "Reverge session key exchange failed (HTTP %d)" % r.status_code
-        )
+        raise RuntimeError('Reverge session key exchange failed (HTTP %d)' % r.status_code)
 
     ret_json = r.json()
-    if "data" not in ret_json:
-        raise RuntimeError("Reverge server did not return a session key")
+    if 'data' not in ret_json:
+        raise RuntimeError('Reverge server did not return a session key')
 
-    enc_session_key = base64.b64decode(ret_json["data"])
+    enc_session_key = base64.b64decode(ret_json['data'])
     rsa_obj = RSA.import_key(private_key_der)
     session_key: bytes = PKCS1_OAEP.new(rsa_obj).decrypt(enc_session_key)
     if persist:
@@ -237,12 +229,14 @@ def decrypt_data(session_key: bytes, b64_data: str) -> bytes:
 # Masscan, HTTPX, and Nuclei parsing (delegates to each tool's scan module)
 # ---------------------------------------------------------------------------
 
+
 def parse_masscan_xml_to_jsonable(
     xml_path: str,
     tool_instance_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Parse a Masscan XML output file and return JSON-serialisable dicts."""
     from reverge_collector.masscan import parse_masscan_xml
+
     return [obj.to_jsonable() for obj in parse_masscan_xml(xml_path, tool_instance_id)]
 
 
@@ -253,8 +247,10 @@ def parse_httpx_output_to_jsonable(
 ) -> List[Dict[str, Any]]:
     """Parse an httpx JSON output file and return JSON-serialisable dicts."""
     from reverge_collector.httpx_scan import parse_httpx_output
-    return [obj.to_jsonable() for obj in parse_httpx_output(
-        [output_file], tool_instance_id, tool_id)]
+
+    return [
+        obj.to_jsonable() for obj in parse_httpx_output([output_file], tool_instance_id, tool_id)
+    ]
 
 
 def parse_nuclei_output_to_jsonable(
@@ -264,8 +260,11 @@ def parse_nuclei_output_to_jsonable(
 ) -> List[Dict[str, Any]]:
     """Parse a Nuclei JSON output file and return JSON-serialisable dicts."""
     from reverge_collector.nuclei_scan import parse_nuclei_output
-    return [obj.to_jsonable() for obj in parse_nuclei_output(
-        output_file, None, tool_instance_id, tool_id)]
+
+    return [
+        obj.to_jsonable()
+        for obj in parse_nuclei_output(output_file, None, tool_instance_id, tool_id)
+    ]
 
 
 def parse_shodan_output_to_jsonable(
@@ -274,6 +273,7 @@ def parse_shodan_output_to_jsonable(
 ) -> List[Dict[str, Any]]:
     """Parse a Shodan JSON output file and return JSON-serialisable dicts."""
     from reverge_collector.shodan_lookup import parse_shodan_output
+
     return [obj.to_jsonable() for obj in parse_shodan_output(output_file, tool_instance_id)]
 
 
@@ -283,6 +283,7 @@ def parse_feroxbuster_output_to_jsonable(
 ) -> List[Dict[str, Any]]:
     """Parse a Feroxbuster JSON metadata output file and return JSON-serialisable dicts."""
     from reverge_collector.feroxbuster_scan import parse_feroxbuster_output
+
     return [obj.to_jsonable() for obj in parse_feroxbuster_output(output_file, tool_instance_id)]
 
 
@@ -292,6 +293,7 @@ def parse_subfinder_output_to_jsonable(
 ) -> List[Dict[str, Any]]:
     """Parse a Subfinder JSON output file and return JSON-serialisable dicts."""
     from reverge_collector.subfinder_scan import parse_subfinder_output
+
     return [obj.to_jsonable() for obj in parse_subfinder_output(output_file, tool_instance_id)]
 
 
@@ -302,7 +304,11 @@ def parse_iis_short_scan_output_to_jsonable(
 ) -> List[Dict[str, Any]]:
     """Parse an IIS Shortname Scanner JSON output file and return JSON-serialisable dicts."""
     from reverge_collector.iis_short_scan import parse_iis_short_scan_output
-    return [obj.to_jsonable() for obj in parse_iis_short_scan_output(output_file, tool_instance_id, tool_id)]
+
+    return [
+        obj.to_jsonable()
+        for obj in parse_iis_short_scan_output(output_file, tool_instance_id, tool_id)
+    ]
 
 
 def parse_ip_thc_output_to_jsonable(
@@ -311,6 +317,7 @@ def parse_ip_thc_output_to_jsonable(
 ) -> List[Dict[str, Any]]:
     """Parse an IP THC JSON output file and return JSON-serialisable dicts."""
     from reverge_collector.ip_thc_lookup import parse_ip_thc_output
+
     return [obj.to_jsonable() for obj in parse_ip_thc_output(output_file, tool_instance_id)]
 
 
@@ -320,6 +327,7 @@ def parse_gau_output_to_jsonable(
 ) -> List[Dict[str, Any]]:
     """Parse a Gau JSON metadata output file and return JSON-serialisable dicts."""
     from reverge_collector.gau_scan import parse_gau_output
+
     return [obj.to_jsonable() for obj in parse_gau_output(output_file, tool_instance_id)]
 
 
@@ -330,7 +338,11 @@ def parse_crapsecrets_output_to_jsonable(
 ) -> List[Dict[str, Any]]:
     """Parse a CrapSecrets JSON output file and return JSON-serialisable dicts."""
     from reverge_collector.crapsecrets_scan import parse_crapsecrets_output
-    return [obj.to_jsonable() for obj in parse_crapsecrets_output(output_file, tool_instance_id, tool_id)]
+
+    return [
+        obj.to_jsonable()
+        for obj in parse_crapsecrets_output(output_file, tool_instance_id, tool_id)
+    ]
 
 
 def parse_webcap_output_to_jsonable(
@@ -339,6 +351,7 @@ def parse_webcap_output_to_jsonable(
 ) -> List[Dict[str, Any]]:
     """Parse a Webcap JSON-lines metadata file and return JSON-serialisable dicts."""
     from reverge_collector.webcap_scan import parse_webcap_output
+
     return [obj.to_jsonable() for obj in parse_webcap_output(output_file, tool_instance_id)]
 
 
@@ -349,7 +362,10 @@ def parse_netexec_output_to_jsonable(
 ) -> List[Dict[str, Any]]:
     """Parse a Netexec JSON metadata output file and return JSON-serialisable dicts."""
     from reverge_collector.netexec_scan import parse_netexec_output
-    return [obj.to_jsonable() for obj in parse_netexec_output(output_file, tool_instance_id, tool_id)]
+
+    return [
+        obj.to_jsonable() for obj in parse_netexec_output(output_file, tool_instance_id, tool_id)
+    ]
 
 
 def parse_python_scan_output_to_jsonable(
@@ -359,4 +375,8 @@ def parse_python_scan_output_to_jsonable(
 ) -> List[Dict[str, Any]]:
     """Parse a Python scan output file and return JSON-serialisable dicts."""
     from reverge_collector.python_scan import parse_python_scan_output
-    return [obj.to_jsonable() for obj in parse_python_scan_output(output_file, tool_instance_id, tool_id)]
+
+    return [
+        obj.to_jsonable()
+        for obj in parse_python_scan_output(output_file, tool_instance_id, tool_id)
+    ]

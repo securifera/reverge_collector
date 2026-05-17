@@ -1,26 +1,27 @@
-import os
-import logging
 import json
+import logging
+import os
+from typing import Any, Dict, List, Optional
 
-from typing import Dict, Any, List, Set, Optional
-from reverge_collector import scan_utils
-from reverge_collector import data_model
 from iis_shortname_scan import Scanner
+
+from reverge_collector import data_model, scan_utils
 from reverge_collector.tool_spec import ToolSpec
 
 
 class IISShortnameScanner(ToolSpec):
-
     name = 'iis_short_scan'
     description = 'IIS Shortname Scanner is a tool for discovering short filenames on IIS servers.'
     project_url = 'https://github.com/lijiejie/IIS_shortname_Scanner'
     tags = ['vuln-scan', 'http-crawl']
     collector_type = data_model.CollectorType.ACTIVE.value
     scan_order = 8
-    args = ""
-    input_records = [data_model.ServerRecordType.PORT,
-                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
-                     data_model.ServerRecordType.SUBNET]
+    args = ''
+    input_records = [
+        data_model.ServerRecordType.PORT,
+        data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+        data_model.ServerRecordType.SUBNET,
+    ]
     output_records = [
         data_model.ServerRecordType.COLLECTION_MODULE,
         data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
@@ -51,33 +52,33 @@ def iis_short_scan_wrap(target_url_list: List[str]) -> List[Dict[str, Any]]:
         try:
             with Scanner(target_url, silent=True) as scanner:
                 if not scanner.is_vulnerable():
-                    return_list.append({
-                        'target': target_url,
-                        'vulnerable': False,
-                        'files': [],
-                        'dirs': []
-                    })
+                    return_list.append(
+                        {'target': target_url, 'vulnerable': False, 'files': [], 'dirs': []}
+                    )
                     continue
 
                 # Run the scanner
                 scanner.run()
 
-                return_list.append({
-                    'target': target_url,
-                    'vulnerable': True,
-                    'files': scanner.files.copy(),
-                    'dirs': scanner.dirs.copy()
-                })
+                return_list.append(
+                    {
+                        'target': target_url,
+                        'vulnerable': True,
+                        'files': scanner.files.copy(),
+                        'dirs': scanner.dirs.copy(),
+                    }
+                )
         except Exception as e:
-            logging.getLogger(__name__).warning(
-                f"Error scanning target {target_url}: {e}")
-            return_list.append({
-                'target': target_url,
-                'vulnerable': False,
-                'error': str(e),
-                'files': [],
-                'dirs': []
-            })
+            logging.getLogger(__name__).warning(f'Error scanning target {target_url}: {e}')
+            return_list.append(
+                {
+                    'target': target_url,
+                    'vulnerable': False,
+                    'error': str(e),
+                    'files': [],
+                    'dirs': [],
+                }
+            )
 
     return return_list
 
@@ -86,14 +87,15 @@ def get_output_path(scan_input: data_model.ScheduledScan) -> str:
     scan_id: str = scan_input.id
     tool_name: str = scan_input.current_tool.name
     dir_path: str = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-    return f"{dir_path}{os.path.sep}{tool_name}_outputs_{scan_id}"
+    return f'{dir_path}{os.path.sep}{tool_name}_outputs_{scan_id}'
 
 
 def execute_scan(scan_input: data_model.ScheduledScan) -> None:
     output_file_path = get_output_path(scan_input)
     if os.path.exists(output_file_path):
         logging.getLogger(__name__).debug(
-            "Output path %s already exists, skipping IIS shortname scan execution", output_file_path)
+            'Output path %s already exists, skipping IIS shortname scan execution', output_file_path
+        )
         return
 
     scheduled_scan_obj = scan_input
@@ -112,11 +114,9 @@ def execute_scan(scan_input: data_model.ScheduledScan) -> None:
     url_set = set()
     port_id_results_map: Dict[int, List[Dict[str, Any]]] = {}
     if len(endpoint_port_obj_map) > 0:
-
         futures: List[Any] = []
         port_id_target_map = {}
         for target_url in endpoint_port_obj_map:
-
             if target_url in url_set:
                 continue  # Skip if already processed
 
@@ -124,7 +124,8 @@ def execute_scan(scan_input: data_model.ScheduledScan) -> None:
             port_id = port_data.get('port_id', None)
             if port_id is None:
                 logging.getLogger(__name__).warning(
-                    f"Port ID not found for URL {target_url}. Skipping scan execution.")
+                    f'Port ID not found for URL {target_url}. Skipping scan execution.'
+                )
                 continue
 
             if port_id not in port_id_target_map:
@@ -141,7 +142,8 @@ def execute_scan(scan_input: data_model.ScheduledScan) -> None:
         for port_id, port_target_map in port_id_target_map.items():
             target_list = list(port_target_map.keys())
             future_inst = scan_utils.executor.submit(
-                iis_short_scan_wrap, target_url_list=target_list)
+                iis_short_scan_wrap, target_url_list=target_list
+            )
             futures.append((future_inst, port_id))
 
         # Wait for scan completion
@@ -155,8 +157,7 @@ def execute_scan(scan_input: data_model.ScheduledScan) -> None:
                     continue
 
                 if port_id not in port_id_results_map:
-                    port_results_inst = {
-                        'meta_data': port_data, 'results': []}
+                    port_results_inst = {'meta_data': port_data, 'results': []}
                     port_id_results_map[port_id] = port_results_inst
                 else:
                     port_results_inst = port_id_results_map[port_id]
@@ -165,8 +166,7 @@ def execute_scan(scan_input: data_model.ScheduledScan) -> None:
                     port_results_inst['results'].append(result)
 
     else:
-        raise RuntimeError(
-            "No ports found for Python scan. Skipping scan execution.")
+        raise RuntimeError('No ports found for Python scan. Skipping scan execution.')
 
     # Write output file
     with open(output_file_path, 'w') as file_fd:
@@ -187,7 +187,7 @@ def parse_iis_short_scan_output(
     if len(data) > 0:
         module_obj = data_model.CollectionModule(parent_id=tool_id)
         module_obj.collection_tool_instance_id = tool_instance_id
-        module_obj.name = "iis-shortname-scan"
+        module_obj.name = 'iis-shortname-scan'
         module_obj.args = ''
         ret_arr.append(module_obj)
         module_id = module_obj.id
@@ -213,8 +213,7 @@ def parse_iis_short_scan_output(
             ret_arr.append(port_obj)
 
             if module_id:
-                module_output_obj = data_model.CollectionModuleOutput(
-                    parent_id=module_id)
+                module_output_obj = data_model.CollectionModuleOutput(parent_id=module_id)
                 module_output_obj.collection_tool_instance_id = tool_instance_id
                 module_output_obj.output = json.dumps(result_entry_list)
                 module_output_obj.port_id = port_id

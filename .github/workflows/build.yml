@@ -1,6 +1,6 @@
 name: Build
 
-on: 
+on:
   pull_request:
 
 jobs:
@@ -10,9 +10,17 @@ jobs:
       matrix:
         python-version: ["3.10"]
     steps:
-    - uses: actions/checkout@v4
-    - name: Test
-      run: |
-        docker build -t pytest-chrome -f tests/Dockerfile .
-        docker run --shm-size=2g pytest-chrome
-    
+      - uses: actions/checkout@v4
+      - name: Lint + Test (in Docker)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # tests/Dockerfile installs all scanner binaries via install.sh,
+          # adds ruff + pytest-cov + pytest-mock to the venv, and on CMD
+          # runs `make ci` which does: ruff format --check, ruff check,
+          # pytest with --cov-fail-under=20.
+          docker build \
+            --build-arg GITHUB_TOKEN="$GITHUB_TOKEN" \
+            -t pytest-chrome \
+            -f tests/Dockerfile .
+          docker run --shm-size=2g pytest-chrome

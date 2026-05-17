@@ -32,14 +32,15 @@ Constants:
     local_extender_port (int): Port for local backend communication
 """
 
-from reverge_collector import recon_manager
-from reverge_collector.version import __version__
-import traceback
 import argparse
-import time
-import sys
 import logging
 import queue
+import sys
+import time
+import traceback
+
+from reverge_collector import recon_manager
+from reverge_collector.version import __version__
 
 # Configuration: Local backend communication port
 local_extender_port: int = 33333
@@ -67,12 +68,12 @@ def print_usage() -> None:
     Note:
         Commands are single-character for quick interaction during scanning operations
     """
-    print("Help:")
-    print(" q - quit")
-    print(" h - help")
-    print(" d - debug")
-    print(" x - Toggle Scanner Thread")
-    print("")
+    print('Help:')
+    print(' q - quit')
+    print(' h - help')
+    print(' d - debug')
+    print(' x - Toggle Scanner Thread')
+    print('')
 
 
 class QueueHandler(logging.Handler):
@@ -174,10 +175,9 @@ def setup_logging() -> queue.Queue:
     formatter = logging.Formatter(log_format, datefmt=date_format)
 
     # Configure basic logging
-    logging.basicConfig(level=log_level, format=log_format,
-                        datefmt=date_format)
+    logging.basicConfig(level=log_level, format=log_format, datefmt=date_format)
     # Reduce urllib3 verbosity to minimize HTTP request noise
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
 
     # Create queue-based logging handler
     log_queue = queue.Queue()
@@ -249,7 +249,8 @@ def main(args) -> None:
         try:
             # Create instance of recon manager with backend connection
             recon_manager_inst = recon_manager.get_recon_manager(
-                args.token, "http://127.0.0.1:%d" % local_extender_port)
+                args.token, 'http://127.0.0.1:%d' % local_extender_port
+            )
 
             # Create and start the scheduled scan thread
             scan_thread = recon_manager.ScheduledScanThread(recon_manager_inst)
@@ -258,13 +259,13 @@ def main(args) -> None:
 
             # Interactive console loop for user commands
             while exit_loop == False:
-                print("Enter a command")
+                print('Enter a command')
                 # Display prompt for user input
-                print(">", end='')
+                print('>', end='')
                 command = input()
 
                 # Process user commands
-                if command == "q":
+                if command == 'q':
                     # Quit command - exit application
                     exit_loop = True
                     break
@@ -275,10 +276,10 @@ def main(args) -> None:
                     # Debug command - toggle debug mode
                     if debug == True:
                         debug = False
-                        print("[*] Debugging disabled")
+                        print('[*] Debugging disabled')
                     else:
                         debug = True
-                        print("[*] Debugging enabled")
+                        print('[*] Debugging enabled')
                     recon_manager_inst.set_debug(debug)
                 elif command == 'x':
                     # Toggle scanner thread on/off
@@ -287,11 +288,11 @@ def main(args) -> None:
         except Exception as e:
             # Handle connection and session exceptions with retry logic
             if isinstance(e, recon_manager.SessionException):
-                print("[*] Unable to register with server. Retrying in 30 seconds")
+                print('[*] Unable to register with server. Retrying in 30 seconds')
                 time.sleep(30)
                 continue
-            elif "refused" in str(e):
-                print("[*] Connection refused. Retrying in 30 seconds")
+            elif 'refused' in str(e):
+                print('[*] Connection refused. Retrying in 30 seconds')
                 time.sleep(30)
                 continue
             else:
@@ -304,7 +305,7 @@ def main(args) -> None:
             scan_thread.stop()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     """
     Command-line entry point for the reverge_collector scan poller application.
 
@@ -326,20 +327,19 @@ if __name__ == "__main__":
     """
     # Configure command-line argument parser
     parser = argparse.ArgumentParser(
-        description="reverge_collector Security Scanning Framework - Interactive Console",
-        epilog="Use 'h' command in interactive mode for runtime help"
+        description='reverge_collector Security Scanning Framework - Interactive Console',
+        epilog="Use 'h' command in interactive mode for runtime help",
     )
     parser.add_argument(
-        "-x", "--token",
-        help="Collector authentication token for backend communication",
+        '-x',
+        '--token',
+        help='Collector authentication token for backend communication',
         required=True,
-        type=str
+        type=str,
     )
 
     parser.add_argument(
-        '-v', dest='version',
-        help='Display version information',
-        action='store_true'
+        '-v', dest='version', help='Display version information', action='store_true'
     )
 
     # Parse command-line arguments
@@ -347,7 +347,7 @@ if __name__ == "__main__":
 
     # Handle version display
     if args.version:
-        print(f"[*] reverge_collector scan poller version {__version__}")
+        print(f'[*] reverge_collector scan poller version {__version__}')
         sys.exit(0)
 
     # Start main application

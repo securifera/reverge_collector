@@ -46,15 +46,16 @@ from typing import Any, Callable, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # Directory where per-tool cache files are stored
-CACHE_DIR: str = "/opt/collector/module_cache"
+CACHE_DIR: str = '/opt/collector/module_cache'
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _cache_path(tool_name: str) -> str:
-    return os.path.join(CACHE_DIR, f"{tool_name}_modules.json")
+    return os.path.join(CACHE_DIR, f'{tool_name}_modules.json')
 
 
 def _read_cache(tool_name: str) -> Optional[Dict[str, Any]]:
@@ -66,19 +67,22 @@ def _read_cache(tool_name: str) -> Optional[Dict[str, Any]]:
         with open(path, 'r') as fh:
             return json.load(fh)
     except Exception as exc:
-        logger.warning(
-            "Failed to read module cache for %s: %s", tool_name, exc)
+        logger.warning('Failed to read module cache for %s: %s', tool_name, exc)
         return None
 
 
-def _write_cache(tool_name: str, fingerprint: str,
-                 modules: List[Any]) -> None:
+def _write_cache(tool_name: str, fingerprint: str, modules: List[Any]) -> None:
     """Persist a list of CollectionModule objects to the cache file."""
     os.makedirs(CACHE_DIR, exist_ok=True)
     payload: Dict[str, Any] = {
-        "fingerprint": fingerprint,
-        "modules": [
-            {"name": m.name, "description": m.description, "args": m.args}
+        'fingerprint': fingerprint,
+        'modules': [
+            {
+                'name': m.name,
+                'description': m.description,
+                'args': m.args,
+                'cpe': getattr(m, 'cpe', None),
+            }
             for m in modules
         ],
     }
@@ -86,23 +90,30 @@ def _write_cache(tool_name: str, fingerprint: str,
     try:
         with open(path, 'w') as fh:
             json.dump(payload, fh, indent=2)
-        logger.debug("Wrote module cache for %s (%d entries, fingerprint=%s)",
-                     tool_name, len(modules), fingerprint)
+        logger.debug(
+            'Wrote module cache for %s (%d entries, fingerprint=%s)',
+            tool_name,
+            len(modules),
+            fingerprint,
+        )
     except Exception as exc:
-        logger.warning(
-            "Failed to write module cache for %s: %s", tool_name, exc)
+        logger.warning('Failed to write module cache for %s: %s', tool_name, exc)
 
 
 def _modules_from_cache(raw: Dict[str, Any]) -> List[Any]:
     """Reconstruct CollectionModule objects from a cache dict."""
     # Import lazily to avoid circular imports
     from reverge_collector import data_model
+
     modules = []
-    for entry in raw.get("modules", []):
+    for entry in raw.get('modules', []):
         m = data_model.CollectionModule()
-        m.name = entry.get("name")
-        m.description = entry.get("description")
-        m.args = entry.get("args")
+        m.name = entry.get('name')
+        m.description = entry.get('description')
+        m.args = entry.get('args')
+        cpe = entry.get('cpe')
+        if cpe:
+            m.cpe = cpe
         modules.append(m)
     return modules
 
@@ -119,6 +130,7 @@ def sha256_file(path: str) -> str:
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
+
 
 def get_cached_modules(
     tool_name: str,
@@ -149,51 +161,53 @@ def get_cached_modules(
     try:
         fingerprint = fingerprint_func()
     except Exception as exc:
-        logger.debug("fingerprint_func for %s raised: %s", tool_name, exc)
+        logger.debug('fingerprint_func for %s raised: %s', tool_name, exc)
 
     if fingerprint:
         cached = _read_cache(tool_name)
-        cached_fp = cached.get("fingerprint") if cached else None
+        cached_fp = cached.get('fingerprint') if cached else None
         if cached and cached_fp == fingerprint:
-            logger.debug("Module cache hit for %s (fingerprint=%s)",
-                         tool_name, fingerprint)
+            logger.debug('Module cache hit for %s (fingerprint=%s)', tool_name, fingerprint)
             return _modules_from_cache(cached)
 
         # Fingerprint changed or no cache → regenerate and persist
         if cached and cached_fp != fingerprint:
             logger.debug(
-                "Module cache miss for %s: fingerprint changed "
-                "(cached=%s, current=%s), regenerating …",
-                tool_name, cached_fp, fingerprint,
+                'Module cache miss for %s: fingerprint changed '
+                '(cached=%s, current=%s), regenerating …',
+                tool_name,
+                cached_fp,
+                fingerprint,
             )
         else:
             logger.debug(
-                "Module cache miss for %s: no cache file found "
-                "(fingerprint=%s), regenerating …",
-                tool_name, fingerprint,
+                'Module cache miss for %s: no cache file found (fingerprint=%s), regenerating …',
+                tool_name,
+                fingerprint,
             )
         modules = generate_func()
-        logger.debug("Regeneration for %s returned %d module(s)",
-                     tool_name, len(modules))
+        logger.debug('Regeneration for %s returned %d module(s)', tool_name, len(modules))
         if modules:
             _write_cache(tool_name, fingerprint, modules)
         else:
             logger.debug(
-                "Skipping cache write for %s: generate_func returned no modules",
+                'Skipping cache write for %s: generate_func returned no modules',
                 tool_name,
             )
         return modules
 
     else:
         # Cannot determine fingerprint — return stale cache if available
-        logger.debug("fingerprint_func returned None for %s", tool_name)
+        logger.debug('fingerprint_func returned None for %s', tool_name)
         cached = _read_cache(tool_name)
         if cached:
-            logger.debug("No fingerprint for %s; returning stale cache (%d entries)",
-                         tool_name, len(cached.get("modules", [])))
+            logger.debug(
+                'No fingerprint for %s; returning stale cache (%d entries)',
+                tool_name,
+                len(cached.get('modules', [])),
+            )
             return _modules_from_cache(cached)
 
         # No cache at all — try live generation (may return empty list)
-        logger.debug("No fingerprint and no cache for %s, attempting generation …",
-                     tool_name)
+        logger.debug('No fingerprint and no cache for %s, attempting generation …', tool_name)
         return generate_func()

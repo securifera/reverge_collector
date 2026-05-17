@@ -32,13 +32,13 @@ Global Variables:
 
 Example:
     Basic usage through the reverge_collector framework::
-    
+
         # Initialize the tool
         webcap = Webcap()
-        
+
         # Execute screenshot capture
         success = webcap.scan_func(scan_input_obj)
-        
+
         # Import results
         imported = webcap.import_func(scan_input_obj)
 
@@ -50,20 +50,18 @@ Note:
 
 """
 
-import json
-import os
-import binascii
-import traceback
-import hashlib
-import base64
-import logging
 import asyncio
-import math
+import base64
+import binascii
+import hashlib
+import json
+import logging
+import os
 import shlex
-from typing import Dict, Tuple, Any, Optional, List
+import traceback
+from typing import Any, Dict, Optional, Tuple
 
-from reverge_collector import scan_utils
-from reverge_collector import data_model
+from reverge_collector import data_model, scan_utils
 from reverge_collector.tool_spec import ToolSpec
 
 # Global future mapping for screenshot target management and deduplication
@@ -71,7 +69,6 @@ future_map: Dict[str, Tuple[int, Optional[int], Optional[str], str]] = {}
 
 
 class Webcap(ToolSpec):
-
     name = 'webcap'
     description = 'A python library that can be used for taking screenshots of web pages using Chrome and Webcap. Currently only the timeout and threads options can be set.'
     project_url = 'https://github.com/blacklanternsecurity/webcap'
@@ -79,9 +76,11 @@ class Webcap(ToolSpec):
     collector_type = data_model.CollectorType.ACTIVE.value
     scan_order = 8
     args = '--timeout 5 --threads 5 --quality 20 --format jpeg'
-    input_records = [data_model.ServerRecordType.PORT,
-                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
-                     data_model.ServerRecordType.SUBNET]
+    input_records = [
+        data_model.ServerRecordType.PORT,
+        data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+        data_model.ServerRecordType.SUBNET,
+    ]
     output_records = [
         data_model.ServerRecordType.SCREENSHOT,
         data_model.ServerRecordType.DOMAIN,
@@ -104,10 +103,13 @@ class Webcap(ToolSpec):
         execute_scan(scan_input)
 
     def parse_output(self, output_path: str, scan_input) -> list:
-        return parse_webcap_output(
-            output_path,
-            scan_input.current_tool_instance_id,
-        ) or []
+        return (
+            parse_webcap_output(
+                output_path,
+                scan_input.current_tool_instance_id,
+            )
+            or []
+        )
 
 
 def parse_args(args_str: str) -> Tuple[int, int, int]:
@@ -145,38 +147,39 @@ def parse_args(args_str: str) -> Tuple[int, int, int]:
     timeout = 5
     threads = 5
     quality = 100
-    image_format = "jpeg"
+    image_format = 'jpeg'
     if args_str and len(args_str) > 0:
         tokens = shlex.split(args_str)
         for i, token in enumerate(tokens):
-            if token == "--timeout" and i + 1 < len(tokens):
+            if token == '--timeout' and i + 1 < len(tokens):
                 try:
                     timeout = int(tokens[i + 1])
                 except ValueError:
                     pass
-            if token == "--threads" and i + 1 < len(tokens):
+            if token == '--threads' and i + 1 < len(tokens):
                 try:
                     threads = int(tokens[i + 1])
                 except ValueError:
                     pass
-            if token == "--quality" and i + 1 < len(tokens):
+            if token == '--quality' and i + 1 < len(tokens):
                 try:
                     quality = int(tokens[i + 1])
                     # Ensure quality is between 1 and 100
                     quality = max(1, min(quality, 100))
                 except ValueError:
                     pass
-            if token == "--format" and i + 1 < len(tokens):
+            if token == '--format' and i + 1 < len(tokens):
                 tmp_format = tokens[i + 1]
                 # Ensure image format is one of the supported types jpeg, png, webp
-                if tmp_format in ["jpeg", "png", "webp"]:
+                if tmp_format in ['jpeg', 'png', 'webp']:
                     image_format = tmp_format
 
     return timeout, threads, image_format, quality
 
 
-async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
-                         webcap_args: str) -> None:
+async def webcap_asyncio(
+    future_map: Dict[str, Tuple], meta_file_path: str, webcap_args: str
+) -> None:
     """
     Asynchronous Chrome-based screenshot capture with graduated recovery.
 
@@ -206,31 +209,31 @@ async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
     # How many back-to-back failures justify a full Chrome restart.
     CONSECUTIVE_FAILURE_RESTART_THRESHOLD = 5
 
-    browser = Browser(timeout=timeout, threads=threads,
-                      image_format=image_format, quality=quality)
+    browser = Browser(timeout=timeout, threads=threads, image_format=image_format, quality=quality)
     await browser.start()
 
     consecutive_failures = 0
 
     async def _light_recovery(reason: str) -> None:
         """In-process cleanup — no Chrome restart, no keyring popup."""
-        log.debug("Light recovery (%s): force_target_cleanup", reason)
+        log.debug('Light recovery (%s): force_target_cleanup', reason)
         try:
             await browser.force_target_cleanup()
         except Exception as e:
-            log.warning("force_target_cleanup failed (%s): %s", reason, e)
+            log.warning('force_target_cleanup failed (%s): %s', reason, e)
 
     async def _restart_browser(reason: str) -> None:
         nonlocal browser, consecutive_failures
         log.warning(
-            "Restarting Chrome (%s) after %d consecutive failures",
-            reason, consecutive_failures)
+            'Restarting Chrome (%s) after %d consecutive failures', reason, consecutive_failures
+        )
         try:
             await browser.stop()
         except Exception:
             pass
-        browser = Browser(timeout=timeout, threads=threads,
-                          image_format=image_format, quality=quality)
+        browser = Browser(
+            timeout=timeout, threads=threads, image_format=image_format, quality=quality
+        )
         await browser.start()
         consecutive_failures = 0
         # Brief settle so the next request doesn't race the message handler.
@@ -257,16 +260,17 @@ async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
                         break
                     except asyncio.TimeoutError:
                         log.warning(
-                            "Screenshot %s exceeded %ds wall timeout (attempt %d)",
-                            url, per_screenshot_wall, _attempt + 1)
-                        await _light_recovery("screenshot wall timeout")
+                            'Screenshot %s exceeded %ds wall timeout (attempt %d)',
+                            url,
+                            per_screenshot_wall,
+                            _attempt + 1,
+                        )
+                        await _light_recovery('screenshot wall timeout')
                     except WebCapError as e:
-                        log.error(
-                            "WebCapError on %s (attempt %d): %s",
-                            url, _attempt + 1, e)
-                        await _light_recovery("WebCapError")
+                        log.error('WebCapError on %s (attempt %d): %s', url, _attempt + 1, e)
+                        await _light_recovery('WebCapError')
                     except Exception as e:
-                        log.error("Error taking screenshot for %s: %s", url, e)
+                        log.error('Error taking screenshot for %s: %s', url, e)
                         log.debug(traceback.format_exc())
                         break
 
@@ -274,8 +278,7 @@ async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
                     consecutive_failures = 0
                     url_entry['url'] = url
                     try:
-                        url_entry['image_data'] = base64.b64encode(
-                            webscreenshot.blob).decode()
+                        url_entry['image_data'] = base64.b64encode(webscreenshot.blob).decode()
                     except ValueError:
                         continue
                     url_entry['status_code'] = webscreenshot.status_code
@@ -283,19 +286,19 @@ async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
                     f.write(json.dumps(url_entry) + '\n')
                 else:
                     consecutive_failures += 1
-                    log.warning("Failed to take screenshot for %s", url)
+                    log.warning('Failed to take screenshot for %s', url)
 
                 # Orphan flag is mostly benign post-close event-race noise
                 # (handled inside webcap); when it does fire, drain the
                 # straggler targets in place rather than restarting Chrome.
                 if browser.orphaned_session:
-                    log.debug("Orphaned session flag set; running light recovery")
-                    await _light_recovery("orphan flag")
+                    log.debug('Orphaned session flag set; running light recovery')
+                    await _light_recovery('orphan flag')
 
                 # Escalate to a full restart only when Chrome appears truly
                 # wedged — many URLs in a row failing.
                 if consecutive_failures >= CONSECUTIVE_FAILURE_RESTART_THRESHOLD:
-                    await _restart_browser("consecutive-failure threshold")
+                    await _restart_browser('consecutive-failure threshold')
 
     finally:
         try:
@@ -304,8 +307,7 @@ async def webcap_asyncio(future_map: Dict[str, Tuple], meta_file_path: str,
             pass
 
 
-def webcap_wrapper(future_map: Dict[str, Tuple], meta_file_path: str,
-                   webcap_scan_args: str) -> Any:
+def webcap_wrapper(future_map: Dict[str, Tuple], meta_file_path: str, webcap_scan_args: str) -> Any:
     """
     Synchronous wrapper for asynchronous Webcap screenshot operations.
 
@@ -345,14 +347,14 @@ def execute_scan(scan_input) -> None:
     output_file_path = get_output_path(scan_input)
     if os.path.exists(output_file_path):
         logging.getLogger(__name__).debug(
-            "Output path %s already exists, skipping Webcap scan execution", output_file_path)
+            'Output path %s already exists, skipping Webcap scan execution', output_file_path
+        )
         return
 
     global future_map
     dir_path = os.path.dirname(output_file_path)
 
-    logging.getLogger(__name__).debug(
-        "WebcapScan started. Output directory: %s" % dir_path)
+    logging.getLogger(__name__).debug('WebcapScan started. Output directory: %s' % dir_path)
 
     scheduled_scan_obj = scan_input
     webcap_scan_args = scheduled_scan_obj.current_tool.args
@@ -362,19 +364,21 @@ def execute_scan(scan_input) -> None:
 
     for url, metadata in url_metadata_map.items():
         scan_tuple = (
-            metadata["port_id"],
-            metadata.get("http_endpoint_data_id"),
-            metadata.get("domain"),
-            metadata["path"]
+            metadata['port_id'],
+            metadata.get('http_endpoint_data_id'),
+            metadata.get('domain'),
+            metadata['path'],
         )
         future_map[url] = scan_tuple
 
     future_inst = scan_utils.executor.submit(
-        webcap_wrapper, future_map, output_file_path, webcap_scan_args)
+        webcap_wrapper, future_map, output_file_path, webcap_scan_args
+    )
 
     scan_proc_inst = data_model.ToolExecutor([future_inst])
     scheduled_scan_obj.register_tool_executor(
-        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst
+    )
 
     # Derive a wall-clock timeout so we never hang indefinitely. The inner
     # loop processes URLs sequentially (the --threads value is forwarded to
@@ -392,8 +396,11 @@ def execute_scan(scan_input) -> None:
         future_inst.result(timeout=wall_timeout)
     except TimeoutError:
         logging.getLogger(__name__).warning(
-            "WebcapScan timed out after %ds (%d URLs, %d threads, %ds/page)",
-            wall_timeout, url_count, threads, per_page_timeout,
+            'WebcapScan timed out after %ds (%d URLs, %d threads, %ds/page)',
+            wall_timeout,
+            url_count,
+            threads,
+            per_page_timeout,
         )
 
 
@@ -473,8 +480,7 @@ def parse_webcap_output(meta_file, tool_instance_id):
             http_endpoint_obj.web_path_id = web_path_id
             ret_arr.append(http_endpoint_obj)
 
-            http_endpoint_data_obj = data_model.HttpEndpointData(
-                parent_id=http_endpoint_obj.id)
+            http_endpoint_data_obj = data_model.HttpEndpointData(parent_id=http_endpoint_obj.id)
             http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
             http_endpoint_data_obj.domain_id = endpoint_domain_id
             http_endpoint_data_obj.status = status_code

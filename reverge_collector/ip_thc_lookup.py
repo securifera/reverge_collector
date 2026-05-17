@@ -1,4 +1,3 @@
-
 """
 IP THC IP Lookup Module.
 
@@ -44,14 +43,14 @@ Note:
 """
 
 import http.client
-import os
 import json
 import logging
-import netaddr
-from typing import Dict, Set, List, Any, Optional, Union
+import os
+from typing import Any, Dict, List, Optional, Set
 
-from reverge_collector import scan_utils
-from reverge_collector import data_model
+import netaddr
+
+from reverge_collector import data_model, scan_utils
 from reverge_collector.tool_spec import ToolSpec
 
 # Global proxy configuration for IP THC API requests
@@ -59,7 +58,6 @@ proxies: Optional[Dict[str, str]] = None
 
 
 class IPThc(ToolSpec):
-
     name = 'ipthc'
     description = "IP THC is a threat-intelligence platform specializing in DNS and domain data. It continuously collects both current and historical DNS records, WHOIS information, and passive-DNS data to give users a comprehensive view of any domain's evolution over time"
     project_url = 'https://ip.thc.org/'
@@ -96,7 +94,7 @@ def process_response(data):
 
     domain_set = set()
     # Parse API response and extract domain information
-    content = json.loads(data.decode("utf-8"))
+    content = json.loads(data.decode('utf-8'))
 
     # IP THC returns response with 'domains' key containing array of domain objects
     if isinstance(content, dict) and 'domains' in content:
@@ -114,7 +112,7 @@ def process_response(data):
     return domain_set
 
 
-def subdomain_request_wrapper(domain: str) -> Dict[str, Union[str, List[str]]]:
+def subdomain_request_wrapper(domain: str) -> Dict[str, str | List[str]]:
     """
     Execute IP THC API request for IP-to-domain lookup.
 
@@ -151,62 +149,63 @@ def subdomain_request_wrapper(domain: str) -> Dict[str, Union[str, List[str]]]:
         This function extracts unique domain names from the response.
     """
     # Initialize domain set for collecting unique domains
-    ret_str: Dict[str, Union[str, List[str]]] = {
-        'target': domain, 'domains': []}
+    ret_str: Dict[str, str | List[str]] = {'target': domain, 'domains': []}
 
     # Prepare payload for IP THC API request
-    payload = json.dumps({
-        "domain": domain
-    })
+    payload = json.dumps({'domain': domain})
 
     # Set up API headers
-    headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-    }
+    headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
 
     import time
+
     data = None
     retry_count = 0
     try:
         while True:
-            conn = http.client.HTTPSConnection("ip.thc.org")
-            conn.request("POST", "/api/v1/lookup/subdomains", payload, headers)
+            conn = http.client.HTTPSConnection('ip.thc.org')
+            conn.request('POST', '/api/v1/lookup/subdomains', payload, headers)
             res = conn.getresponse()
             data = res.read()
             if res.status == 429 or res.status == 500:
-                backoff = min(2 ** retry_count, 60)
+                backoff = min(2**retry_count, 60)
                 logging.getLogger(__name__).warning(
-                    "Received %d. Sleeping %d seconds and retrying. Payload: %s", res.status, backoff, payload)
+                    'Received %d. Sleeping %d seconds and retrying. Payload: %s',
+                    res.status,
+                    backoff,
+                    payload,
+                )
                 time.sleep(backoff)
                 retry_count += 1
                 continue
             if res.status == 406:
                 try:
-                    decoded_data = data.decode("utf-8")
+                    decoded_data = data.decode('utf-8')
                 except Exception:
                     decoded_data = str(data)
                 logging.getLogger(__name__).warning(
-                    f"IP THC lookup skipped. Status: 406 Not Acceptable. Payload: {payload}, Response: {decoded_data}")
+                    f'IP THC lookup skipped. Status: 406 Not Acceptable. Payload: {payload}, Response: {decoded_data}'
+                )
                 return ret_str
             if res.status != 200:
                 logging.getLogger(__name__).error(
-                    f"IP THC lookup failed. Status code: {res.status}")
+                    f'IP THC lookup failed. Status code: {res.status}'
+                )
                 # logging.getLogger(__name__).error(f"Payload sent: {payload}")
                 try:
-                    decoded_data = data.decode("utf-8")
+                    decoded_data = data.decode('utf-8')
                 except Exception:
                     decoded_data = str(data)
                 # logging.getLogger(__name__).error(
                 #    f"Response data: {decoded_data}")
                 raise RuntimeError(
-                    f"[-] Error getting IP THC output. Status: {res.status}, Payload: {payload}, Response: {decoded_data}")
+                    f'[-] Error getting IP THC output. Status: {res.status}, Payload: {payload}, Response: {decoded_data}'
+                )
             break
         conn.close()
     except Exception as e:
-        logging.getLogger(__name__).error(
-            f"Error during IP THC lookup: {str(e)}")
-        raise RuntimeError(f"[-] Error getting IP THC output: {str(e)}")
+        logging.getLogger(__name__).error(f'Error during IP THC lookup: {str(e)}')
+        raise RuntimeError(f'[-] Error getting IP THC output: {str(e)}')
 
     if data:
         # logging.getLogger(__name__).warning(
@@ -219,7 +218,7 @@ def subdomain_request_wrapper(domain: str) -> Dict[str, Union[str, List[str]]]:
     return ret_str
 
 
-def reverse_dns_request_wrapper(ip_addr: str) -> Dict[str, Union[str, List[str]]]:
+def reverse_dns_request_wrapper(ip_addr: str) -> Dict[str, str | List[str]]:
     """
     Execute IP THC API request for IP-to-domain lookup.
 
@@ -258,62 +257,62 @@ def reverse_dns_request_wrapper(ip_addr: str) -> Dict[str, Union[str, List[str]]
     """
     # Initialize domain set for collecting unique domains
     domain_set: Set[str] = set()
-    ret_str: Dict[str, Union[str, List[str]]] = {
-        'target': ip_addr, 'domains': []}
+    ret_str: Dict[str, str | List[str]] = {'target': ip_addr, 'domains': []}
 
     # Prepare payload for IP THC API request
-    payload = json.dumps({
-        "ip_address": ip_addr
-    })
+    payload = json.dumps({'ip_address': ip_addr})
 
     # Set up API headers
-    headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-    }
+    headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
 
     import time
+
     data = None
     retry_count = 0
     try:
         while True:
-            conn = http.client.HTTPSConnection("ip.thc.org")
-            conn.request("POST", "/api/v1/lookup", payload, headers)
+            conn = http.client.HTTPSConnection('ip.thc.org')
+            conn.request('POST', '/api/v1/lookup', payload, headers)
             res = conn.getresponse()
             data = res.read()
             if res.status == 429 or res.status == 500:
-                backoff = min(2 ** retry_count, 60)
+                backoff = min(2**retry_count, 60)
                 logging.getLogger(__name__).warning(
-                    "Received %d. Sleeping %d seconds and retrying. Payload: %s", res.status, backoff, payload)
+                    'Received %d. Sleeping %d seconds and retrying. Payload: %s',
+                    res.status,
+                    backoff,
+                    payload,
+                )
                 time.sleep(backoff)
                 retry_count += 1
                 continue
             if res.status == 406:
                 try:
-                    decoded_data = data.decode("utf-8")
+                    decoded_data = data.decode('utf-8')
                 except Exception:
                     decoded_data = str(data)
                 logging.getLogger(__name__).warning(
-                    f"IP THC lookup skipped. Status: 406 Not Acceptable. Payload: {payload}, Response: {decoded_data}")
+                    f'IP THC lookup skipped. Status: 406 Not Acceptable. Payload: {payload}, Response: {decoded_data}'
+                )
                 return ret_str
             if res.status != 200:
                 logging.getLogger(__name__).error(
-                    f"IP THC lookup failed. Status code: {res.status}")
-                logging.getLogger(__name__).error(f"Payload sent: {payload}")
+                    f'IP THC lookup failed. Status code: {res.status}'
+                )
+                logging.getLogger(__name__).error(f'Payload sent: {payload}')
                 try:
-                    decoded_data = data.decode("utf-8")
+                    decoded_data = data.decode('utf-8')
                 except Exception:
                     decoded_data = str(data)
-                logging.getLogger(__name__).error(
-                    f"Response data: {decoded_data}")
+                logging.getLogger(__name__).error(f'Response data: {decoded_data}')
                 raise RuntimeError(
-                    f"[-] Error getting IP THC output. Status: {res.status}, Payload: {payload}, Response: {decoded_data}")
+                    f'[-] Error getting IP THC output. Status: {res.status}, Payload: {payload}, Response: {decoded_data}'
+                )
             break
         conn.close()
     except Exception as e:
-        logging.getLogger(__name__).error(
-            f"Error during IP THC lookup: {str(e)}")
-        raise RuntimeError(f"[-] Error getting IP THC output: {str(e)}")
+        logging.getLogger(__name__).error(f'Error during IP THC lookup: {str(e)}')
+        raise RuntimeError(f'[-] Error getting IP THC output: {str(e)}')
 
     if data:
         domain_set = process_response(data)
@@ -328,14 +327,15 @@ def get_output_path(scan_input) -> str:
     scan_id = scan_input.id
     tool_name = scan_input.current_tool.name
     dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-    return dir_path + os.path.sep + "ip-thc-ip-lookup-outputs-" + scan_id
+    return dir_path + os.path.sep + 'ip-thc-ip-lookup-outputs-' + scan_id
 
 
 def execute_scan(scan_input) -> None:
     output_file_path = get_output_path(scan_input)
     if os.path.exists(output_file_path):
         logging.getLogger(__name__).debug(
-            "Output path %s already exists, skipping IP THC scan execution", output_file_path)
+            'Output path %s already exists, skipping IP THC scan execution', output_file_path
+        )
         return
 
     scheduled_scan_obj = scan_input
@@ -343,69 +343,60 @@ def execute_scan(scan_input) -> None:
 
     target_map = scheduled_scan_obj.scan_data.host_port_obj_map
     if len(target_map) == 0:
-        logging.getLogger(__name__).debug("No target map in scan input")
+        logging.getLogger(__name__).debug('No target map in scan input')
 
     for target_key in target_map:
         target_obj_dict = target_map[target_key]
         host_obj = target_obj_dict['host_obj']
         ip_addr = host_obj.ipv4_addr
-        ip_to_host_dict_map[ip_addr] = {
-            'host_id': host_obj.id,
-            'obj_type': 'ip',
-            'obj': None
-        }
+        ip_to_host_dict_map[ip_addr] = {'host_id': host_obj.id, 'obj_type': 'ip', 'obj': None}
 
     target_list = []
     subnet_map = scheduled_scan_obj.scan_data.subnet_map
     for subnet_id in subnet_map:
         subnet_obj = subnet_map[subnet_id]
         if int(subnet_obj.mask) < 25:
-            subnet_str = "%s/%s" % (subnet_obj.subnet, subnet_obj.mask)
+            subnet_str = '%s/%s' % (subnet_obj.subnet, subnet_obj.mask)
             target_list.append(subnet_str)
             ip_to_host_dict_map[subnet_str] = {
                 'host_id': None,
                 'obj_type': 'subnet',
-                'obj': subnet_obj
+                'obj': subnet_obj,
             }
         else:
-            ip_network = netaddr.IPNetwork(
-                f"{subnet_obj.subnet}/{subnet_obj.mask}")
+            ip_network = netaddr.IPNetwork(f'{subnet_obj.subnet}/{subnet_obj.mask}')
             for ip_addr in [str(ip) for ip in ip_network]:
                 target_list.append(ip_addr)
                 if ip_addr not in ip_to_host_dict_map:
-                    ip_to_host_dict_map[ip_addr] = {
-                        'host_id': None,
-                        'obj_type': 'ip',
-                        'obj': None
-                    }
+                    ip_to_host_dict_map[ip_addr] = {'host_id': None, 'obj_type': 'ip', 'obj': None}
 
     futures = []
     for ip_addr in ip_to_host_dict_map:
-        futures.append(scan_utils.executor.submit(
-            reverse_dns_request_wrapper, ip_addr=ip_addr))
+        futures.append(scan_utils.executor.submit(reverse_dns_request_wrapper, ip_addr=ip_addr))
 
     domain_obj_list = scheduled_scan_obj.scan_data.get_domains(
-        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value]
+    )
     for domain_obj in domain_obj_list:
         if scan_utils.is_cloud_domain(domain_obj.name):
-            logging.getLogger(__name__).debug(
-                "Skipping cloud hosting domain: %s" % domain_obj.name)
+            logging.getLogger(__name__).debug('Skipping cloud hosting domain: %s' % domain_obj.name)
             continue
-        if domain_obj.name.startswith("*."):
-            logging.getLogger(__name__).debug(
-                "Skipping wildcard domain: %s" % domain_obj.name)
+        if domain_obj.name.startswith('*.'):
+            logging.getLogger(__name__).debug('Skipping wildcard domain: %s' % domain_obj.name)
             continue
         ip_to_host_dict_map[domain_obj.name] = {
             'host_id': None,
             'obj_type': 'domain',
-            'obj': domain_obj
+            'obj': domain_obj,
         }
-        futures.append(scan_utils.executor.submit(
-            subdomain_request_wrapper, domain=domain_obj.name))
+        futures.append(
+            scan_utils.executor.submit(subdomain_request_wrapper, domain=domain_obj.name)
+        )
 
     scan_proc_inst = data_model.ToolExecutor(futures)
     scheduled_scan_obj.register_tool_executor(
-        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+        scheduled_scan_obj.current_tool_instance_id, scan_proc_inst
+    )
 
     serializable_map = {}
     for future in futures:
@@ -416,8 +407,7 @@ def execute_scan(scan_input) -> None:
         if ret_domains and len(ret_domains) > 0:
             if target_dict['obj_type'] == 'subnet':
                 subnet_obj = target_dict['obj']
-                subnet_network = netaddr.IPNetwork(
-                    "%s/%s" % (subnet_obj.subnet, subnet_obj.mask))
+                subnet_network = netaddr.IPNetwork('%s/%s' % (subnet_obj.subnet, subnet_obj.mask))
                 dns_results = scan_utils.dns_wrapper(set(ret_domains))
                 for dns_result in dns_results:
                     domain = dns_result['domain']
@@ -427,14 +417,12 @@ def execute_scan(scan_input) -> None:
                         if ip_obj in subnet_network:
                             ip_str = str(ip_obj)
                             if ip_str not in serializable_map:
-                                serializable_map[ip_str] = {
-                                    'host_id': None, 'domains': [domain]}
+                                serializable_map[ip_str] = {'host_id': None, 'domains': [domain]}
                             elif 'domains' not in serializable_map[ip_str]:
                                 serializable_map[ip_str]['domains'] = [domain]
                             else:
                                 if domain not in serializable_map[ip_str]['domains']:
-                                    serializable_map[ip_str]['domains'].append(
-                                        domain)
+                                    serializable_map[ip_str]['domains'].append(domain)
                     except (netaddr.core.AddrFormatError, ValueError):
                         pass
             elif target_dict['obj_type'] == 'domain':
@@ -446,14 +434,12 @@ def execute_scan(scan_input) -> None:
                         ip_obj = netaddr.IPAddress(resolved_ip)
                         ip_str = str(ip_obj)
                         if ip_str not in serializable_map:
-                            serializable_map[ip_str] = {
-                                'host_id': None, 'domains': [domain]}
+                            serializable_map[ip_str] = {'host_id': None, 'domains': [domain]}
                         elif 'domains' not in serializable_map[ip_str]:
                             serializable_map[ip_str]['domains'] = [domain]
                         else:
                             if domain not in serializable_map[ip_str]['domains']:
-                                serializable_map[ip_str]['domains'].append(
-                                    domain)
+                                serializable_map[ip_str]['domains'].append(domain)
                     except (netaddr.core.AddrFormatError, ValueError):
                         pass
             else:
@@ -465,8 +451,7 @@ def execute_scan(scan_input) -> None:
                 elif 'domains' not in serializable_map[ip_or_subnet]:
                     serializable_map[ip_or_subnet]['domains'] = ret_domains
                 else:
-                    serializable_map[ip_or_subnet]['domains'].extend(
-                        ret_domains)
+                    serializable_map[ip_or_subnet]['domains'].extend(ret_domains)
 
     results_dict = {'ip_to_host_dict_map': serializable_map}
     with open(output_file_path, 'w') as file_fd:

@@ -33,18 +33,17 @@ Constants:
     UDP (str): UDP protocol identifier
 """
 
-from functools import partial
-import netifaces as ni
-import re
-import os
-import netaddr
-import xml.etree.ElementTree as ET
 import logging
-from typing import List, Dict, Set, Optional, Any, Union
+import os
+import re
+import xml.etree.ElementTree as ET
+from functools import partial
+from typing import Any, Dict, List, Optional
 
-from reverge_collector import scan_utils
-from reverge_collector import data_model
-from reverge_collector import tool_utils
+import netaddr
+import netifaces as ni
+
+from reverge_collector import data_model, scan_utils, tool_utils
 from reverge_collector.proc_utils import process_wrapper
 from reverge_collector.tool_spec import ToolSpec
 
@@ -54,7 +53,6 @@ UDP: str = 'udp'  # UDP protocol identifier
 
 
 class Masscan(ToolSpec):
-
     name = 'masscan'
     description = 'Masscan is a fast port scanner that can scan the entire Internet in under 6 minutes, transmitting 10 million packets per second. It is designed to be used for large-scale network scanning and is capable of scanning large ranges of IP addresses quickly.'
     project_url = 'https://github.com/robertdavidgraham/masscan'
@@ -114,10 +112,9 @@ def get_mac_address(ip_address: str) -> Optional[str]:
 
     ret = None
     # Run the arp command to get the ARP table entries
-    arp_cmd = ["arp", "-n", ip_address]
+    arp_cmd = ['arp', '-n', ip_address]
 
-    future = scan_utils.executor.submit(
-        process_wrapper, cmd_args=arp_cmd, store_output=True)
+    future = scan_utils.executor.submit(process_wrapper, cmd_args=arp_cmd, store_output=True)
 
     output = None
     try:
@@ -128,7 +125,7 @@ def get_mac_address(ip_address: str) -> Optional[str]:
 
     if output:
         # Use regular expression to extract the MAC address
-        mac_regex = r"(([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2}))"
+        mac_regex = r'(([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2}))'
         match = re.search(mac_regex, output)
         if match:
             ret = match.group(0)
@@ -220,35 +217,34 @@ def get_masscan_input(scheduled_scan_obj: Any) -> Dict[str, Any]:
     subnet_map = scope_obj.subnet_map
     for subnet_id in subnet_map:
         subnet_obj = subnet_map[subnet_id]
-        subnet_str = "%s/%s" % (subnet_obj.subnet, subnet_obj.mask)
+        subnet_str = '%s/%s' % (subnet_obj.subnet, subnet_obj.mask)
         target_list.append(subnet_str)
 
     host_list = scope_obj.get_hosts(
-        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value])
+        [data_model.RecordTag.SCOPE.value, data_model.RecordTag.LOCAL.value]
+    )
     for host_obj in host_list:
-        host_str = "%s/32" % (host_obj.ipv4_addr)
+        host_str = '%s/32' % (host_obj.ipv4_addr)
         target_list.append(host_str)
 
     # Init directory
     dir_path = scan_utils.init_tool_folder(tool_name, 'inputs', scan_id)
 
     # Create config files
-    masscan_config_file = dir_path + os.path.sep + "mass_conf_" + scan_id
+    masscan_config_file = dir_path + os.path.sep + 'mass_conf_' + scan_id
     masscan_ip_file = None
     if len(target_list) > 0:
-
-        masscan_ip_file = dir_path + os.path.sep + "mass_ips_" + scan_id
+        masscan_ip_file = dir_path + os.path.sep + 'mass_ips_' + scan_id
 
         # Write subnets/IPs to file
         with open(masscan_ip_file, 'w') as mass_scan_fd:
             for target_inst in target_list:
                 mass_scan_fd.write(target_inst + '\n')
     else:
-        logging.getLogger(__name__).error("Target list is empty")
+        logging.getLogger(__name__).error('Target list is empty')
 
     # Construct ports conf line
-    port_line = "ports = " + \
-        tool_utils.consolidate_ports([str(p) for p in scan_port_list])
+    port_line = 'ports = ' + tool_utils.consolidate_ports([str(p) for p in scan_port_list])
 
     # Write ports to config file
     with open(masscan_config_file, 'w') as mass_scan_conf:
@@ -257,10 +253,13 @@ def get_masscan_input(scheduled_scan_obj: Any) -> Dict[str, Any]:
     # Set the tools args
     tool_args = scheduled_scan_obj.current_tool.args
     if tool_args:
-        tool_args = tool_args.split(" ")
+        tool_args = tool_args.split(' ')
 
-    masscan_conf = {'config_path': masscan_config_file,
-                    'input_path': masscan_ip_file, 'tool_args': tool_args}
+    masscan_conf = {
+        'config_path': masscan_config_file,
+        'input_path': masscan_ip_file,
+        'tool_args': tool_args,
+    }
     return masscan_conf
 
 
@@ -268,14 +267,15 @@ def get_output_path(scan_input) -> str:
     scan_id = scan_input.id
     tool_name = scan_input.current_tool.name
     dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-    return dir_path + os.path.sep + "mass_out_" + scan_id
+    return dir_path + os.path.sep + 'mass_out_' + scan_id
 
 
 def execute_scan(scan_input) -> None:
     output_file_path = get_output_path(scan_input)
     if os.path.exists(output_file_path):
         logging.getLogger(__name__).debug(
-            "Output path %s already exists, skipping Masscan scan execution", output_file_path)
+            'Output path %s already exists, skipping Masscan scan execution', output_file_path
+        )
         return
 
     scheduled_scan_obj = scan_input
@@ -292,21 +292,21 @@ def execute_scan(scan_input) -> None:
     if default_gateway_ip:
         mac_address = get_mac_address(default_gateway_ip)
         if mac_address:
-            router_mac = mac_address.replace(":", "-")
+            router_mac = mac_address.replace(':', '-')
 
     if conf_file_path and ips_file_path:
         command = []
         if os.name != 'nt':
-            command.append("sudo")
+            command.append('sudo')
         command_arr = [
-            "masscan",
-            "--open",
-            "-oX",
+            'masscan',
+            '--open',
+            '-oX',
             masscan_output_file_path,
-            "-c",
+            '-c',
             conf_file_path,
-            "-iL",
-            ips_file_path
+            '-iL',
+            ips_file_path,
         ]
         if selected_interface:
             int_name = selected_interface.name.strip()
@@ -318,12 +318,11 @@ def execute_scan(scan_input) -> None:
         command.extend(command_arr)
 
         callback_with_tool_id = partial(
-            scheduled_scan_obj.register_tool_executor,
-            scheduled_scan_obj.current_tool_instance_id)
+            scheduled_scan_obj.register_tool_executor, scheduled_scan_obj.current_tool_instance_id
+        )
         future = scan_utils.executor.submit(
-            process_wrapper,
-            cmd_args=command,
-            pid_callback=callback_with_tool_id)
+            process_wrapper, cmd_args=command, pid_callback=callback_with_tool_id
+        )
         ret_dict = future.result()
         if ret_dict and 'exit_code' in ret_dict:
             exit_code = ret_dict['exit_code']
@@ -332,11 +331,15 @@ def execute_scan(scan_input) -> None:
                 if 'stderr' in ret_dict and ret_dict['stderr']:
                     err_msg = ret_dict['stderr']
                 logging.getLogger(__name__).error(
-                    "Masscan scan for scan ID %s exited with code %d: %s" % (scheduled_scan_obj.id, exit_code, err_msg))
-                raise RuntimeError("Masscan scan for scan ID %s exited with code %d: %s" % (
-                    scheduled_scan_obj.id, exit_code, err_msg))
+                    'Masscan scan for scan ID %s exited with code %d: %s'
+                    % (scheduled_scan_obj.id, exit_code, err_msg)
+                )
+                raise RuntimeError(
+                    'Masscan scan for scan ID %s exited with code %d: %s'
+                    % (scheduled_scan_obj.id, exit_code, err_msg)
+                )
     else:
-        logging.getLogger(__name__).error("No targets to scan with masscan")
+        logging.getLogger(__name__).error('No targets to scan with masscan')
         with open(masscan_output_file_path, 'w') as f:
             pass
 
@@ -357,8 +360,7 @@ def parse_masscan_xml(
     """
     obj_arr: List[Any] = []
     if not (os.path.isfile(xml_path) and os.path.getsize(xml_path) > 0):
-        logging.getLogger(__name__).error(
-            'Masscan output file is empty or missing: %s', xml_path)
+        logging.getLogger(__name__).error('Masscan output file is empty or missing: %s', xml_path)
         return obj_arr
 
     try:
@@ -395,8 +397,7 @@ def parse_masscan_xml(
                 obj_arr.append(port_obj)
 
     except Exception as e:
-        logging.getLogger(__name__).error(
-            'Masscan results parsing error: %s', str(e))
+        logging.getLogger(__name__).error('Masscan results parsing error: %s', str(e))
         if os.path.exists(xml_path):
             os.remove(xml_path)
         raise

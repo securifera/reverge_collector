@@ -1,45 +1,57 @@
-import pytest
 from unittest.mock import patch
 
+import pytest
+from reverge_collector.api_client import ApiClient
 from reverge_collector.data_model import RevergeTool
 from reverge_collector.recon_manager import ReconManager
-from reverge_collector.api_client import ApiClient
 
 
 @pytest.fixture(autouse=True)
 def change_test_dir(monkeypatch):
-    monkeypatch.chdir("/tmp")
+    monkeypatch.chdir('/tmp')
 
 
 @pytest.fixture
 def mock_update_collector_and_session_key():
-    with patch.object(ApiClient, 'update_collector',
-                      return_value={'tool_name_id_map': {'masscan': '323482209708942791672081599309763638881',
-                                                         'subfinder': '323482209708942791672081599309763638882',
-                                                         'httpx': '323482209708942791672081599309763638883',
-                                                         'nmap': '323482209708942791672081599309763638884',
-                                                         'nuclei': '323482209708942791672081599309763638885',
-                                                         'pyshot': '323482209708942791672081599309763638886',
-                                                         'shodan': '323482209708942791672081599309763638887',
-                                                         'webcap': '323482209708942791672081599309763638888',
-                                                         'feroxbuster': '323482209708942791672081599309763638889',
-                                                         'gau': '323482209708942791672081599309763638890',
-                                                         'python': '323482209708942791672081599309763638891',
-                                                         'iis_short_scan': '323482209708942791672081599309763638892',
-                                                         'ipthc': '323482209708942791672081599309763638893',
-                                                         'crapsecrets': '323482209708942791672081599309763638894',
-                                                         'netexec': '323482209708942791672081599309763638895',
-                                                         'metasploit': '323482209708942791672081599309763638896',
-                                                         'sqlmap': '323482209708942791672081599309763638897'}}) as mock_update_collector, \
-            patch.object(ApiClient, '_init_session_key', return_value=b'mock_session_key') as mock_init_session_key, \
-            patch.object(ReconManager, 'update_scan_status', return_value=''):
+    with (
+        patch.object(
+            ApiClient,
+            'update_collector',
+            return_value={
+                'tool_name_id_map': {
+                    'masscan': '323482209708942791672081599309763638881',
+                    'subfinder': '323482209708942791672081599309763638882',
+                    'httpx': '323482209708942791672081599309763638883',
+                    'nmap': '323482209708942791672081599309763638884',
+                    'nuclei': '323482209708942791672081599309763638885',
+                    'pyshot': '323482209708942791672081599309763638886',
+                    'shodan': '323482209708942791672081599309763638887',
+                    'webcap': '323482209708942791672081599309763638888',
+                    'feroxbuster': '323482209708942791672081599309763638889',
+                    'gau': '323482209708942791672081599309763638890',
+                    'python': '323482209708942791672081599309763638891',
+                    'iis_short_scan': '323482209708942791672081599309763638892',
+                    'ipthc': '323482209708942791672081599309763638893',
+                    'crapsecrets': '323482209708942791672081599309763638894',
+                    'netexec': '323482209708942791672081599309763638895',
+                    'metasploit': '323482209708942791672081599309763638896',
+                    'sqlmap': '323482209708942791672081599309763638897',
+                    'naabu': '323482209708942791672081599309763638898',
+                }
+            },
+        ) as mock_update_collector,
+        patch.object(
+            ApiClient, '_init_session_key', return_value=b'mock_session_key'
+        ) as mock_init_session_key,
+        patch.object(ReconManager, 'update_scan_status', return_value=''),
+    ):
         yield mock_update_collector, mock_init_session_key
 
 
 @pytest.fixture
 def recon_manager(mock_update_collector_and_session_key):
-    token = "test_token"
-    manager_url = "http://test_manager_url"
+    token = 'test_token'
+    manager_url = 'http://test_manager_url'
 
     def patched_to_jsonable(self):
         ret_dict = {
@@ -51,7 +63,7 @@ def recon_manager(mock_update_collector_and_session_key):
             'project_url': self.project_url,
             'input_records': [input_type.value for input_type in self.input_records],
             'output_records': [output_type.value for output_type in self.output_records],
-            'modules': []
+            'modules': [],
         }
         return ret_dict
 
@@ -73,6 +85,6 @@ def get_tool_id(recon_manager, tool_name):
             break
 
     if tool_id_instance is None:
-        raise AssertionError(f"{tool_name} tool not found in tool map")
+        raise AssertionError(f'{tool_name} tool not found in tool map')
 
     return tool_id_instance

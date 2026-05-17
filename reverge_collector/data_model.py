@@ -7,7 +7,7 @@ throughout the collection and analysis process.
 
 The module handles:
 - Data model definitions for security scan results
-- Object serialization/deserialization 
+- Object serialization/deserialization
 - Data relationships and mappings
 - Tool integration and execution management
 - Scan result processing and aggregation
@@ -18,55 +18,56 @@ import base64
 import binascii
 import enum
 import hashlib
-import threading
-import uuid
-import netaddr
-import os
-import json
 import importlib
-import logging
-import traceback
-import signal
-import validators
 import ipaddress
+import json
+import logging
+import os
+import signal
+import threading
+import traceback
+import uuid
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-from typing import List, Dict, Set, Optional, Union, Any, Tuple
-from reverge_collector.scan_utils import get_ports, construct_url
+import netaddr
+import validators
+
 from reverge_collector.process_handle import ProcessHandle
 from reverge_collector.record_store import RecordStore
+from reverge_collector.scan_utils import construct_url, get_ports
 
 # Configuration: Available security scanning tools
 # Each entry is a (module_path, class_name) pair for lazy loading.
 # get_tool_classes() imports them on first call, keeping module-load fast.
 reverge_tools: List[Tuple[str, str]] = [
-    ('reverge_collector.masscan', 'Masscan'),          # Port scanner
+    ('reverge_collector.masscan', 'Masscan'),  # Port scanner
+    ('reverge_collector.naabu_scan', 'Naabu'),  # Fast port scanner with service detection
     # Network mapper and port scanner
     ('reverge_collector.nmap_scan', 'Nmap'),
-    ('reverge_collector.pyshot_scan', 'Pyshot'),       # Screenshot capture tool
-    ('reverge_collector.nuclei_scan', 'Nuclei'),       # Vulnerability scanner
+    ('reverge_collector.pyshot_scan', 'Pyshot'),  # Screenshot capture tool
+    ('reverge_collector.nuclei_scan', 'Nuclei'),  # Vulnerability scanner
     ('reverge_collector.subfinder_scan', 'Subfinder'),  # Subdomain discovery
     # Directory/file brute forcer
     ('reverge_collector.feroxbuster_scan', 'Feroxbuster'),
-    ('reverge_collector.shodan_lookup', 'Shodan'),     # Shodan API integration
-    ('reverge_collector.httpx_scan', 'Httpx'),         # HTTP toolkit
+    ('reverge_collector.shodan_lookup', 'Shodan'),  # Shodan API integration
+    ('reverge_collector.httpx_scan', 'Httpx'),  # HTTP toolkit
     # ('reverge_collector.sectrails_ip_lookup', 'Sectrails'), # SecurityTrails API
     ('reverge_collector.crapsecrets_scan', 'Crapsecrets'),  # Secret detection
-    ('reverge_collector.webcap_scan', 'Webcap'),        # Web capture and analysis
+    ('reverge_collector.webcap_scan', 'Webcap'),  # Web capture and analysis
     # Web endpoint crawling results
     ('reverge_collector.gau_scan', 'Gau'),
-    ('reverge_collector.python_scan', 'Python'),        # Python script execution
-    ('reverge_collector.iis_short_scan',
-     'IISShortnameScanner'),  # IIS Shortname Scanner
+    ('reverge_collector.python_scan', 'Python'),  # Python script execution
+    ('reverge_collector.iis_short_scan', 'IISShortnameScanner'),  # IIS Shortname Scanner
     # ('reverge_collector.divvycloud_lookup', 'Divvycloud')  # Cloud security integration (disabled)
     ('reverge_collector.ip_thc_lookup', 'IPThc'),  # IP THC API integration
     # Netexec network scanner integration
     ('reverge_collector.netexec_scan', 'Netexec'),
     ('reverge_collector.metasploit_scan', 'Metasploit'),  # Metasploit integration
-    ('reverge_collector.sqlmap_scan', 'Sqlmap'),   # SQL injection scanner
+    ('reverge_collector.sqlmap_scan', 'Sqlmap'),  # SQL injection scanner
 ]
 
 # Global configuration: Wordlist storage path
-wordlist_path: str = "/tmp/reverge_wordlist"
+wordlist_path: str = '/tmp/reverge_wordlist'
 if not os.path.exists(wordlist_path):
     os.mkdir(wordlist_path)
 
@@ -105,7 +106,9 @@ def get_tool_classes() -> List[Any]:
 get_tool_classes._cache = None
 
 
-def update_host_port_obj_map(scan_data: 'ScanData', port_id: str, host_port_obj_map: Dict[str, Dict[str, Any]]) -> None:
+def update_host_port_obj_map(
+    scan_data: 'ScanData', port_id: str, host_port_obj_map: Dict[str, Dict[str, Any]]
+) -> None:
     """
     Update the host-port object mapping with scope-filtered port information.
 
@@ -146,7 +149,7 @@ def update_host_port_obj_map(scan_data: 'ScanData', port_id: str, host_port_obj_
         if len(host_obj.tags.intersection(set(tag_list))) == 0:
             return
 
-        host_port_str = "%s:%s" % (host_obj.ipv4_addr, port_obj.port)
+        host_port_str = '%s:%s' % (host_obj.ipv4_addr, port_obj.port)
 
         host_port_entry = {'host_obj': host_obj, 'port_obj': port_obj}
         host_port_obj_map[host_port_str] = host_port_entry
@@ -154,16 +157,13 @@ def update_host_port_obj_map(scan_data: 'ScanData', port_id: str, host_port_obj_
         if host_id in scan_data.domain_host_id_map:
             domain_obj_list = scan_data.domain_host_id_map[host_id]
             for domain_obj in domain_obj_list:
-
                 # Exclude domains that originated remotely that aren't part of the scope
                 if len(domain_obj.tags.intersection(set(tag_list))) == 0:
                     continue
 
-                domain_port_str = "%s:%s" % (
-                    domain_obj.name, port_obj.port)
+                domain_port_str = '%s:%s' % (domain_obj.name, port_obj.port)
 
-                host_port_entry = {
-                    'host_obj': host_obj, 'port_obj': port_obj}
+                host_port_entry = {'host_obj': host_obj, 'port_obj': port_obj}
                 host_port_obj_map[domain_port_str] = host_port_entry
 
     # else:
@@ -195,6 +195,7 @@ class ScanStatus(enum.Enum):
         - Used for scan lifecycle management and user interface display
         - Supports conditional logic for scan state handling
     """
+
     CREATED = 1
     RUNNING = 2
     COMPLETED = 3
@@ -212,16 +213,16 @@ class ScanStatus(enum.Enum):
             >>> status = ScanStatus.RUNNING
             >>> print(f"Scan is {status}")  # "Scan is RUNNING"
         """
-        if (self == ScanStatus.CREATED):
-            return "CREATED"
-        elif (self == ScanStatus.RUNNING):
-            return "RUNNING"
-        elif (self == ScanStatus.COMPLETED):
-            return "COMPLETED"
-        elif (self == ScanStatus.CANCELLED):
-            return "CANCELLED"
-        elif (self == ScanStatus.ERROR):
-            return "ERROR"
+        if self == ScanStatus.CREATED:
+            return 'CREATED'
+        elif self == ScanStatus.RUNNING:
+            return 'RUNNING'
+        elif self == ScanStatus.COMPLETED:
+            return 'COMPLETED'
+        elif self == ScanStatus.CANCELLED:
+            return 'CANCELLED'
+        elif self == ScanStatus.ERROR:
+            return 'ERROR'
 
 
 class CollectionToolStatus(enum.Enum):
@@ -249,6 +250,7 @@ class CollectionToolStatus(enum.Enum):
         - Supports partial scan recovery by tracking tool-level status
         - Used for progress reporting and error handling at tool level
     """
+
     CREATED = 1
     RUNNING = 2
     COMPLETED = 3
@@ -267,21 +269,21 @@ class CollectionToolStatus(enum.Enum):
             >>> status = CollectionToolStatus.COMPLETED
             >>> print(f"Tool status: {status}")  # "Tool status: COMPLETED"
         """
-        if (self == CollectionToolStatus.CREATED):
-            return "CREATED"
-        elif (self == CollectionToolStatus.RUNNING):
-            return "RUNNING"
-        elif (self == CollectionToolStatus.COMPLETED):
-            return "COMPLETED"
-        elif (self == CollectionToolStatus.ERROR):
-            return "ERROR"
-        elif (self == CollectionToolStatus.CANCELLED):
-            return "CANCELLED"
-        elif (self == CollectionToolStatus.IMPORT_FAILED):
-            return "IMPORT_FAILED"
+        if self == CollectionToolStatus.CREATED:
+            return 'CREATED'
+        elif self == CollectionToolStatus.RUNNING:
+            return 'RUNNING'
+        elif self == CollectionToolStatus.COMPLETED:
+            return 'COMPLETED'
+        elif self == CollectionToolStatus.ERROR:
+            return 'ERROR'
+        elif self == CollectionToolStatus.CANCELLED:
+            return 'CANCELLED'
+        elif self == CollectionToolStatus.IMPORT_FAILED:
+            return 'IMPORT_FAILED'
 
 
-class ScheduledScan():
+class ScheduledScan:
     """
     Represents a scheduled security scan with its configuration and execution context.
 
@@ -350,7 +352,6 @@ class ScheduledScan():
         # Initialize collection tool map with wordlist preparation
         self.collection_tool_map: Dict[str, Any] = {}
         for collection_tool in scheduled_scan.collection_tools:
-
             # Skip tool if it's completed
             if collection_tool.status == CollectionToolStatus.COMPLETED.value:
                 continue
@@ -366,12 +367,10 @@ class ScheduledScan():
                     wordlist_json = None
 
                     # Check if wordlist file exists locally
-                    file_path = os.path.join(
-                        wordlist_path, str(wordlist_id))
+                    file_path = os.path.join(wordlist_path, str(wordlist_id))
                     if not os.path.exists(file_path):
                         # Download wordlist from server
-                        wordlist_json = self.scan_thread.recon_manager.get_wordlist(
-                            wordlist_id)
+                        wordlist_json = self.scan_thread.recon_manager.get_wordlist(wordlist_id)
                         with open(file_path, 'w') as f:
                             json.dump(wordlist_json, f)
 
@@ -385,17 +384,17 @@ class ScheduledScan():
                                 if wordlist_json['hash'] != wordlist_hash:
                                     # Hash mismatch - re-download wordlist
                                     wordlist_json = self.scan_thread.recon_manager.get_wordlist(
-                                        wordlist_id)
+                                        wordlist_id
+                                    )
                                     with open(file_path, 'w') as f:
                                         json.dump(wordlist_json, f)
                             else:
-                                raise Exception("No hash field")
+                                raise Exception('No hash field')
 
                         except:
                             # Error loading wordlist - re-download
                             os.remove(file_path)
-                            wordlist_json = self.scan_thread.recon_manager.get_wordlist(
-                                wordlist_id)
+                            wordlist_json = self.scan_thread.recon_manager.get_wordlist(wordlist_id)
                             with open(file_path, 'w') as f:
                                 json.dump(wordlist_json, f)
 
@@ -405,10 +404,9 @@ class ScheduledScan():
 
                 # Create combined wordlist file for scan
                 if len(worlist_arr) > 0:
-                    temp_wordlist_path = os.path.join(
-                        wordlist_path, str(collection_tool.id))
+                    temp_wordlist_path = os.path.join(wordlist_path, str(collection_tool.id))
                     with open(temp_wordlist_path, 'w') as f:
-                        f.write("\n".join(worlist_arr) + "\n")
+                        f.write('\n'.join(worlist_arr) + '\n')
 
             # Configure tool with wordlist path
             collection_tool.collection_tool.wordlist_path = temp_wordlist_path
@@ -424,23 +422,19 @@ class ScheduledScan():
         self.has_pending_imports: bool = False
 
         # Validate and retrieve scan configuration from server
-        scan_obj = self.scan_thread.recon_manager.get_scheduled_scan(
-            self.id)
+        scan_obj = self.scan_thread.recon_manager.get_scheduled_scan(self.id)
         if scan_obj is None or 'scan_id' not in scan_obj or scan_obj['scan_id'] is None:
-            raise RuntimeError(
-                "[-] No scan object returned for scheduled scan.")
+            raise RuntimeError('[-] No scan object returned for scheduled scan.')
         else:
             self.scan_id = scan_obj['scan_id']
 
         # Validate scan scope
         if 'scope' not in scan_obj or scan_obj['scope'] is None:
-            raise RuntimeError(
-                "[-] No scan scope returned for scheduled scan.")
+            raise RuntimeError('[-] No scan scope returned for scheduled scan.')
 
         # Initialize scan data with scope
         scope_dict = scan_obj['scope']
-        self.scan_data = ScanData(
-            scope_dict, record_tags=set([RecordTag.REMOTE.value]))
+        self.scan_data = ScanData(scope_dict, record_tags=set([RecordTag.REMOTE.value]))
 
         # Configure selected network interface
         if 'interface' in scan_obj and scan_obj['interface']:
@@ -462,8 +456,7 @@ class ScheduledScan():
             >>> scan.update_scan_status(ScanStatus.ERROR.value, "Connection failed")
         """
         # Send update to the server
-        self.scan_thread.recon_manager.update_scan_status(
-            self.id, scan_status)
+        self.scan_thread.recon_manager.update_scan_status(self.id, scan_status)
 
     def update_tool_status(self, tool_id: str, tool_status: int, tool_status_msg: str = '') -> None:
         """
@@ -479,8 +472,7 @@ class ScheduledScan():
             >>> scan.update_tool_status("nuclei", CollectionToolStatus.ERROR.value, "Template load failed")
         """
         # Send update to the server
-        self.scan_thread.recon_manager.update_tool_status(
-            tool_id, tool_status, tool_status_msg)
+        self.scan_thread.recon_manager.update_tool_status(tool_id, tool_status, tool_status_msg)
 
         # Update in local collection tool map
         if tool_id in self.collection_tool_map:
@@ -507,7 +499,6 @@ class ScheduledScan():
             This method has known memory leak issues and should be optimized
         """
         with self.tool_executor_lock:
-
             thread_future_array = tool_executor.get_thread_futures()
             proc_pids = tool_executor.get_process_pids()
 
@@ -525,8 +516,7 @@ class ScheduledScan():
             for future in thread_future_array:
                 tool_executor_map_main.add_future(future)
                 future.add_done_callback(
-                    lambda _f, tool_id=tool_id: self._cleanup_tool_executor(
-                        tool_id)
+                    lambda _f, tool_id=tool_id: self._cleanup_tool_executor(tool_id)
                 )
 
             for pid in proc_pids:
@@ -550,7 +540,7 @@ class ScheduledScan():
         associated with specified tools or all tools if no list is provided.
 
         Args:
-            tool_id_list (List[str]): List of tool IDs to terminate. 
+            tool_id_list (List[str]): List of tool IDs to terminate.
                                     If empty, terminates all tools
 
         Example:
@@ -561,12 +551,15 @@ class ScheduledScan():
             Uses SIGKILL for process termination - processes cannot ignore this signal
         """
         with self.tool_executor_lock:
-
             # Get the list of tool executors to process
             tool_executor_map_list = (
-                [self.tool_executor_map[tool_id]
-                    for tool_id in tool_id_list if tool_id in self.tool_executor_map]
-                if tool_id_list else self.tool_executor_map.values()
+                [
+                    self.tool_executor_map[tool_id]
+                    for tool_id in tool_id_list
+                    if tool_id in self.tool_executor_map
+                ]
+                if tool_id_list
+                else self.tool_executor_map.values()
             )
 
             # Terminate processes and cancel threads
@@ -588,7 +581,8 @@ class ScheduledScan():
             if tool_id_list:
                 # Remove only specified tools
                 self.tool_executor_map = {
-                    k: v for k, v in self.tool_executor_map.items() if k not in tool_id_list}
+                    k: v for k, v in self.tool_executor_map.items() if k not in tool_id_list
+                }
             else:
                 # Clear all tools
                 self.tool_executor_map.clear()
@@ -609,8 +603,9 @@ class ScheduledScan():
         collection_tools = self.collection_tool_map.values()
         for collection_tool_inst in collection_tools:
             # Remove the wordlist file if it exists
-            if (collection_tool_inst.collection_tool.wordlist_path and
-                    os.path.exists(collection_tool_inst.collection_tool.wordlist_path)):
+            if collection_tool_inst.collection_tool.wordlist_path and os.path.exists(
+                collection_tool_inst.collection_tool.wordlist_path
+            ):
                 os.remove(collection_tool_inst.collection_tool.wordlist_path)
 
     def __hash__(self) -> int:
@@ -634,8 +629,9 @@ class CollectorType(enum.Enum):
         >>> print(str(tool_type))
         'PASSIVE'
     """
+
     PASSIVE = 1  # Passive data collection (e.g., Shodan lookups, DNS queries)
-    ACTIVE = 2   # Active scanning (e.g., port scanning, web crawling)
+    ACTIVE = 2  # Active scanning (e.g., port scanning, web crawling)
 
     def __str__(self) -> str:
         """
@@ -644,10 +640,10 @@ class CollectorType(enum.Enum):
         Returns:
             str: String representation ('PASSIVE', 'ACTIVE', or None)
         """
-        if (self == CollectorType.PASSIVE):
-            return "PASSIVE"
-        elif (self == CollectorType.ACTIVE):
-            return "ACTIVE"
+        if self == CollectorType.PASSIVE:
+            return 'PASSIVE'
+        elif self == CollectorType.ACTIVE:
+            return 'ACTIVE'
         else:
             return None
 
@@ -696,7 +692,8 @@ class ToolExecutor:
     def prune(self) -> None:
         """Drop completed/dead handles to prevent map growth."""
         self.process_handles = [
-            handle for handle in self.process_handles
+            handle
+            for handle in self.process_handles
             if not (
                 (handle.future is not None and handle.is_done())
                 or (handle.pid is not None and not handle.is_pid_alive())
@@ -735,7 +732,7 @@ class RecordTag(enum.Enum):
 
     Attributes:
         LOCAL (int): Data collected directly by local scanning tools (value: 1)
-        REMOTE (int): Data obtained from remote sources/APIs (value: 2)  
+        REMOTE (int): Data obtained from remote sources/APIs (value: 2)
         SCOPE (int): Data that falls within the defined scanning scope (value: 3)
 
     Example:
@@ -743,9 +740,10 @@ class RecordTag(enum.Enum):
         >>> print(str(tag))
         'SCOPE'
     """
-    LOCAL = 1   # Data collected by local tools/scans
+
+    LOCAL = 1  # Data collected by local tools/scans
     REMOTE = 2  # Data from remote sources (APIs, databases)
-    SCOPE = 3   # Data within the defined scanning scope
+    SCOPE = 3  # Data within the defined scanning scope
 
     def __str__(self) -> str:
         """
@@ -754,12 +752,12 @@ class RecordTag(enum.Enum):
         Returns:
             str: String representation ('LOCAL', 'REMOTE', 'SCOPE', or None)
         """
-        if (self == RecordTag.LOCAL):
-            return "LOCAL"
-        elif (self == RecordTag.REMOTE):
-            return "REMOTE"
-        elif (self == RecordTag.SCOPE):
-            return "SCOPE"
+        if self == RecordTag.LOCAL:
+            return 'LOCAL'
+        elif self == RecordTag.REMOTE:
+            return 'REMOTE'
+        elif self == RecordTag.SCOPE:
+            return 'SCOPE'
         else:
             return None
 
@@ -789,19 +787,24 @@ class ServerRecordType(enum.Enum):
         >>> ServerRecordType.validate_type('HOST')
         True
     """
-    HOST = "Host"
-    PORT = "Port"
-    DOMAIN = "Domain"
-    HTTP_ENDPOINT = "HttpEndpoint"
-    HTTP_ENDPOINT_DATA = "HttpEndpointData"
-    VULNERABILITY = "Vuln"
-    COLLECTION_MODULE = "CollectionModule"
-    COLLECTION_MODULE_OUTPUT = "CollectionModuleOutput"
-    SCREENSHOT = "Screenshot"
-    CERTIFICATE = "Certificate"
-    LIST_ITEM = "ListItem"
-    WEB_COMPONENT = "WebComponent"
-    SUBNET = "Subnet"
+
+    HOST = 'Host'
+    PORT = 'Port'
+    DOMAIN = 'Domain'
+    HTTP_ENDPOINT = 'HttpEndpoint'
+    HTTP_ENDPOINT_DATA = 'HttpEndpointData'
+    VULNERABILITY = 'Vuln'
+    COLLECTION_MODULE = 'CollectionModule'
+    COLLECTION_MODULE_OUTPUT = 'CollectionModuleOutput'
+    SCREENSHOT = 'Screenshot'
+    CERTIFICATE = 'Certificate'
+    LIST_ITEM = 'ListItem'
+    CPE = 'Cpe'
+    APPLICATION_PROTOCOL = 'ApplicationProtocol'
+    # Legacy alias maintained for backward compatibility with older collectors;
+    # new code should use CPE.
+    WEB_COMPONENT = 'WebComponent'
+    SUBNET = 'Subnet'
 
     def __str__(self) -> str:
         """Return string representation of the record type."""
@@ -884,10 +887,8 @@ class RevergeTool:
         ret_dict['description'] = self.description
         ret_dict['project_url'] = self.project_url
         ret_dict['tags'] = self.tags
-        ret_dict['input_records'] = [
-            input_type.value for input_type in self.input_records]
-        ret_dict['output_records'] = [
-            output_type.value for output_type in self.output_records]
+        ret_dict['input_records'] = [input_type.value for input_type in self.input_records]
+        ret_dict['output_records'] = [output_type.value for output_type in self.output_records]
 
         module_obj_list = self.modules_func()
 
@@ -929,7 +930,7 @@ class ImportToolXOutput:
         """
         tool_output_file = self.input().path
         dir_path = os.path.dirname(tool_output_file)
-        return dir_path + os.path.sep + "tool_import_json"
+        return dir_path + os.path.sep + 'tool_import_json'
 
     def complete(self) -> bool:
         """
@@ -948,7 +949,6 @@ class ImportToolXOutput:
         # Custom completion check: Verify the scan objects exist and update the scope
         out_file = self.output()
         if os.path.exists(out_file):
-
             import_arr = []
             with open(out_file, 'r') as import_fd:
                 for line in import_fd:
@@ -995,7 +995,6 @@ class ImportToolXOutput:
         tool_id = scheduled_scan_obj.current_tool.id
 
         if len(obj_arr) > 0:
-
             record_map = {}
             import_arr = []
             for obj in obj_arr:
@@ -1007,13 +1006,11 @@ class ImportToolXOutput:
             # logging.getLogger(__name__).debug("Imported:\n %s" % str(import_arr))
 
             # Import the results to the server
-            updated_record_map = recon_manager.import_data(
-                scan_id, tool_id, import_arr)
+            updated_record_map = recon_manager.import_data(scan_id, tool_id, import_arr)
 
             # logging.getLogger(__name__).debug("Returned map: %d" % len(updated_record_map))
 
-            updated_import_arr = update_scope_array(
-                record_map, updated_record_map)
+            updated_import_arr = update_scope_array(record_map, updated_record_map)
 
             # logging.getLogger(__name__).debug("Updated scope")
 
@@ -1027,11 +1024,12 @@ class ImportToolXOutput:
             # Update the scan scope
             scheduled_scan_obj.scan_data.update(updated_import_arr)
         else:
-            logging.getLogger(__name__).warning(
-                "No objects to import for scan %s" % scan_id)
+            logging.getLogger(__name__).warning('No objects to import for scan %s' % scan_id)
 
 
-def update_scope_array(record_map: Dict[str, Any], updated_record_map: Optional[List[Dict[str, str]]] = None) -> List[Dict[str, Any]]:
+def update_scope_array(
+    record_map: Dict[str, Any], updated_record_map: Optional[List[Dict[str, str]]] = None
+) -> List[Dict[str, Any]]:
     """
     Update record IDs based on database responses and return updated scope array.
 
@@ -1100,7 +1098,7 @@ class ScanData:
     The class manages multiple types of security scan data:
     - Hosts and their IP addresses
     - Ports and services
-    - Domains and DNS information  
+    - Domains and DNS information
     - HTTP endpoints and web data
     - Vulnerabilities and security findings
     - Screenshots and visual data
@@ -1172,6 +1170,19 @@ class ScanData:
     @property
     def host_id_port_map(self) -> Dict[str, List[Any]]:
         return self._store.host_id_port_map
+
+    @property
+    def application_protocol_map(self) -> Dict[str, Any]:
+        # Post-CPE-refactor: service name (http/ssh/smb/...) is now its
+        # own record type. RecordStore initialises this index; mirror the
+        # delegation pattern of the other *_map properties so external
+        # callers (scan_utils, scanner modules) can read it via the
+        # ScanData facade.
+        return self._store.application_protocol_map
+
+    @property
+    def application_protocol_port_id_map(self) -> Dict[str, List[Any]]:
+        return self._store.application_protocol_port_id_map
 
     @property
     def component_map(self) -> Dict[str, Any]:
@@ -1288,7 +1299,7 @@ class ScanData:
             >>> scope_hosts = scan_data.get_hosts([RecordTag.SCOPE.value])
             >>> all_hosts = scan_data.get_hosts()
         """
-        host_list: List['Host'] = []
+        host_list: List[Host] = []
         host_map = self.host_map
         for host_id in host_map:
             host_obj = host_map[host_id]
@@ -1318,7 +1329,7 @@ class ScanData:
         Example:
             >>> scope_domains = scan_data.get_domains([RecordTag.SCOPE.value])
         """
-        domain_name_list: List['Domain'] = []
+        domain_name_list: List[Domain] = []
         seen_domain_names: Set[str] = set()
         domain_map = self.domain_map
 
@@ -1354,7 +1365,7 @@ class ScanData:
         Example:
             >>> open_ports = scan_data.get_ports([RecordTag.SCOPE.value])
         """
-        port_list: List['Port'] = []
+        port_list: List[Port] = []
         port_map = self.port_map
         for port_id in port_map:
             port_obj = port_map[port_id]
@@ -1430,8 +1441,7 @@ class ScanData:
             # Get all domains associated with the host
             if host_id and host_id in self.domain_host_id_map:
                 temp_domain_list = self.domain_host_id_map[host_id]
-                domain_set.update(
-                    domain_obj.name for domain_obj in temp_domain_list)
+                domain_set.update(domain_obj.name for domain_obj in temp_domain_list)
 
             # Get all domains associated with the port
             if port_id and port_id in self.certificate_port_id_map:
@@ -1440,18 +1450,20 @@ class ScanData:
                     domain_set.update(cert_obj.domain_name_id_map.keys())
 
             # Extract domain from target if different from IP
-            target_arr = target_key.split(":")
+            target_arr = target_key.split(':')
             if target_arr[0] != ip_addr:
                 domain_set.add(target_arr[0])
 
             # Process HTTP endpoints
             if port_id in self.http_endpoint_port_id_map:
-                self._process_http_endpoints(url_map, port_id, host_id, ip_addr,
-                                             port_str, secure, domain_set)
+                self._process_http_endpoints(
+                    url_map, port_id, host_id, ip_addr, port_str, secure, domain_set
+                )
             else:
                 # Process likely HTTP ports without explicit endpoints
-                self._process_likely_http_ports(url_map, port_id, host_id, ip_addr,
-                                                port_str, secure, domain_set)
+                self._process_likely_http_ports(
+                    url_map, port_id, host_id, ip_addr, port_str, secure, domain_set
+                )
 
         # Fallback: if no host data was available but subnets and port scope
         # are defined, expand subnets to candidate URLs
@@ -1472,11 +1484,7 @@ class ScanData:
         # Prefer the bitmap-decoded scope list; fall back to discovered port_map
         port_str_list = list(self.port_number_list)
         if not port_str_list:
-            port_str_list = [
-                port_obj.port
-                for port_obj in self.port_map.values()
-                if port_obj.port
-            ]
+            port_str_list = [port_obj.port for port_obj in self.port_map.values() if port_obj.port]
 
         if not port_str_list:
             return
@@ -1487,7 +1495,7 @@ class ScanData:
                 continue
             try:
                 network = ipaddress.ip_network(
-                    "%s/%s" % (subnet_obj.subnet, subnet_obj.mask), strict=False
+                    '%s/%s' % (subnet_obj.subnet, subnet_obj.mask), strict=False
                 )
             except ValueError:
                 continue
@@ -1496,89 +1504,91 @@ class ScanData:
                 ip_addr = str(ip_addr_obj)
                 for port_str in port_str_list:
                     secure = port_str in secure_ports
-                    url = construct_url(ip_addr, port_str, secure, "/")
+                    url = construct_url(ip_addr, port_str, secure, '/')
                     if url and url not in url_map:
                         url_map[url] = {
-                            "ip_addr": ip_addr,
-                            "port_str": port_str,
-                            "secure": secure,
-                            "path": "/",
+                            'ip_addr': ip_addr,
+                            'port_str': port_str,
+                            'secure': secure,
+                            'path': '/',
                         }
 
-    def _process_http_endpoints(self, url_map, port_id, host_id, ip_addr,
-                                port_str, secure, domain_set):
+    def _process_http_endpoints(
+        self, url_map, port_id, host_id, ip_addr, port_str, secure, domain_set
+    ):
         """Process ports with known HTTP endpoints"""
         http_endpoint_obj_list = self.http_endpoint_port_id_map[port_id]
 
         for http_endpoint_obj in http_endpoint_obj_list:
-            path = "/"
+            path = '/'
             web_path_id = http_endpoint_obj.web_path_id
             if web_path_id and web_path_id in self.path_map:
                 web_path_obj = self.path_map[web_path_id]
                 path = web_path_obj.web_path
 
             base_metadata = {
-                "host_id": host_id,
-                "ip_addr": ip_addr,
-                "port_id": port_id,
-                "http_endpoint_id": http_endpoint_obj.id,
-                "path": path,
-                "secure": secure,
-                "port_str": port_str
+                'host_id': host_id,
+                'ip_addr': ip_addr,
+                'port_id': port_id,
+                'http_endpoint_id': http_endpoint_obj.id,
+                'path': path,
+                'secure': secure,
+                'port_str': port_str,
             }
 
             if http_endpoint_obj.id in self.endpoint_data_endpoint_id_map:
                 # Process endpoint data objects
                 endpoint_data_list = self.endpoint_data_endpoint_id_map[http_endpoint_obj.id]
                 for endpoint_data_obj in endpoint_data_list:
-                    self._add_endpoint_data_urls(url_map, base_metadata, endpoint_data_obj,
-                                                 ip_addr, port_str, secure, path)
+                    self._add_endpoint_data_urls(
+                        url_map, base_metadata, endpoint_data_obj, ip_addr, port_str, secure, path
+                    )
 
             # Add base URL without endpoint data
-            self._add_base_url(url_map, base_metadata, ip_addr, port_str,
-                               secure, path, domain_set)
+            self._add_base_url(url_map, base_metadata, ip_addr, port_str, secure, path, domain_set)
 
-    def _process_likely_http_ports(self, url_map, port_id, host_id, ip_addr,
-                                   port_str, secure, domain_set):
+    def _process_likely_http_ports(
+        self, url_map, port_id, host_id, ip_addr, port_str, secure, domain_set
+    ):
         """Process ports that are likely HTTP but don't have explicit endpoints"""
         likely_http = self._is_likely_http_port(port_id, port_str)
 
         if likely_http:
             base_metadata = {
-                "host_id": host_id,
-                "ip_addr": ip_addr,
-                "port_id": port_id,
-                "path": "/",
-                "secure": secure,
-                "port_str": port_str
+                'host_id': host_id,
+                'ip_addr': ip_addr,
+                'port_id': port_id,
+                'path': '/',
+                'secure': secure,
+                'port_str': port_str,
             }
-            self._add_base_url(url_map, base_metadata, ip_addr, port_str,
-                               secure, "/", domain_set)
+            self._add_base_url(url_map, base_metadata, ip_addr, port_str, secure, '/', domain_set)
 
             # Add domain variants
             if host_id in self.domain_host_id_map:
                 domain_list = self.domain_host_id_map[host_id]
                 for domain_obj in domain_list:
                     domain_metadata = base_metadata.copy()
-                    domain_metadata["domain"] = domain_obj.name
-                    domain_metadata["domain_id"] = domain_obj.id
+                    domain_metadata['domain'] = domain_obj.name
+                    domain_metadata['domain_id'] = domain_obj.id
 
-                    url = construct_url(domain_obj.name, port_str, secure, "/")
+                    url = construct_url(domain_obj.name, port_str, secure, '/')
                     if url:
                         url_map[url] = domain_metadata
 
-    def _add_endpoint_data_urls(self, url_map, base_metadata, endpoint_data_obj,
-                                ip_addr, port_str, secure, path):
+    def _add_endpoint_data_urls(
+        self, url_map, base_metadata, endpoint_data_obj, ip_addr, port_str, secure, path
+    ):
         """Add URLs for endpoint data objects"""
         metadata = base_metadata.copy()
-        metadata["http_endpoint_data_id"] = endpoint_data_obj.id
+        metadata['http_endpoint_data_id'] = endpoint_data_obj.id
 
         host = ip_addr
         domain_id = endpoint_data_obj.domain_id
         if domain_id and domain_id in self.domain_map:
             domain_obj = self.domain_map[domain_id]
-            metadata["domain"] = domain_obj.name
-            metadata["domain_id"] = domain_id
+            metadata['domain'] = domain_obj.name
+            metadata['domain_id'] = domain_id
             host = domain_obj.name
 
         # Add primary URL
@@ -1590,7 +1600,7 @@ class ScanData:
         """Add base URL without endpoint data"""
         for domain_str in domain_set:
             metadata = base_metadata.copy()
-            metadata["domain"] = domain_str
+            metadata['domain'] = domain_str
 
             url = construct_url(domain_str, port_str, secure, path)
             if url:
@@ -1614,7 +1624,7 @@ class ScanData:
 
         return False
 
-    def update(self, record_map: Union[Dict[str, Any], List[Any]]) -> None:
+    def update(self, record_map: Dict[str, Any] | List[Any]) -> None:
         """
         Update the scan data with new records from scan results.
 
@@ -1658,7 +1668,9 @@ class ScanData:
         for port_id in self.port_map:
             update_host_port_obj_map(self, port_id, self.host_port_obj_map)
 
-    def _update_component_port_mappings(self, component_id_port_id_map: Dict[str, List[str]]) -> None:
+    def _update_component_port_mappings(
+        self, component_id_port_id_map: Dict[str, List[str]]
+    ) -> None:
         """
         Update the component to port ID mappings.
 
@@ -1675,7 +1687,8 @@ class ScanData:
             # Check if port exists once before processing its ports
             if port_id not in self.port_map:
                 logging.getLogger(__name__).error(
-                    "_update_component_port_mappings: Port ID %s not found in port_map", port_id)
+                    '_update_component_port_mappings: Port ID %s not found in port_map', port_id
+                )
                 continue
 
             component_id_list = component_id_port_id_map[port_id]
@@ -1684,8 +1697,7 @@ class ScanData:
                 # Use setdefault to avoid redundant lookup and creation
                 if component_id in self.component_map:
                     component_obj = self.component_map[component_id]
-                    self.component_port_id_map.setdefault(
-                        port_id, []).append(component_obj)
+                    self.component_port_id_map.setdefault(port_id, []).append(component_obj)
 
     def _process_data(self, obj_list: List[Any], record_tags: Set[str] = None) -> None:
         """
@@ -1711,7 +1723,8 @@ class ScanData:
         for obj in obj_list:
             if not isinstance(obj, Record):
                 record_obj = Record.static_from_jsonsable(
-                    input_dict=obj, scan_data=self, record_tags=record_tags)
+                    input_dict=obj, scan_data=self, record_tags=record_tags
+                )
                 if record_obj is None:
                     continue
             else:
@@ -1820,7 +1833,7 @@ class Record:
     Base class for all scan data records in the reverge_collector framework.
 
     This abstract base class provides common functionality for all types of scan data
-    objects including ID management, parent-child relationships, tagging, and 
+    objects including ID management, parent-child relationships, tagging, and
     JSON serialization/deserialization capabilities.
 
     All specific record types (Host, Port, Domain, etc.) inherit from this class
@@ -1843,8 +1856,12 @@ class Record:
     # tuples describing how the record is indexed in RecordStore.
     _indices = []
 
-    def __init__(self, id: Optional[str] = None, parent: Optional['Record'] = None,
-                 collection_tool_instance_id: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        id: Optional[str] = None,
+        parent: Optional['Record'] = None,
+        collection_tool_instance_id: Optional[str] = None,
+    ) -> None:
         """
         Initialize a new Record instance.
 
@@ -1854,8 +1871,8 @@ class Record:
             collection_tool_instance_id (Optional[str]): ID of the tool that created this record
         """
         self.id: str = id if id is not None else format(uuid.uuid4().int, 'x')
-        self.parent: Optional['Record'] = parent
-        self.scan_data: Optional['ScanData'] = None
+        self.parent: Optional[Record] = parent
+        self.scan_data: Optional[ScanData] = None
         self.tags: Set[str] = set()
         self.collection_tool_instance_id: Optional[str] = collection_tool_instance_id
 
@@ -1892,7 +1909,7 @@ class Record:
         if self.parent:
             parent_dict = {
                 'type': str(self.parent.__class__.__name__).lower(),
-                'id': self.parent.id
+                'id': self.parent.id,
             }
 
         ret: Dict[str, Any] = {}
@@ -1918,8 +1935,7 @@ class Record:
         Raises:
             Exception: Always raises exception if not overridden by subclass
         """
-        logging.getLogger(__name__).error(
-            f"from_jsonsable called on type: {type(self)}")
+        logging.getLogger(__name__).error(f'from_jsonsable called on type: {type(self)}')
         raise Exception('No jsonable method defined for the child object.')
 
     def remap_ids(self, id_updates: Dict[str, str]) -> None:
@@ -1939,8 +1955,11 @@ class Record:
             self.parent.id = id_updates[self.parent.id]
 
     @staticmethod
-    def static_from_jsonsable(input_dict: Dict[str, Any], scan_data: Optional['ScanData'] = None,
-                              record_tags: Set[str] = None) -> Optional['Record']:
+    def static_from_jsonsable(
+        input_dict: Dict[str, Any],
+        scan_data: Optional['ScanData'] = None,
+        record_tags: Set[str] = None,
+    ) -> Optional['Record']:
         """
         Static factory method to create Record objects from JSON-serializable data.
 
@@ -1965,7 +1984,7 @@ class Record:
             >>> print(type(host).__name__)
             'Host'
         """
-        obj: Optional['Record'] = None
+        obj: Optional[Record] = None
         record_tags_inst: Set[str] = set(record_tags or [])
 
         # Create record based on type
@@ -1986,8 +2005,7 @@ class Record:
             record_type = input_dict['type']
             factory = RECORD_REGISTRY.get(record_type)
             if factory is None:
-                logging.getLogger(__name__).debug(
-                    "Unknown record type: %s" % record_type)
+                logging.getLogger(__name__).debug('Unknown record type: %s' % record_type)
                 return None
             obj = factory(obj_id, parent_id)
 
@@ -2097,7 +2115,7 @@ class Host(Record):
 
     _indices = [
         ('host_ip_id_map', lambda r: r.ipv4_addr, 'map_id'),
-        ('host_map', lambda r: r.id,        'map'),
+        ('host_map', lambda r: r.id, 'map'),
     ]
 
     def _pre_index(self, store) -> None:
@@ -2150,14 +2168,15 @@ class Host(Record):
             if 'ipv4_addr' in input_data_dict:
                 ipv4_addr_str = input_data_dict['ipv4_addr']
                 self.ipv4_addr = str(netaddr.IPAddress(ipv4_addr_str))
-            # IPv6 support is commented out in original code
-            # elif 'ipv6_addr' in input_data_dict:
-            #     ipv6_addr_str = input_data_dict['ipv6_addr']
-            #     self.ipv6_addr = int(netaddr.IPAddress(input_data_dict['ipv6_addr_str']))
+            elif 'ipv6_addr' in input_data_dict:
+                # Symmetric with _data_to_jsonable, which serialises ipv6_addr
+                # whenever ipv4_addr is absent. Without this branch a Host
+                # with only an IPv6 address silently loses it on round-trip.
+                ipv6_addr_str = input_data_dict['ipv6_addr']
+                self.ipv6_addr = str(netaddr.IPAddress(ipv6_addr_str))
 
             if 'credential_id' in input_data_dict:
-                self.credential = {'credential_id': str(
-                    input_data_dict['credential_id'])}
+                self.credential = {'credential_id': str(input_data_dict['credential_id'])}
 
         except Exception as e:
             raise Exception('Invalid host object: %s' % str(e))
@@ -2184,9 +2203,9 @@ class Port(Record):
     """
 
     _indices = [
-        ('host_id_port_map', lambda r: r.parent.id,                  'list'),
+        ('host_id_port_map', lambda r: r.parent.id, 'list'),
         ('port_host_map', lambda r: (r.port, r.parent.id) if r.port else None, 'set'),
-        ('port_map', lambda r: r.id,                         'map'),
+        ('port_map', lambda r: r.id, 'map'),
     ]
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
@@ -2203,15 +2222,14 @@ class Port(Record):
         self.secure: bool = False
         self.credential: Optional[Dict[str, str]] = None
 
-    def _data_to_jsonable(self) -> Dict[str, Union[str, int, bool]]:
+    def _data_to_jsonable(self) -> Dict[str, str | int | bool]:
         """
         Convert port-specific data to JSON-serializable format.
 
         Returns:
             Dict[str, Union[str, int, bool]]: Dictionary containing port data
         """
-        ret: Dict[str, Union[str, int, bool]] = {
-            'port': self.port, 'proto': self.proto}
+        ret: Dict[str, str | int | bool] = {'port': self.port, 'proto': self.proto}
         if self.secure is not None:
             ret['secure'] = self.secure
         return ret
@@ -2237,8 +2255,7 @@ class Port(Record):
                     self.secure = False
 
             if 'credential_id' in input_data_dict:
-                self.credential = {'credential_id': str(
-                    input_data_dict['credential_id'])}
+                self.credential = {'credential_id': str(input_data_dict['credential_id'])}
 
         except Exception as e:
             raise Exception('Invalid port object: %s' % str(e))
@@ -2259,8 +2276,7 @@ class Port(Record):
                 if ip_addr_obj.is_loopback:
                     return []
 
-                url_str = construct_url(
-                    ip_addr, self.port, False)
+                url_str = construct_url(ip_addr, self.port, False)
                 if url_str:
                     url_set.add(url_str)
 
@@ -2308,8 +2324,8 @@ class Domain(Record):
 
     _indices = [
         ('domain_host_id_map', lambda r: r.parent.id, 'list'),
-        ('domain_name_map', lambda r: r.name,      'map'),
-        ('domain_map', lambda r: r.id,        'map'),
+        ('domain_name_map', lambda r: r.name, 'map'),
+        ('domain_map', lambda r: r.id, 'map'),
     ]
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
@@ -2356,80 +2372,159 @@ class Domain(Record):
             raise Exception('Invalid domain object: %s' % str(e))
 
 
-class WebComponent(Record):
+class Cpe(Record):
     """
-    Represents a web technology/component detected on a network port.
+    Represents a CPE (Common Platform Enumeration) entry detected on a port.
 
-    This record type stores information about web technologies, frameworks, servers,
-    or other software components detected during web scanning. Components are children
-    of Port records and help identify the technology stack of web services.
+    Holds vendor, product, version, and part fields. Replaces the older
+    WebComponent record type — ``name`` is kept as a back-compat alias for
+    ``product`` so scanners that haven't been updated still work.
 
     Attributes:
-        name (str): Name of the web component (e.g., "Apache", "nginx", "WordPress")
-        version (Optional[str]): Version of the component if detected
-
-    Example:
-        >>> component = WebComponent(parent_id="port_123")
-        >>> component.name = "Apache"
-        >>> component.version = "2.4.41"
+        vendor (str): CPE vendor field (e.g. "apache"); '' when unknown
+        product (str): CPE product field (e.g. "tomcat")
+        version (Optional[str]): Version string when known
+        part (str): 'a' for application (default), 'o' for OS, 'h' for hardware
     """
 
     _indices = [
-        ('component_port_id_map', lambda r: r.parent.id,                     'list'),
-        ('component_name_port_id_map',
-         lambda r: WebComponent._component_name_key(r), 'list_value'),
-        ('component_map', lambda r: r.id,                            'map'),
+        ('component_port_id_map', lambda r: r.parent.id, 'list'),
+        ('component_name_port_id_map', lambda r: Cpe._component_name_key(r), 'list_value'),
+        ('component_map', lambda r: r.id, 'map'),
     ]
 
     @staticmethod
     def _component_name_key(r):
-        if not r.name:
+        product = getattr(r, 'product', None) or getattr(r, 'name', None)
+        if not product:
             return None
-        key = r.name
+        key = product
         if r.version:
-            key += ":" + r.version
+            key += ':' + r.version
         return (key, r.parent.id)
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
-        """
-        Initialize a WebComponent record.
-
-        Args:
-            parent_id (Optional[str]): ID of the parent Port record
-            id (Optional[str]): Unique identifier for the component record
-        """
         super().__init__(id=id, parent=Port(id=parent_id))
-        self.name: Optional[str] = None
+        self.vendor: str = ''
+        self.product: Optional[str] = None
         self.version: Optional[str] = None
+        self.part: str = 'a'
 
-    def _data_to_jsonable(self) -> Dict[str, str]:
-        """
-        Convert web component data to JSON-serializable format.
+    # Back-compat shim: legacy scanner code reads/writes ``.name``; expose it
+    # as an alias for ``product`` so we can roll out the rename incrementally.
+    @property
+    def name(self) -> Optional[str]:
+        return self.product
 
-        Returns:
-            Dict[str, str]: Dictionary containing component name and version
-        """
-        ret: Dict[str, str] = {'name': self.name}
+    @name.setter
+    def name(self, value: Optional[str]) -> None:
+        self.product = value
+
+    @property
+    def cpe(self) -> Optional[str]:
+        """Return the assembled CPE 2.3 string (or None if product is missing)."""
+        if not self.product:
+            return None
+        vendor = self.vendor or '*'
+        version = self.version or '*'
+        return 'cpe:2.3:%s:%s:%s:%s:*:*:*:*:*:*:*' % (
+            self.part or 'a',
+            vendor,
+            self.product,
+            version,
+        )
+
+    @cpe.setter
+    def cpe(self, value: Optional[str]) -> None:
+        """Setter retained for back-compat; parses a CPE 2.3 string into fields."""
+        if not value:
+            return
+        try:
+            s = value.strip()
+            if not s.lower().startswith('cpe:2.3:'):
+                return
+            fields = s.split(':')
+            if len(fields) < 6:
+                return
+            self.part = (fields[2] or 'a').lower() if fields[2] in ('a', 'o', 'h') else 'a'
+            vendor = fields[3] or ''
+            self.vendor = '' if vendor in ('*', '-') else vendor
+            product = fields[4] or ''
+            if product and product not in ('*', '-'):
+                self.product = product
+            version_raw = fields[5] or ''
+            self.version = None if version_raw in ('*', '-', '') else version_raw
+        except Exception:
+            return
+
+    def _data_to_jsonable(self) -> Dict[str, Any]:
+        ret: Dict[str, Any] = {
+            'vendor': self.vendor or '',
+            'product': self.product,
+            'part': self.part or 'a',
+        }
+        # Emit 'name' too for back-compat with pre-refactor reverge instances.
+        if self.product:
+            ret['name'] = self.product
         if self.version is not None:
             ret['version'] = self.version
         return ret
 
     def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
-        """
-        Populate web component data from JSON dictionary.
-
-        Args:
-            input_data_dict (Dict[str, Any]): Dictionary containing component data
-
-        Raises:
-            Exception: If required component data is missing or invalid
-        """
         try:
-            self.name = input_data_dict['name']
+            self.vendor = input_data_dict.get('vendor', '') or ''
+            # Accept either legacy 'name' or new 'product'
+            self.product = input_data_dict.get('product') or input_data_dict.get('name')
+            if not self.product:
+                raise KeyError('product')
             if 'version' in input_data_dict:
                 self.version = input_data_dict['version']
+            self.part = input_data_dict.get('part', 'a') or 'a'
         except Exception as e:
-            raise Exception('Invalid component object: %s' % str(e))
+            raise Exception('Invalid CPE object: %s' % str(e))
+
+
+# Back-compat alias: existing scanners import ``data_model.WebComponent``.
+# New code should prefer ``Cpe`` directly.
+WebComponent = Cpe
+
+
+class ApplicationProtocol(Record):
+    """
+    Represents an application-layer protocol detected on a port.
+
+    Independent of CPE — protocols (http, ssh, smb, rmi, ftp, etc.) are
+    emitted in a separate scan-payload list and ingested via a separate
+    bulk-insert function on the reverge side.
+
+    Attributes:
+        name (str): Protocol name, lowercase (e.g. "http", "ssh")
+        description (Optional[str]): Optional human-readable description
+    """
+
+    _indices = [
+        ('application_protocol_port_id_map', lambda r: r.parent.id, 'list'),
+        ('application_protocol_map', lambda r: r.id, 'map'),
+    ]
+
+    def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
+        super().__init__(id=id, parent=Port(id=parent_id))
+        self.name: Optional[str] = None
+        self.description: Optional[str] = None
+
+    def _data_to_jsonable(self) -> Dict[str, Any]:
+        ret: Dict[str, Any] = {'name': self.name}
+        if self.description is not None:
+            ret['description'] = self.description
+        return ret
+
+    def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
+        try:
+            self.name = input_data_dict['name']
+            if 'description' in input_data_dict:
+                self.description = input_data_dict['description']
+        except Exception as e:
+            raise Exception('Invalid ApplicationProtocol object: %s' % str(e))
 
 
 class OperatingSystem(Record):
@@ -2515,7 +2610,7 @@ class Vuln(Record):
 
     _indices = [
         ('vulnerability_name_id_map', lambda r: r.name, 'list'),
-        ('vulnerability_map', lambda r: r.id,   'map'),
+        ('vulnerability_map', lambda r: r.id, 'map'),
     ]
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
@@ -2600,10 +2695,12 @@ class ListItem(Record):
         self.web_path_hash: Optional[str] = None
 
     _indices = [
-        ('path_hash_id_map', lambda r: r.web_path_hash.upper()
-         if r.web_path_hash else None, 'list_id'),
-        ('path_map', lambda r: r.id,
-         'map'),
+        (
+            'path_hash_id_map',
+            lambda r: r.web_path_hash.upper() if r.web_path_hash else None,
+            'list_id',
+        ),
+        ('path_map', lambda r: r.id, 'map'),
     ]
 
     def _data_to_jsonable(self) -> Dict[str, str]:
@@ -2613,8 +2710,7 @@ class ListItem(Record):
         Returns:
             Dict[str, str]: Dictionary containing path and hash information
         """
-        return {'path': self.web_path,
-                'path_hash': self.web_path_hash}
+        return {'path': self.web_path, 'path_hash': self.web_path_hash}
 
     def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
         """
@@ -2664,10 +2760,12 @@ class Screenshot(Record):
     """
 
     _indices = [
-        ('screenshot_hash_id_map', lambda r: r.image_hash.upper()
-         if r.image_hash else None, 'list_id'),
-        ('screenshot_map', lambda r: r.id,
-         'map'),
+        (
+            'screenshot_hash_id_map',
+            lambda r: r.image_hash.upper() if r.image_hash else None,
+            'list_id',
+        ),
+        ('screenshot_map', lambda r: r.id, 'map'),
     ]
 
     def __init__(self, id: Optional[str] = None) -> None:
@@ -2688,8 +2786,7 @@ class Screenshot(Record):
         Returns:
             Dict[str, Optional[str]]: Dictionary containing screenshot and hash data
         """
-        return {'screenshot': self.screenshot,
-                'image_hash': self.image_hash}
+        return {'screenshot': self.screenshot, 'image_hash': self.image_hash}
 
     def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
         """
@@ -2731,8 +2828,8 @@ class HttpEndpoint(Record):
 
     _indices = [
         ('http_endpoint_path_id_map', lambda r: r.web_path_id, 'list'),
-        ('http_endpoint_port_id_map', lambda r: r.parent.id,   'list'),
-        ('http_endpoint_map', lambda r: r.id,          'map'),
+        ('http_endpoint_port_id_map', lambda r: r.parent.id, 'list'),
+        ('http_endpoint_map', lambda r: r.id, 'map'),
     ]
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
@@ -2800,11 +2897,13 @@ class HttpEndpoint(Record):
                     host_ip = host_obj.ipv4_addr
 
         # Check for domain names in endpoint data
-        if self.id in self.scan_data.http_endpoint_map:
-            http_endpoint_data_obj_list = self.scan_data.endpoint_data_endpoint_id_map[
-                self.id]
+        if self.id in self.scan_data.endpoint_data_endpoint_id_map:
+            http_endpoint_data_obj_list = self.scan_data.endpoint_data_endpoint_id_map[self.id]
             for http_endpoint_data_obj in http_endpoint_data_obj_list:
-                if http_endpoint_data_obj.domain_id and http_endpoint_data_obj.domain_id in self.scan_data.domain_map:
+                if (
+                    http_endpoint_data_obj.domain_id
+                    and http_endpoint_data_obj.domain_id in self.scan_data.domain_map
+                ):
                     domain_obj = self.scan_data.domain_map[http_endpoint_data_obj.domain_id]
                     if domain_obj:
                         host_ip = domain_obj.name
@@ -2816,8 +2915,7 @@ class HttpEndpoint(Record):
             query_str = path_obj.web_path
 
         # Construct the complete URL
-        url_str = construct_url(
-            host_ip, port_str, secure, query_str)
+        url_str = construct_url(host_ip, port_str, secure, query_str)
 
         return url_str
 
@@ -2842,7 +2940,6 @@ class HttpEndpoint(Record):
             Exception: If endpoint data is invalid
         """
         try:
-
             if 'web_path_id' in input_data_dict:
                 self.web_path_id = input_data_dict['web_path_id']
 
@@ -2880,10 +2977,9 @@ class HttpEndpointData(Record):
     """
 
     _indices = [
-        ('endpoint_data_endpoint_id_map', lambda r: r.parent.id,      'list'),
-        ('http_endpoint_data_screenshot_id_map',
-         lambda r: r.screenshot_id,  'list'),
-        ('http_endpoint_data_map', lambda r: r.id,             'map'),
+        ('endpoint_data_endpoint_id_map', lambda r: r.parent.id, 'list'),
+        ('http_endpoint_data_screenshot_id_map', lambda r: r.screenshot_id, 'list'),
+        ('http_endpoint_data_map', lambda r: r.id, 'map'),
     ]
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None) -> None:
@@ -2910,8 +3006,7 @@ class HttpEndpointData(Record):
         Returns:
             Dict[str, Optional[str]]: Dictionary containing HTTP response metadata
         """
-        ret: Dict[str, Optional[str]] = {
-            'title': self.title, 'status': self.status}
+        ret: Dict[str, Optional[str]] = {'title': self.title, 'status': self.status}
 
         if self.last_modified is not None:
             ret['last_modified'] = self.last_modified
@@ -2978,8 +3073,7 @@ class HttpEndpointData(Record):
             if domain_obj:
                 host_ip = domain_obj.name
 
-        url_str = construct_url(
-            host_ip, port_str, secure, query_str)
+        url_str = construct_url(host_ip, port_str, secure, query_str)
 
         return url_str
 
@@ -3005,7 +3099,6 @@ class HttpEndpointData(Record):
             >>> endpoint_data.from_jsonsable(data)
         """
         try:
-
             self.screenshot_id = None
             self.last_modified = None
             self.domain_id = None
@@ -3067,7 +3160,7 @@ class CollectionModule(Record):
 
     _indices = [
         ('module_name_id_map', lambda r: r.name, 'list'),
-        ('collection_module_map', lambda r: r.id,   'map'),
+        ('collection_module_map', lambda r: r.id, 'map'),
     ]
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None):
@@ -3083,6 +3176,7 @@ class CollectionModule(Record):
         self.name: Optional[str] = None
         self.description: Optional[str] = None
         self.args: Optional[str] = None
+        self.cpe: Optional[str] = None
         self.bindings: Optional[List[str]] = None
         self.outputs: Optional[List[str]] = None
 
@@ -3100,8 +3194,9 @@ class CollectionModule(Record):
             >>> data = module._data_to_jsonable()
             >>> print(data)  # {"name": "nmap_scan", "args": "-sS -O"}
         """
-        ret = {'name': self.name,
-               'description': self.description, 'args': self.args}
+        ret = {'name': self.name, 'description': self.description, 'args': self.args}
+        if self.cpe:
+            ret['cpe'] = self.cpe
         return ret
 
     def get_output_components(self) -> List['WebComponent']:
@@ -3163,7 +3258,6 @@ class CollectionModule(Record):
         # Get the module binding and see if there are any ports mapped to this component name
         for component_id in component_arr:
             if component_id in component_map:
-
                 component_obj = component_map[component_id]
                 component_key = component_obj.name
 
@@ -3171,14 +3265,15 @@ class CollectionModule(Record):
                     port_id_list = component_name_port_id_map[component_key]
                     for port_id in port_id_list:
                         if port_id in self.scan_data.port_map:
-                            update_host_port_obj_map(
-                                self.scan_data, port_id, host_port_obj_map)
+                            update_host_port_obj_map(self.scan_data, port_id, host_port_obj_map)
                 else:
                     logging.getLogger(__name__).debug(
-                        "Component key not found in component name port id map: %s" % component_key)
+                        'Component key not found in component name port id map: %s' % component_key
+                    )
             else:
                 logging.getLogger(__name__).debug(
-                    "Component id not found in component map: %s" % component_id)
+                    'Component id not found in component map: %s' % component_id
+                )
 
         return host_port_obj_map
 
@@ -3205,7 +3300,6 @@ class CollectionModule(Record):
             >>> module.from_jsonsable(data)
         """
         try:
-
             self.name = str(input_data_dict['name'])
             self.args = str(input_data_dict['args'])
 
@@ -3237,8 +3331,8 @@ class CollectionModuleOutput(Record):
 
     _indices = [
         ('module_output_module_id_map', lambda r: r.parent.id, 'list'),
-        ('collection_module_output_port_id_map', lambda r: r.port_id,  'list'),
-        ('collection_module_output_map', lambda r: r.id,       'map'),
+        ('collection_module_output_port_id_map', lambda r: r.port_id, 'list'),
+        ('collection_module_output_map', lambda r: r.id, 'map'),
     ]
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None):
@@ -3288,13 +3382,11 @@ class CollectionModuleOutput(Record):
             >>> output.from_jsonsable(data)
         """
         try:
-
             self.output = str(input_data_dict['output'])
             self.port_id = str(input_data_dict['port_id'])
 
         except Exception as e:
-            raise Exception(
-                'Invalid collection module output object: %s' % str(e))
+            raise Exception('Invalid collection module output object: %s' % str(e))
 
     def remap_ids(self, id_updates: Dict[str, str]) -> None:
         super().remap_ids(id_updates)
@@ -3327,7 +3419,7 @@ class Certificate(Record):
 
     _indices = [
         ('certificate_port_id_map', lambda r: r.parent.id, 'list'),
-        ('certificate_map', lambda r: r.id,        'map'),
+        ('certificate_map', lambda r: r.id, 'map'),
     ]
 
     def __init__(self, parent_id: Optional[str] = None, id: Optional[str] = None):
@@ -3406,15 +3498,14 @@ class Certificate(Record):
 
     def remap_ids(self, id_updates: Dict[str, str]) -> None:
         super().remap_ids(id_updates)
-        self.domain_id_list = [
-            id_updates.get(d, d) for d in self.domain_id_list
-        ]
+        self.domain_id_list = [id_updates.get(d, d) for d in self.domain_id_list]
         self.domain_name_id_map = {
-            name: id_updates.get(did, did)
-            for name, did in self.domain_name_id_map.items()
+            name: id_updates.get(did, did) for name, did in self.domain_name_id_map.items()
         }
 
-    def add_domain(self, host_id: str, domain_str: str, collection_tool_instance_id: str) -> Optional['Domain']:
+    def add_domain(
+        self, host_id: str, domain_str: str, collection_tool_instance_id: str
+    ) -> Optional['Domain']:
         """
         Add a domain name to the certificate's domain list.
 
@@ -3435,7 +3526,7 @@ class Certificate(Record):
             >>> print(domain.name if domain else "Filtered out")
         """
         # Filter out wildcard certificates
-        if "*." in domain_str:
+        if '*.' in domain_str:
             return None
 
         # Filter out IP addresses
@@ -3456,7 +3547,6 @@ class Certificate(Record):
 
 
 class Credential(Record):
-
     _indices = [
         ('credential_map', lambda r: r.id, 'map'),
     ]
@@ -3501,13 +3591,18 @@ RECORD_REGISTRY: Dict[str, Any] = {
     'domain': lambda id, parent_id: Domain(id=id, parent_id=parent_id),
     'listitem': lambda id, parent_id: ListItem(id=id),
     'screenshot': lambda id, parent_id: Screenshot(id=id),
-    'webcomponent': lambda id, parent_id: WebComponent(id=id, parent_id=parent_id),
+    'cpe': lambda id, parent_id: Cpe(id=id, parent_id=parent_id),
+    'applicationprotocol': lambda id, parent_id: ApplicationProtocol(id=id, parent_id=parent_id),
+    # Legacy alias retained so older exports still deserialize.
+    'webcomponent': lambda id, parent_id: Cpe(id=id, parent_id=parent_id),
     'operatingsystem': lambda id, parent_id: OperatingSystem(id=id, parent_id=parent_id),
     'vuln': lambda id, parent_id: Vuln(id=id, parent_id=parent_id),
     'httpendpoint': lambda id, parent_id: HttpEndpoint(id=id, parent_id=parent_id),
     'httpendpointdata': lambda id, parent_id: HttpEndpointData(id=id, parent_id=parent_id),
     'collectionmodule': lambda id, parent_id: CollectionModule(id=id, parent_id=parent_id),
-    'collectionmoduleoutput': lambda id, parent_id: CollectionModuleOutput(id=id, parent_id=parent_id),
+    'collectionmoduleoutput': lambda id, parent_id: CollectionModuleOutput(
+        id=id, parent_id=parent_id
+    ),
     'certificate': lambda id, parent_id: Certificate(id=id, parent_id=parent_id),
     'credential': lambda id, parent_id: Credential(id=id),
 }

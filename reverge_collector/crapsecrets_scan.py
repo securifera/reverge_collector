@@ -35,13 +35,13 @@ Global Variables:
 
 Example:
     Basic usage through the reverge_collector framework::
-    
+
         # Initialize the tool
         crapsecrets = Crapsecrets()
-        
+
         # Execute vulnerability scanning
         success = crapsecrets.scan_func(scan_input_obj)
-        
+
         # Import results
         imported = crapsecrets.import_func(scan_input_obj)
 
@@ -54,14 +54,14 @@ Note:
 """
 
 import json
+import logging
 import os
+
 # import traceback
 import time
-import logging
-from typing import Dict, Set, List, Any, Optional, Union
+from typing import Any, Dict, Optional, Set
 
-from reverge_collector import scan_utils
-from reverge_collector import data_model
+from reverge_collector import data_model, scan_utils
 from reverge_collector.proc_utils import process_wrapper
 from reverge_collector.tool_spec import ToolSpec
 
@@ -73,7 +73,6 @@ path_hash_map: Dict[str, Any] = {}
 
 
 class Crapsecrets(ToolSpec):
-
     name = 'crapsecrets'
     description = 'A pure python library for identifying the use of known or very weak cryptographic secrets across a variety of web application platforms.'
     project_url = 'https://github.com/irsdl/crapsecrets'
@@ -82,9 +81,11 @@ class Crapsecrets(ToolSpec):
     scan_order = 10
     args = '-nh -t 3 -mrd 5 -avsk -fvsp'
     max_targets = 10
-    input_records = [data_model.ServerRecordType.PORT,
-                     data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
-                     data_model.ServerRecordType.SUBNET]
+    input_records = [
+        data_model.ServerRecordType.PORT,
+        data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
+        data_model.ServerRecordType.SUBNET,
+    ]
     output_records = [data_model.ServerRecordType.VULNERABILITY]
 
     def get_output_path(self, scan_input) -> str:
@@ -185,22 +186,21 @@ def request_wrapper(url_obj: Dict[str, Any]) -> Dict[str, Any]:
     output = []
     custom_args = url_obj.get('custom_args')
 
-    logging.getLogger(__name__).debug("Scanning URL: %s" % url)
+    logging.getLogger(__name__).debug('Scanning URL: %s' % url)
 
     count = 0
     while True:
         try:
-
-            user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
+            user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
 
             # Build command to run crapsecrets binary
             command = [
-                "crapsecrets",
-                "--url",
+                'crapsecrets',
+                '--url',
                 url,
-                "-a",
+                '-a',
                 user_agent,
-                "-j"  # JSON output
+                '-j',  # JSON output
             ]
 
             # Add custom args if provided
@@ -224,12 +224,12 @@ def request_wrapper(url_obj: Dict[str, Any]) -> Dict[str, Any]:
                     elif 'stderr' in ret_dict and ret_dict['stderr']:
                         stderr_text = ret_dict['stderr']
                         logging.getLogger(__name__).error(
-                            "Crapsecrets error for URL %s: %s" % (url, stderr_text))
+                            'Crapsecrets error for URL %s: %s' % (url, stderr_text)
+                        )
 
                 break
         except Exception as e:
-            logging.getLogger(__name__).error(
-                "Error scanning URL %s: %s" % (url, str(e)))
+            logging.getLogger(__name__).error('Error scanning URL %s: %s' % (url, str(e)))
             count += 1
             time.sleep(1)
             if count > 2:
@@ -243,7 +243,7 @@ def get_output_path(scan_input) -> str:
     scan_id = scan_input.id
     tool_name = scan_input.current_tool.name
     dir_path = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
-    return f"{dir_path}{os.path.sep}crapsecrets_outputs_{scan_id}.json"
+    return f'{dir_path}{os.path.sep}crapsecrets_outputs_{scan_id}.json'
 
 
 def execute_scan(scan_input) -> None:
@@ -261,7 +261,7 @@ def execute_scan(scan_input) -> None:
 
     custom_args = None
     if scheduled_scan_obj.current_tool.args:
-        custom_args = scheduled_scan_obj.current_tool.args.split(" ")
+        custom_args = scheduled_scan_obj.current_tool.args.split(' ')
 
     all_endpoint_port_obj_map = scheduled_scan_obj.scan_data.get_url_metadata_map()
     endpoint_port_obj_map = {}
@@ -280,7 +280,7 @@ def execute_scan(scan_input) -> None:
             'port_id': port_id,
             'http_endpoint_id': http_endpoint_id,
             'url': url_str,
-            'custom_args': custom_args
+            'custom_args': custom_args,
         }
         future_inst = queue_scan(url_obj)
         if future_inst:
@@ -288,25 +288,30 @@ def execute_scan(scan_input) -> None:
 
     if len(endpoint_port_obj_map) == 0 and len(url_list) > 0:
         for url in url_list:
-            url_obj = {'port_id': None, 'http_endpoint_id': None, 'url': url,
-                       'custom_args': custom_args}
+            url_obj = {
+                'port_id': None,
+                'http_endpoint_id': None,
+                'url': url,
+                'custom_args': custom_args,
+            }
             future_inst = queue_scan(url_obj)
             if future_inst:
                 futures.append(future_inst)
 
     if len(futures) == 0:
-        logging.getLogger(__name__).debug("No targets to scan for CrapSecrets")
+        logging.getLogger(__name__).debug('No targets to scan for CrapSecrets')
 
     if len(futures) > 0:
         scan_proc_inst = data_model.ToolExecutor(futures)
         scheduled_scan_obj.register_tool_executor(
-            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst)
+            scheduled_scan_obj.current_tool_instance_id, scan_proc_inst
+        )
         for future in futures:
             ret_obj = future.result()
             if ret_obj:
                 output_file_list.append(ret_obj)
     else:
-        logging.getLogger(__name__).debug("No targets to scan for CrapSecrets")
+        logging.getLogger(__name__).debug('No targets to scan for CrapSecrets')
 
     results_dict = {'output_list': output_file_list}
     with open(output_file_path, 'w') as file_fd:
@@ -325,12 +330,9 @@ def parse_crapsecrets_output(output_file, tool_instance_id, tool_id):
         # Get data and map
         output_list = scan_data_dict['output_list']
         if len(output_list) > 0:
-
             # Parse the output
-            logging.getLogger(__name__).debug(
-                "Importing CrapSecrets output with %s" % output_list)
+            logging.getLogger(__name__).debug('Importing CrapSecrets output with %s' % output_list)
             for entry in output_list:
-
                 output = entry['output']
                 http_endpoint_id = entry['http_endpoint_id']
                 port_id = entry['port_id']
@@ -338,8 +340,7 @@ def parse_crapsecrets_output(output_file, tool_instance_id, tool_id):
                 # Handle new JSON format with 'target' and 'results' keys
                 if output:
                     # Extract results list from new format
-                    findings = output.get('results', []) if isinstance(
-                        output, dict) else output
+                    findings = output.get('results', []) if isinstance(output, dict) else output
 
                     if findings and len(findings) > 0:
                         for finding in findings:
@@ -347,21 +348,18 @@ def parse_crapsecrets_output(output_file, tool_instance_id, tool_id):
                                 # Handle findings from crapsecrets CLI output
                                 if isinstance(finding, dict):
                                     # Extract key vulnerability information
-                                    secret_type = finding.get(
-                                        'secret_type', 'Unknown')
+                                    secret_type = finding.get('secret_type', 'Unknown')
 
                                     if 'secret' in finding:
                                         # Add vuln
-                                        vuln_obj = data_model.Vuln(
-                                            parent_id=port_id)
+                                        vuln_obj = data_model.Vuln(parent_id=port_id)
                                         vuln_obj.collection_tool_instance_id = tool_instance_id
                                         vuln_obj.name = secret_type
                                         vuln_obj.endpoint_id = http_endpoint_id
                                         ret_arr.append(vuln_obj)
 
                                     # Add vuln details as a collection module output
-                                    module_obj = data_model.CollectionModule(
-                                        parent_id=tool_id)
+                                    module_obj = data_model.CollectionModule(parent_id=tool_id)
                                     module_obj.collection_tool_instance_id = tool_instance_id
                                     module_obj.name = secret_type
                                     ret_arr.append(module_obj)
@@ -369,16 +367,17 @@ def parse_crapsecrets_output(output_file, tool_instance_id, tool_id):
 
                                     # Add module output for all scan results
                                     module_output_obj = data_model.CollectionModuleOutput(
-                                        parent_id=module_id)
+                                        parent_id=module_id
+                                    )
                                     module_output_obj.collection_tool_instance_id = tool_instance_id
-                                    module_output_obj.output = json.dumps(
-                                        finding)
+                                    module_output_obj.output = json.dumps(finding)
                                     module_output_obj.port_id = port_id
                                     ret_arr.append(module_output_obj)
 
                             except Exception as e:
                                 logging.getLogger(__name__).error(
-                                    "Error processing finding: %s" % str(e))
+                                    'Error processing finding: %s' % str(e)
+                                )
                                 continue
 
     return ret_arr

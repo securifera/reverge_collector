@@ -53,8 +53,14 @@ from typing import Any, List, Optional
 from reverge_collector import data_model, scan_utils
 from reverge_collector.tool_runner import (
     import_already_done as _import_already_done,
+)
+from reverge_collector.tool_runner import (
     import_results as _import_results,
+)
+from reverge_collector.tool_runner import (
     load_pre_import_arr as _load_pre_import_arr,
+)
+from reverge_collector.tool_runner import (
     post_pre_import as _post_pre_import,
 )
 
@@ -113,9 +119,8 @@ class ToolSpec(data_model.RevergeTool, ABC):
         """
         scan_id: str = scan_input.id
         tool_name: str = scan_input.current_tool.name
-        dir_path: str = scan_utils.init_tool_folder(
-            tool_name, 'outputs', scan_id)
-        return f"{dir_path}{os.path.sep}{tool_name}_outputs_{scan_id}"
+        dir_path: str = scan_utils.init_tool_folder(tool_name, 'outputs', scan_id)
+        return f'{dir_path}{os.path.sep}{tool_name}_outputs_{scan_id}'
 
     # -----------------------------------------------------------------------
     # Default scan_func / import_func implementations
@@ -127,9 +132,8 @@ class ToolSpec(data_model.RevergeTool, ABC):
         tool_name: str = scan_input.current_tool.name
         scope_obj = scan_input.scan_data
 
-        dir_path: str = scan_utils.init_tool_folder(
-            tool_name, 'inputs', scan_id)
-        input_file: str = f"{dir_path}{os.sep}{tool_name}_scan_input_{scan_id}.json"
+        dir_path: str = scan_utils.init_tool_folder(tool_name, 'inputs', scan_id)
+        input_file: str = f'{dir_path}{os.sep}{tool_name}_scan_input_{scan_id}.json'
 
         hosts = [h.ipv4_addr for h in scope_obj.get_hosts() if h.ipv4_addr]
         domains = [d.name for d in scope_obj.get_domains() if d.name]
@@ -138,12 +142,14 @@ class ToolSpec(data_model.RevergeTool, ABC):
         for key, entry in scope_obj.host_port_obj_map.items():
             host_obj = entry['host_obj']
             port_obj = entry['port_obj']
-            ports.append({
-                'ip': host_obj.ipv4_addr,
-                'port': port_obj.port,
-                'proto': port_obj.proto,
-                'secure': port_obj.secure,
-            })
+            ports.append(
+                {
+                    'ip': host_obj.ipv4_addr,
+                    'port': port_obj.port,
+                    'proto': port_obj.proto,
+                    'secure': port_obj.secure,
+                }
+            )
 
         if len(ports) == 0:
             ports = scope_obj.get_port_number_list_from_scope()
@@ -151,7 +157,7 @@ class ToolSpec(data_model.RevergeTool, ABC):
         subnets = []
         for subnet_obj in scope_obj.subnet_map.values():
             if subnet_obj.subnet and subnet_obj.mask:
-                subnets.append(f"{subnet_obj.subnet}/{subnet_obj.mask}")
+                subnets.append(f'{subnet_obj.subnet}/{subnet_obj.mask}')
 
         input_data = {
             'scan_id': scan_id,
@@ -165,17 +171,17 @@ class ToolSpec(data_model.RevergeTool, ABC):
             with open(input_file, 'w') as fd:
                 fd.write(json.dumps(input_data, indent=2))
         except Exception as e:
-            logger.warning("%s: failed to write scan inputs: %s", tool_name, e)
+            logger.warning('%s: failed to write scan inputs: %s', tool_name, e)
 
     def _run_scan(self, scan_input: 'data_model.ScheduledScan') -> bool:
         """Calls ``execute_scan()`` and returns True on success."""
-        
+
         try:
             self._write_scan_inputs(scan_input)
             self.execute_scan(scan_input)
             return True
         except Exception as e:
-            logger.error("%s scan failed: %s", self.name, e, exc_info=True)
+            logger.error('%s scan failed: %s', self.name, e, exc_info=True)
             raise
 
     def _run_import(self, scan_input: 'data_model.ScheduledScan') -> bool:
@@ -195,7 +201,7 @@ class ToolSpec(data_model.RevergeTool, ABC):
             pre_import_arr = _load_pre_import_arr(output_path)
             if pre_import_arr is not None:
                 logger.info(
-                    "%s: pre-import cache found — retrying POST without re-parsing",
+                    '%s: pre-import cache found — retrying POST without re-parsing',
                     self.name,
                 )
                 _post_pre_import(scan_input, pre_import_arr, output_path)
@@ -204,7 +210,7 @@ class ToolSpec(data_model.RevergeTool, ABC):
                 _import_results(scan_input, ret_arr, output_path)
             return True
         except Exception as e:
-            logger.error("%s import failed: %s", self.name, e, exc_info=True)
+            logger.error('%s import failed: %s', self.name, e, exc_info=True)
             raise
 
     # -----------------------------------------------------------------------

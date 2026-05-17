@@ -32,17 +32,18 @@ Records may also implement an optional ``_pre_index(store)`` classmethod
 hook for one-off logic that doesn't fit the declarative model (e.g.
 preserving credentials across Host updates).
 """
+
 from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 # Index mode constants
-MAP: str = "map"
-MAP_ID: str = "map_id"
-LIST: str = "list"
-LIST_ID: str = "list_id"
-LIST_VALUE: str = "list_value"
-SET: str = "set"
+MAP: str = 'map'
+MAP_ID: str = 'map_id'
+LIST: str = 'list'
+LIST_ID: str = 'list_id'
+LIST_VALUE: str = 'list_value'
+SET: str = 'set'
 
 # Type alias for an index declaration tuple
 IndexEntry = Tuple[str, Callable, str]
@@ -81,6 +82,12 @@ class RecordStore:
         self.port_map: Dict[str, Any] = {}
         self.port_host_map: Dict[str, Set[str]] = {}
         self.host_id_port_map: Dict[str, List[Any]] = {}
+
+        # ── application protocols (post-CPE-refactor: service name like
+        # http/ssh/smb is now its own record type instead of being folded
+        # into Component) ────────────────────────────────────────────────────
+        self.application_protocol_map: Dict[str, Any] = {}
+        self.application_protocol_port_id_map: Dict[str, List[Any]] = {}
 
         # ── web components ───────────────────────────────────────────────────
         self.component_map: Dict[str, Any] = {}
@@ -141,8 +148,7 @@ class RecordStore:
             pre_index(self)
 
         # Process declarative indices
-        indices: List[IndexEntry] = getattr(
-            record_obj.__class__, '_indices', None)
+        indices: List[IndexEntry] = getattr(record_obj.__class__, '_indices', None)
         if indices:
             for store_attr, key_func, mode in indices:
                 key = key_func(record_obj)

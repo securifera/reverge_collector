@@ -1,39 +1,64 @@
 import base64
+import json
 import os
 import shutil
-from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
-from reverge_collector.data_model import ScheduledScan, ScanData
 from types import SimpleNamespace
 from unittest.mock import patch
+
+from reverge_collector.data_model import ScanData, ScheduledScan
+from reverge_collector.recon_manager import ReconManager, ScheduledScanThread
 from reverge_collector.scan_utils import get_port_byte_array
-import json
 
 
 def test_subfinder_scan_success(recon_manager):
 
     scan_id = 'f35c684c61da412c8aaf7d386540f662'
     scheduled_scan_id = 'f35c684c61da412c8aaf7d386540f663'
-    tool_inst = {'id': 'a9866b94f7104754bd161c1ab7cbf0cd', 'collection_tool': {'wordlists': [], 'name': 'subfinder', 'args':
-                                                                               '', 'tool_type': 1, 'scan_order': 1, 'api_key': '', 'id': 'f35c684c61da412c8aaf7d386540f662'}, 'args_override': None,
-                 'enabled': 1, 'status': 0, 'status_message': None, 'collection_tool_id': 'f35c684c61da412c8aaf7d386540f662',
-                 'scheduled_scan_id': 'f00e34cffce546edb2701096fc66da65', 'owner_id': '94cb514e85da4abea6ee227730328619'}
+    tool_inst = {
+        'id': 'a9866b94f7104754bd161c1ab7cbf0cd',
+        'collection_tool': {
+            'wordlists': [],
+            'name': 'subfinder',
+            'args': '',
+            'tool_type': 1,
+            'scan_order': 1,
+            'api_key': '',
+            'id': 'f35c684c61da412c8aaf7d386540f662',
+        },
+        'args_override': None,
+        'enabled': 1,
+        'status': 0,
+        'status_message': None,
+        'collection_tool_id': 'f35c684c61da412c8aaf7d386540f662',
+        'scheduled_scan_id': 'f00e34cffce546edb2701096fc66da65',
+        'owner_id': '94cb514e85da4abea6ee227730328619',
+    }
 
     scheduler_inst_object = {
-        "id": scheduled_scan_id,
-        "scan_id": scan_id,
-        "target_id": 1234,
-        'collection_tools': [tool_inst], }
+        'id': scheduled_scan_id,
+        'scan_id': scan_id,
+        'target_id': 1234,
+        'collection_tools': [tool_inst],
+    }
 
     data = json.dumps(scheduler_inst_object)
-    sched_scan_arr = json.loads(
-        data, object_hook=lambda d: SimpleNamespace(**d))
+    sched_scan_arr = json.loads(data, object_hook=lambda d: SimpleNamespace(**d))
 
-    port_list = "80"
+    port_list = '80'
     target_domain = 'securifera.com'
     port_bytes = get_port_byte_array(port_list)
     b64_ports = base64.b64encode(port_bytes).decode()
-    scope = {'b64_port_bitmap': b64_ports,
-             'obj_list': [{'type': 'domain', 'id': 'fadf99076dcf42e6a21549d074560b42', 'data': {'name': target_domain}, 'tags': [3]}]}
+    scope = {
+        'b64_port_bitmap': b64_ports,
+        'obj_list': [
+            {
+                'type': 'domain',
+                'id': 'fadf99076dcf42e6a21549d074560b42',
+                'data': {'name': target_domain},
+                'tags': [3],
+            }
+        ],
+    }
 
     scan_data = {
         'scan_id': scan_id,
@@ -42,7 +67,6 @@ def test_subfinder_scan_success(recon_manager):
 
     scan_thread = ScheduledScanThread(recon_manager, None)
     with patch.object(ReconManager, 'get_scheduled_scan', return_value=scan_data):
-
         scheduled_scan_obj = ScheduledScan(scan_thread, sched_scan_arr)
 
         first_key = next(iter(scheduled_scan_obj.collection_tool_map))
@@ -55,13 +79,14 @@ def test_subfinder_scan_success(recon_manager):
 
         result = recon_manager.scan_func(scheduled_scan_obj)
         assert result == True
-        output_dir = "/tmp/%s" % scheduled_scan_id
+        output_dir = '/tmp/%s' % scheduled_scan_id
         assert os.path.exists(output_dir) == True
-        input_conf = "%s/subfinder-inputs/dns_urls_%s" % (
-            output_dir, scheduled_scan_id)
+        input_conf = '%s/subfinder-inputs/dns_urls_%s' % (output_dir, scheduled_scan_id)
         assert os.path.exists(input_conf) == True
-        output_file = "%s/subfinder-outputs/subfinder_outputs_%s.json" % (
-            output_dir, scheduled_scan_id)
+        output_file = '%s/subfinder-outputs/subfinder_outputs_%s.json' % (
+            output_dir,
+            scheduled_scan_id,
+        )
         assert os.path.exists(output_file) == True
 
         with open(input_conf, 'r') as f:
@@ -78,38 +103,61 @@ def test_subfinder_import_success(recon_manager):
 
     scan_id = 'f35c684c61da412c8aaf7d386540f662'
     scheduled_scan_id = 'f35c684c61da412c8aaf7d386540f663'
-    tool_inst = {'id': 'a9866b94f7104754bd161c1ab7cbf0cd', 'collection_tool': {'wordlists': [], 'name': 'subfinder', 'args':
-                                                                               '', 'tool_type': 1, 'scan_order': 1, 'api_key': '', 'id': 'f35c684c61da412c8aaf7d386540f662'}, 'args_override': None,
-                 'enabled': 1, 'status': 0, 'status_message': None, 'collection_tool_id': 'f35c684c61da412c8aaf7d386540f662',
-                 'scheduled_scan_id': 'f00e34cffce546edb2701096fc66da65', 'owner_id': '94cb514e85da4abea6ee227730328619'}
+    tool_inst = {
+        'id': 'a9866b94f7104754bd161c1ab7cbf0cd',
+        'collection_tool': {
+            'wordlists': [],
+            'name': 'subfinder',
+            'args': '',
+            'tool_type': 1,
+            'scan_order': 1,
+            'api_key': '',
+            'id': 'f35c684c61da412c8aaf7d386540f662',
+        },
+        'args_override': None,
+        'enabled': 1,
+        'status': 0,
+        'status_message': None,
+        'collection_tool_id': 'f35c684c61da412c8aaf7d386540f662',
+        'scheduled_scan_id': 'f00e34cffce546edb2701096fc66da65',
+        'owner_id': '94cb514e85da4abea6ee227730328619',
+    }
 
     scheduler_inst_object = {
-        "id": scheduled_scan_id,
-        "scan_id": scan_id,
-        "target_id": 1234,
-        'collection_tools': [tool_inst], }
+        'id': scheduled_scan_id,
+        'scan_id': scan_id,
+        'target_id': 1234,
+        'collection_tools': [tool_inst],
+    }
 
     data = json.dumps(scheduler_inst_object)
-    sched_scan_arr = json.loads(
-        data, object_hook=lambda d: SimpleNamespace(**d))
+    sched_scan_arr = json.loads(data, object_hook=lambda d: SimpleNamespace(**d))
 
-    port_list = "80"
+    port_list = '80'
     target_domain = 'securifera.com'
     port_bytes = get_port_byte_array(port_list)
     b64_ports = base64.b64encode(port_bytes).decode()
-    scope = {'b64_port_bitmap': b64_ports,
-             'obj_list': [{'type': 'domain', 'id': 'fadf99076dcf42e6a21549d074560b42', 'data': {'name': target_domain}, 'tags': [3]}]}
+    scope = {
+        'b64_port_bitmap': b64_ports,
+        'obj_list': [
+            {
+                'type': 'domain',
+                'id': 'fadf99076dcf42e6a21549d074560b42',
+                'data': {'name': target_domain},
+                'tags': [3],
+            }
+        ],
+    }
 
     scan_data = {
         'scan_id': scan_id,
         'scope': scope,
     }
 
-    output_dir = "/tmp/%s" % scheduled_scan_id
+    output_dir = '/tmp/%s' % scheduled_scan_id
     try:
         scan_thread = ScheduledScanThread(recon_manager, None)
         with patch.object(ReconManager, 'get_scheduled_scan', return_value=scan_data):
-
             scheduled_scan_obj = ScheduledScan(scan_thread, sched_scan_arr)
             first_key = next(iter(scheduled_scan_obj.collection_tool_map))
             first_tool = scheduled_scan_obj.collection_tool_map[first_key]
@@ -122,8 +170,7 @@ def test_subfinder_import_success(recon_manager):
             with patch.object(ReconManager, 'import_data', return_value={}):
                 result = recon_manager.import_func(scheduled_scan_obj)
                 assert result == True
-                output_json = "%s/subfinder-outputs/tool_import_json" % (
-                    output_dir)
+                output_json = '%s/subfinder-outputs/tool_import_json' % (output_dir)
                 assert os.path.exists(output_json) == True
 
                 import_arr = []
@@ -147,8 +194,7 @@ def test_subfinder_import_success(recon_manager):
 
                     # Get domain map
                     domain_map = scan_data.domain_map
-                    domain_list = [
-                        domain.name for domain in domain_map.values()]
+                    domain_list = [domain.name for domain in domain_map.values()]
                     assert target_domain in domain_list
 
     finally:

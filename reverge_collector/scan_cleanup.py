@@ -28,21 +28,17 @@ def scan_cleanup_func(scan_id: str) -> bool:
         return True
 
     try:
-        archive_dir = os.path.join(cwd, "archive")
+        archive_dir = os.path.join(cwd, 'archive')
         if not os.path.isdir(archive_dir):
             os.makedirs(archive_dir)
             os.chmod(archive_dir, 0o777)
 
-        date_str = datetime.now().strftime("%Y%m%d%H%M%S")
-        archive_prefix = os.path.join(archive_dir, f"{scan_id}_{date_str}")
-        shutil.make_archive(archive_prefix, "zip", dir_path)
+        date_str = datetime.now().strftime('%Y%m%d%H%M%S')
+        archive_prefix = os.path.join(archive_dir, f'{scan_id}_{date_str}')
+        shutil.make_archive(archive_prefix, 'zip', dir_path)
         shutil.rmtree(dir_path)
         return True
     except Exception as exc:
-        logging.getLogger(__name__).error(
-            "[-] Error during scan cleanup process: %s", str(exc)
-        )
-        logging.getLogger(__name__).error(
-            "[-] Traceback: %s", traceback.format_exc()
-        )
+        logging.getLogger(__name__).error('[-] Error during scan cleanup process: %s', str(exc))
+        logging.getLogger(__name__).error('[-] Traceback: %s', traceback.format_exc())
         return False
