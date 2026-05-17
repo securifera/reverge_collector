@@ -173,9 +173,18 @@ def execute_scan(scan_input) -> None:
 
         if subnet_map:
             for subnet_obj in subnet_map.values():
-                subnet_str = '%s/%s' % (subnet_obj.subnet, subnet_obj.mask)
+                # The "subnet" field can hold either a real IP/CIDR or a
+                # bare hostname (callers use a /32 mask in the latter case
+                # as a single-host marker). naabu rejects "hostname/32" as
+                # a malformed CIDR — only emit /mask when the subnet is an
+                # actual IP address.
+                try:
+                    netaddr.IPAddress(subnet_obj.subnet)
+                    target = '%s/%s' % (subnet_obj.subnet, subnet_obj.mask)
+                except (netaddr.AddrFormatError, ValueError):
+                    target = subnet_obj.subnet
                 naabu_scan_list.append({
-                    'ip_set': [subnet_str],
+                    'ip_set': [target],
                     'tool_args': naabu_scan_args,
                     'port_list': list(set(port_num_list)),
                 })
