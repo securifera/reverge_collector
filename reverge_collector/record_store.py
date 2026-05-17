@@ -82,6 +82,12 @@ class RecordStore:
         self.port_host_map: Dict[str, Set[str]] = {}
         self.host_id_port_map: Dict[str, List[Any]] = {}
 
+        # ── application protocols (post-CPE-refactor: service name like
+        # http/ssh/smb is now its own record type instead of being folded
+        # into Component) ────────────────────────────────────────────────────
+        self.application_protocol_map: Dict[str, Any] = {}
+        self.application_protocol_port_id_map: Dict[str, List[Any]] = {}
+
         # ── web components ───────────────────────────────────────────────────
         self.component_map: Dict[str, Any] = {}
         self.component_port_id_map: Dict[str, List[Any]] = {}

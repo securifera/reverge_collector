@@ -188,25 +188,30 @@ install_packages libssl-dev libpcap-dev masscan autoconf build-essential
 cd /tmp; gh_release_json securifera/nmap | jq -r ".assets[] | select(.name | contains(\"$arch\")) | .browser_download_url" | sudo wget --no-check-certificate -i - ; sudo tar --preserve-permissions -xzf nmap*.tar.gz -C / ; sudo rm nmap*.tar.gz
 verify_binary nmap /usr/local/bin/nmap
 
-# Install naabu — pinned to v2.6.1, the last release that still implements
-# -sD/-sV service discovery natively. Newer releases leave the flags in the
-# CLI but emit "service discovery feature is not implemented" at runtime
-# (projectdiscovery moved that capability behind their cloud platform).
-# naabu_scan.py defaults to '-sD -sV', so unpinned latest breaks every scan.
-# Since the version is pinned, fetch the asset by direct URL — no API call,
-# no rate-limit risk, no token needed.
-NAABU_VERSION="2.6.1"
-naabu_zip="naabu_${NAABU_VERSION}_${arch}.zip"
-cd /tmp; sudo wget --no-check-certificate "https://github.com/projectdiscovery/naabu/releases/download/v${NAABU_VERSION}/${naabu_zip}"; sudo unzip -o "${naabu_zip}"; sudo mv naabu /usr/local/bin/; sudo rm "${naabu_zip}"
-sudo chmod +x /usr/local/bin/naabu
-verify_binary naabu /usr/local/bin/naabu
-
-# Install Go (required to build nuclei and httpx from source)
+# Install Go (required to build naabu / nuclei / httpx from source).
 if ! command -v go &>/dev/null; then
     GO_VERSION=$(curl -s https://go.dev/VERSION?m=text | head -1)
     cd /tmp; wget -q "https://go.dev/dl/${GO_VERSION}.linux-amd64.tar.gz"; sudo tar -C /usr/local -xzf "${GO_VERSION}.linux-amd64.tar.gz"; rm "${GO_VERSION}.linux-amd64.tar.gz"
     export PATH=$PATH:/usr/local/go/bin
 fi
+
+# Install naabu — built from the securifera fork's source.
+# Background: projectdiscovery's published release binaries (every tag we
+# tested, v2.3.x through v2.6.1) fatal-exit with "service discovery feature
+# is not implemented" when -sD/-sV is used. The OSS *source* actually has
+# working native fingerprinting (added by PR #1667, merged Mar 2026) — but
+# their release pipeline apparently rebuilds against a private branch that
+# re-applies the stub. The only reliable way to get a working binary is to
+# build it ourselves from source. We pull from the securifera fork so we
+# control the artifact surface.
+cd /tmp
+sudo rm -rf /tmp/naabu-src /tmp/naabu-bin
+git clone -c http.sslVerify=false --depth 1 https://github.com/securifera/naabu.git /tmp/naabu-src
+cd /tmp/naabu-src
+go build -buildvcs=false -o /tmp/naabu-bin ./cmd/naabu
+sudo install -m 0755 /tmp/naabu-bin /usr/local/bin/naabu
+cd /tmp; sudo rm -rf /tmp/naabu-src /tmp/naabu-bin
+verify_binary naabu /usr/local/bin/naabu
 
 # Install nuclei (built from securifera fork). Clone into a distinct source
 # directory so `go build -o /tmp/nuclei-bin` doesn't collide with the clone

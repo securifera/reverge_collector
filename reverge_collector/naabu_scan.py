@@ -391,13 +391,21 @@ def parse_naabu_output(
             if product and product != 'unknown' and product != service_name:
                 comp = data_model.Cpe(parent_id=port_id)
                 comp.collection_tool_instance_id = tool_instance_id
-                comp.product = product
                 comp.part = 'a'
-                if version:
-                    comp.version = version.lower()
-                # Honor an explicit CPE 2.3 string from naabu (overrides product split)
+                # When naabu supplies a CPE 2.2 string, trust its vendor and
+                # version (CPE versions are normalised, e.g. "9.6p1", while
+                # naabu's raw version often carries OS/distro fluff like
+                # "9.6p1 Ubuntu 3ubuntu13.16"). Only overlay the product —
+                # naabu's human-readable name ("apache httpd") is more
+                # useful for downstream identification than the CPE token
+                # ("http_server").
                 if cpes_raw:
                     comp.cpe = _cpe22_to_cpe23(cpes_raw[0])
+                    comp.product = product
+                else:
+                    comp.product = product
+                    if version:
+                        comp.version = version.lower()
                 ret_arr.append(comp)
 
     return ret_arr
