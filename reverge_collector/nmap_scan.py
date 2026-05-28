@@ -59,6 +59,7 @@ class Nmap(ToolSpec):
         data_model.ServerRecordType.LIST_ITEM,
         data_model.ServerRecordType.PORT,
         data_model.ServerRecordType.HOST,
+        data_model.ServerRecordType.APPLICATION_PROTOCOL,
     ]
 
     def __init__(self):

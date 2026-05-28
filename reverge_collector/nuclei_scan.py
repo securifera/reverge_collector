@@ -53,6 +53,8 @@ class Nuclei(ToolSpec):
         data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
         data_model.ServerRecordType.WEB_COMPONENT,
         data_model.ServerRecordType.VULNERABILITY,
+        data_model.ServerRecordType.HOST,
+        data_model.ServerRecordType.PORT,
     ]
 
     def __init__(self):
