@@ -72,6 +72,7 @@ class Shodan(ToolSpec):
         data_model.ServerRecordType.WEB_COMPONENT,
         data_model.ServerRecordType.PORT,
         data_model.ServerRecordType.HOST,
+        data_model.ServerRecordType.APPLICATION_PROTOCOL,
     ]
 
     def get_output_path(self, scan_input) -> str:
@@ -501,6 +502,13 @@ def parse_shodan_output(
 
                     ret_arr.append(host_obj)
 
+                    os_str = service.get('os')
+                    if os_str:
+                        os_obj = data_model.OperatingSystem(parent_id=host_id)
+                        os_obj.collection_tool_instance_id = tool_instance_id
+                        os_obj.name = os_str
+                        ret_arr.append(os_obj)
+
                 port = service['port']
                 port_obj = data_model.Port(parent_id=host_id)
                 port_obj.collection_tool_instance_id = tool_instance_id
@@ -509,6 +517,36 @@ def parse_shodan_output(
                 port_id = port_obj.id
 
                 ret_arr.append(port_obj)
+
+                # https is the http protocol over TLS; record both as 'http'
+                # so the protocol name matches httpx_scan's ApplicationProtocol.
+                module = service.get('_shodan', {}).get('module')
+                if module:
+                    proto_obj = data_model.ApplicationProtocol(parent_id=port_id)
+                    proto_obj.collection_tool_instance_id = tool_instance_id
+                    proto_obj.name = 'http' if module == 'https' else module
+                    ret_arr.append(proto_obj)
+
+                # cpe23 carries vendor + version that http.components lacks;
+                # fall back to the older 'cpe' list when cpe23 is absent.
+                cpe_strings = service.get('cpe23') or service.get('cpe') or []
+                for cpe_str in cpe_strings:
+                    if not isinstance(cpe_str, str):
+                        continue
+                    # data_model.Cpe.cpe setter only accepts cpe:2.3 — upgrade
+                    # the legacy 'cpe:/a:...' form to cpe:2.3 before assignment.
+                    parsed = cpe_str.strip()
+                    if parsed.lower().startswith('cpe:/'):
+                        parsed = 'cpe:2.3:' + parsed[len('cpe:/') :]
+                    # Shodan often emits truncated cpe:2.3 strings (no trailing
+                    # ':*' for version onward); pad to satisfy the setter.
+                    if parsed.lower().startswith('cpe:2.3:') and parsed.count(':') < 12:
+                        parsed = parsed + ':*' * (12 - parsed.count(':'))
+                    comp = data_model.Cpe(parent_id=port_id)
+                    comp.collection_tool_instance_id = tool_instance_id
+                    comp.cpe = parsed
+                    if comp.product:
+                        ret_arr.append(comp)
 
                 if 'ssl' in service:
                     port_obj.secure = True
@@ -567,6 +605,14 @@ def parse_shodan_output(
                                     if server_version:
                                         comp.version = server_version
                                     ret_arr.append(comp)
+
+                    waf = http_dict.get('waf')
+                    if waf:
+                        comp = data_model.Cpe(parent_id=port_id)
+                        comp.collection_tool_instance_id = tool_instance_id
+                        comp.product = str(waf).lower()
+                        comp.part = 'a'
+                        ret_arr.append(comp)
 
                     if 'favicon' in http_dict:
                         favicon_dict = http_dict['favicon']
