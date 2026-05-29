@@ -51,6 +51,7 @@ class Naabu(ToolSpec):
         data_model.ServerRecordType.PORT,
         data_model.ServerRecordType.WEB_COMPONENT,
         data_model.ServerRecordType.DOMAIN,
+        data_model.ServerRecordType.APPLICATION_PROTOCOL,
     ]
 
     def get_output_path(self, scan_input) -> str:

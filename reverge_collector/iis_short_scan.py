@@ -25,6 +25,8 @@ class IISShortnameScanner(ToolSpec):
     output_records = [
         data_model.ServerRecordType.COLLECTION_MODULE,
         data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
+        data_model.ServerRecordType.HOST,
+        data_model.ServerRecordType.PORT,
     ]
 
     def execute_scan(self, scan_input: data_model.ScheduledScan) -> None:

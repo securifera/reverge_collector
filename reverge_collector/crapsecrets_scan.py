@@ -86,7 +86,11 @@ class Crapsecrets(ToolSpec):
         data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
         data_model.ServerRecordType.SUBNET,
     ]
-    output_records = [data_model.ServerRecordType.VULNERABILITY]
+    output_records = [
+        data_model.ServerRecordType.VULNERABILITY,
+        data_model.ServerRecordType.COLLECTION_MODULE,
+        data_model.ServerRecordType.COLLECTION_MODULE_OUTPUT,
+    ]
 
     def get_output_path(self, scan_input) -> str:
         return get_output_path(scan_input)

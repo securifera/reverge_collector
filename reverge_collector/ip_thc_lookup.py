@@ -70,7 +70,10 @@ class IPThc(ToolSpec):
         data_model.ServerRecordType.SUBNET,
         data_model.ServerRecordType.DOMAIN,
     ]
-    output_records = [data_model.ServerRecordType.DOMAIN]
+    output_records = [
+        data_model.ServerRecordType.DOMAIN,
+        data_model.ServerRecordType.HOST,
+    ]
 
     def get_output_path(self, scan_input) -> str:
         return get_output_path(scan_input)
