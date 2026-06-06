@@ -14,6 +14,8 @@ import os
 import subprocess
 import tempfile
 
+import requests
+
 logger = logging.getLogger(__name__)
 
 # Cap on output returned to the server (64 KB).
@@ -26,9 +28,25 @@ _MAX_OUTPUT = 65536
 
 
 def execute_shell(args: dict) -> dict:
-    """Run a shell command and capture combined stdout+stderr."""
-    command = args.get('command', '')
+    """Run a shell command and capture combined stdout+stderr.
+
+    The command may be supplied as a raw string (``command``) or, to avoid
+    deep shell/JSON quote escaping, as base64 via ``command_b64``. When both
+    are present ``command_b64`` wins.
+    """
     timeout = args.get('timeout', 300)
+    command_b64 = args.get('command_b64')
+    if command_b64:
+        try:
+            command = base64.b64decode(command_b64, validate=True).decode('utf-8')
+        except Exception as e:
+            return {
+                'output_text': '[ERROR] invalid command_b64: %s' % e,
+                'exit_code': -1,
+                'output_type': 'text',
+            }
+    else:
+        command = args.get('command', '')
     try:
         proc = subprocess.run(
             command,
@@ -60,9 +78,25 @@ def execute_shell(args: dict) -> dict:
 
 
 def execute_python(args: dict) -> dict:
-    """Write a Python script to a temp file, execute it, return output."""
-    script = args.get('script', '')
+    """Write a Python script to a temp file, execute it, return output.
+
+    The script may be supplied as a raw string (``script``) or, to avoid
+    deep JSON/quote escaping, as base64 via ``script_b64``. When both are
+    present ``script_b64`` wins.
+    """
     timeout = args.get('timeout', 300)
+    script_b64 = args.get('script_b64')
+    if script_b64:
+        try:
+            script = base64.b64decode(script_b64, validate=True).decode('utf-8')
+        except Exception as e:
+            return {
+                'output_text': '[ERROR] invalid script_b64: %s' % e,
+                'exit_code': -1,
+                'output_type': 'text',
+            }
+    else:
+        script = args.get('script', '')
     fd, script_path = tempfile.mkstemp(suffix='.py')
     try:
         with os.fdopen(fd, 'w') as f:
@@ -182,6 +216,69 @@ def execute_directory_list(args: dict) -> dict:
         }
 
 
+def execute_http_request(args: dict) -> dict:
+    """Make a single HTTP request and return status, headers, and body.
+
+    Covers the common case where a test needs one HTTP call without the
+    boilerplate of a full Python script. A completed request returns
+    exit_code 0 regardless of HTTP status (a 404/500 is still a successful
+    round-trip); only transport-level failures (connection refused,
+    timeout, invalid URL) return exit_code -1.
+    """
+    url = args.get('url', '')
+    if not url:
+        return {
+            'output_text': '[ERROR] url is required',
+            'exit_code': -1,
+            'output_type': 'text',
+        }
+    method = str(args.get('method', 'GET')).upper()
+    headers = args.get('headers') or {}
+    body_b64 = args.get('body_b64')
+    if body_b64:
+        try:
+            body = base64.b64decode(body_b64, validate=True)
+        except Exception as e:
+            return {
+                'output_text': '[ERROR] invalid body_b64: %s' % e,
+                'exit_code': -1,
+                'output_type': 'text',
+            }
+    else:
+        body = args.get('body')
+    timeout = args.get('timeout', 30)
+    verify = args.get('verify', False)
+    try:
+        resp = requests.request(
+            method=method,
+            url=url,
+            headers=headers,
+            data=body,
+            timeout=timeout,
+            verify=verify,
+        )
+        header_lines = '\n'.join('%s: %s' % (k, v) for k, v in resp.headers.items())
+        output = 'HTTP %d %s\n%s\n\n%s' % (
+            resp.status_code,
+            resp.reason or '',
+            header_lines,
+            resp.text,
+        )
+        if len(output) > _MAX_OUTPUT:
+            output = output[:_MAX_OUTPUT] + '\n[output truncated]'
+        return {
+            'output_text': output,
+            'exit_code': 0,
+            'output_type': 'text',
+        }
+    except Exception as e:
+        return {
+            'output_text': '[ERROR] %s' % e,
+            'exit_code': -1,
+            'output_type': 'text',
+        }
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -192,6 +289,7 @@ HANDLERS = {
     'file_upload': execute_file_upload,
     'file_download': execute_file_download,
     'directory_list': execute_directory_list,
+    'http_request': execute_http_request,
 }
 
 
