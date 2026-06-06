@@ -72,7 +72,7 @@ class Feroxbuster(ToolSpec):
     collector_type = data_model.CollectorType.ACTIVE.value
     scan_order = 10
     max_targets = 10
-    args = '--rate-limit 50 -s 200 -n --auto-bail --parallel 10 --scan-limit 10'
+    args = '--rate-limit 50 -s 200 -n -k --auto-bail --parallel 10 --scan-limit 10'
     input_records = [
         data_model.ServerRecordType.PORT,
         data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
@@ -172,7 +172,6 @@ def execute_scan(scan_input: Any) -> None:
                 'feroxbuster',
                 '--stdin',
                 '--json',
-                '-k',  # Disable cert validation
                 '-A',  # Random User Agent
                 '-o',
                 ferox_scan_output_file_path,
