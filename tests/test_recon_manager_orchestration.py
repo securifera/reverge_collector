@@ -536,3 +536,128 @@ class TestProcessScanObj:
             t.process_scan_obj(scan)
         # Always popped at the end
         assert scan.id not in t.scheduled_scan_map
+
+    def test_reachable_scan_skips_connection_lock_and_extender(self):
+        cm = MagicMock()
+        cm.is_server_reachable.return_value = True
+        t = make_thread(connection_manager=cm)
+        scan = self._scan()
+        t.scheduled_scan_map[scan.id] = scan
+        with patch.object(t, 'execute_scan_jobs', return_value=None):
+            t.process_scan_obj(scan)
+        cm.get_connection_lock.assert_not_called()
+        cm.free_connection_lock.assert_not_called()
+        cm.connect_to_extender.assert_not_called()
+        # Still reports COMPLETED and cleans up
+        scan.update_scan_status.assert_called_once_with(data_model.ScanStatus.COMPLETED.value)
+        assert scan.id not in t.scheduled_scan_map
+
+
+# ===========================================================================
+# Server-reachability gate (_server_reachable / _active_connection_manager)
+# ===========================================================================
+
+
+class TestServerReachabilityGate:
+    def test_no_connection_manager_is_not_reachable(self):
+        t = make_thread()
+        assert t._server_reachable() is False
+        assert t._active_connection_manager() is None
+
+    def test_connection_manager_without_probe_is_not_reachable(self):
+        # A connection manager that doesn't expose is_server_reachable falls
+        # back to the safe, serial default.
+        cm = SimpleNamespace()
+        t = make_thread(connection_manager=cm)
+        assert t._server_reachable() is False
+        assert t._active_connection_manager() is cm
+
+    def test_probe_true_marks_reachable_and_bypasses_manager(self):
+        cm = MagicMock()
+        cm.is_server_reachable.return_value = True
+        t = make_thread(connection_manager=cm)
+        assert t._server_reachable() is True
+        # Reachable => the connection dance is bypassed entirely.
+        assert t._active_connection_manager() is None
+
+    def test_probe_false_uses_serial_manager(self):
+        cm = MagicMock()
+        cm.is_server_reachable.return_value = False
+        t = make_thread(connection_manager=cm)
+        assert t._server_reachable() is False
+        assert t._active_connection_manager() is cm
+
+    def test_probe_exception_is_not_reachable(self):
+        cm = MagicMock()
+        cm.is_server_reachable.side_effect = RuntimeError('probe blew up')
+        t = make_thread(connection_manager=cm)
+        assert t._server_reachable() is False
+        assert t._active_connection_manager() is cm
+
+    def test_non_true_truthy_probe_is_not_reachable(self):
+        # Guards against truthy-but-not-True returns (e.g. a bare MagicMock):
+        # only a literal True flips into reachable mode.
+        cm = MagicMock()
+        cm.is_server_reachable.return_value = 1
+        t = make_thread(connection_manager=cm)
+        assert t._server_reachable() is False
+
+
+class TestJobReachableModeBypassesLock:
+    def test_reachable_job_skips_connection_dance_but_still_reports(self):
+        cm = MagicMock()
+        cm.is_server_reachable.return_value = True
+        t = make_thread(connection_manager=cm)
+        job = make_job()
+        t.scheduled_scan_map[job.id] = job
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ):
+            t._process_job_with_slot(job)
+        # No mutex, no network switching — runs in parallel.
+        cm.get_connection_lock.assert_not_called()
+        cm.free_connection_lock.assert_not_called()
+        cm.connect_to_extender.assert_not_called()
+        cm.connect_to_target.assert_not_called()
+        # Result still reported and map cleaned up.
+        calls = t.recon_manager.update_job_status.call_args_list
+        assert any(c.args[1] == data_model.ScanStatus.COMPLETED.value for c in calls)
+        assert job.id not in t.scheduled_scan_map
+
+    def test_unreachable_job_uses_serial_connection_dance(self):
+        cm = MagicMock()
+        cm.is_server_reachable.return_value = False
+        cm.connect_to_extender.return_value = True
+        cm.connect_to_target.return_value = True
+        t = make_thread(connection_manager=cm)
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ):
+            t._process_job_with_slot(make_job())
+        cm.get_connection_lock.assert_called()
+        cm.free_connection_lock.assert_called()
+        cm.connect_to_extender.assert_called()
+        cm.connect_to_target.assert_called()
+
+
+class TestScanReachableModeBypassesLock:
+    def test_reachable_scan_skips_extender_and_target(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cm = MagicMock()
+        cm.is_server_reachable.return_value = True
+        # These would force an error if the code actually called them.
+        cm.connect_to_extender.return_value = False
+        cm.connect_to_target.return_value = False
+        t = make_thread(connection_manager=cm)
+        ct = make_collection_tool(tool_type=2)  # active scanner
+        scan = make_scheduled_scan(collection_tool_map={'a': ct})
+        t.recon_manager.get_scan_status.return_value = _scan_status()
+        t.recon_manager.scan_func.return_value = True
+        t.recon_manager.import_func.return_value = True
+        out = t.execute_scan_jobs(scan)
+        # Not blocked by the (uncalled) extender/target failures.
+        assert out is None
+        cm.connect_to_extender.assert_not_called()
+        cm.connect_to_target.assert_not_called()

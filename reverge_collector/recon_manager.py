@@ -264,6 +264,44 @@ class ScheduledScanThread(threading.Thread):
         # Maps job_id -> {"status": int, "result": dict|None, "err_msg": str|None}
         self.pending_job_completions: Dict[str, dict] = {}
 
+    def _server_reachable(self) -> bool:
+        """Whether the reverge server is reachable directly from the current network.
+
+        In the Synack environment the collector normally has to switch the
+        launchpoint back to the extender (tearing down the target connection)
+        every time it needs to talk to the server, which forces jobs and scans
+        to run one at a time behind the connection lock. When the active target
+        VPN can still reach the internet — and therefore the reverge server —
+        that round-trip is unnecessary, so same-target work can run in parallel.
+
+        Delegates to ``connection_manager.is_server_reachable()`` when present.
+        Returns ``False`` — the safe, serial default — when there is no
+        connection manager, it exposes no such probe, the probe raises, or the
+        probe returns anything other than the literal ``True`` (guards against
+        truthy-but-not-True values such as a bare mock).
+        """
+        cm = self.connection_manager
+        if cm is None:
+            return False
+        probe = getattr(cm, 'is_server_reachable', None)
+        if not callable(probe):
+            return False
+        try:
+            return probe() is True
+        except Exception:
+            return False
+
+    def _active_connection_manager(self) -> Optional[Any]:
+        """The connection manager to drive for this unit of work, or None.
+
+        Returns ``None`` when the server is reachable directly (so callers skip
+        the connection lock and extender/target switching and run in parallel),
+        otherwise the real connection manager for the serial connect dance.
+        """
+        if self._server_reachable():
+            return None
+        return self.connection_manager
+
     def _process_scan_obj_with_slot(self, scheduled_scan_obj: data_model.ScheduledScan) -> None:
         """Run scan processing in a dedicated thread."""
         self.process_scan_obj(scheduled_scan_obj)
@@ -305,12 +343,15 @@ class ScheduledScanThread(threading.Thread):
         # by the inner status-post except handlers; checked by the outer
         # finally to skip the otherwise-unconditional pop.
         job_queued_for_retry = False
+        # None when the server is reachable directly — skips the lock and the
+        # extender/target switching so same-target jobs run in parallel.
+        cm = self._active_connection_manager()
         try:
-            if self.connection_manager:
-                self.connection_manager.get_connection_lock()
+            if cm:
+                cm.get_connection_lock()
 
             # connect_to_extender before any server communication
-            if self.connection_manager and self.connection_manager.connect_to_extender() == False:
+            if cm and cm.connect_to_extender() == False:
                 raise RuntimeError('Failed connecting to extender')
 
             # Configure connection target for this scan
@@ -330,10 +371,7 @@ class ScheduledScanThread(threading.Thread):
 
             try:
                 # connect_to_target before executing the job
-                if (
-                    self.connection_manager
-                    and self.connection_manager.connect_to_target(target_id) == False
-                ):
+                if cm and cm.connect_to_target(target_id) == False:
                     raise RuntimeError('Failed connecting to target %s' % job_item.target_id)
 
                 result = run_job(job_item.job_type, job_item.args)
@@ -341,8 +379,8 @@ class ScheduledScanThread(threading.Thread):
             finally:
                 # Always return to extender after target work, whether run_job
                 # succeeded or raised.
-                if self.connection_manager:
-                    self.connection_manager.connect_to_extender()
+                if cm:
+                    cm.connect_to_extender()
 
             # Post result + COMPLETED status
             try:
@@ -401,8 +439,8 @@ class ScheduledScanThread(threading.Thread):
                 job_queued_for_retry = True
                 return
         finally:
-            if self.connection_manager:
-                self.connection_manager.free_connection_lock()
+            if cm:
+                cm.free_connection_lock()
             if not job_queued_for_retry:
                 with self.scan_thread_lock:
                     self.scheduled_scan_map.pop(job_item.id, None)
@@ -474,13 +512,16 @@ class ScheduledScanThread(threading.Thread):
         err_msg = None
         # Configure connection target for this scan
         target_id = scheduled_scan_obj.target_id
+        # None when the server is reachable directly — skips extender/target
+        # switching so same-target scans run in parallel.
+        cm = self._active_connection_manager()
 
         # Sort tools by execution order for proper dependency handling
         collection_tools = scheduled_scan_obj.collection_tool_map.values()
         sorted_list = sorted(collection_tools, key=cmp_to_key(tool_order_cmp))
 
         # Establish connection to extender for scan status monitoring
-        if self.connection_manager and self.connection_manager.connect_to_extender() == False:
+        if cm and cm.connect_to_extender() == False:
             err_msg = 'Failed connecting to extender'
             logging.getLogger(__name__).error(err_msg)
             return err_msg
@@ -539,10 +580,7 @@ class ScheduledScanThread(threading.Thread):
                 try:
                     # Connect to target only for active scanning tools
                     if tool_obj.tool_type == 2:
-                        if (
-                            self.connection_manager
-                            and self.connection_manager.connect_to_target(target_id) == False
-                        ):
+                        if cm and cm.connect_to_target(target_id) == False:
                             err_msg = 'Failed connecting to target'
                             logging.getLogger(__name__).error(err_msg)
                             return err_msg
@@ -569,10 +607,7 @@ class ScheduledScanThread(threading.Thread):
                         err_msg = task_err if not err_msg else f'{err_msg}\n{task_err}'
 
                 finally:
-                    if (
-                        self.connection_manager
-                        and self.connection_manager.connect_to_extender() == False
-                    ):
+                    if cm and cm.connect_to_extender() == False:
                         err_msg = 'Failed connecting to extender'
                         logging.getLogger(__name__).error(err_msg)
                         return err_msg
@@ -715,14 +750,17 @@ class ScheduledScanThread(threading.Thread):
 
         # Default to error status for safety
         scan_status = data_model.ScanStatus.ERROR.value
+        # None when the server is reachable directly — skips the lock and the
+        # extender switching so same-target scans run in parallel.
+        cm = self._active_connection_manager()
         try:
-            if self.connection_manager:
-                self.connection_manager.get_connection_lock()
+            if cm:
+                cm.get_connection_lock()
 
             err_msg = self.execute_scan_jobs(scheduled_scan_obj)
 
             # Ensure connection to extender for status updates
-            if self.connection_manager and self.connection_manager.connect_to_extender() == False:
+            if cm and cm.connect_to_extender() == False:
                 logging.getLogger(__name__).error('Failed connecting to extender')
                 return False
 
@@ -752,8 +790,8 @@ class ScheduledScanThread(threading.Thread):
         finally:
             try:
                 # Always release connection lock
-                if self.connection_manager:
-                    self.connection_manager.connect_to_extender()
+                if cm:
+                    cm.connect_to_extender()
 
                 # Update final scan status on server
                 scheduled_scan_obj.update_scan_status(scan_status)
@@ -769,8 +807,8 @@ class ScheduledScanThread(threading.Thread):
             except Exception as e:
                 logging.getLogger(__name__).debug(traceback.format_exc())
             finally:
-                if self.connection_manager:
-                    self.connection_manager.free_connection_lock()
+                if cm:
+                    cm.free_connection_lock()
 
         # Always remove the scan from the map when processing is done.
         # If the server wants a retry, it will return the scan again in
