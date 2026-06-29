@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from unittest.mock import call as unittest_call
 
 import pytest
 from reverge_collector.recon_manager import ScheduledScanThread
@@ -161,7 +162,7 @@ def test_run_passes_none_to_collector_poll_when_no_log_queue():
 
 def test_run_creates_scheduled_scan_for_new_scan_id():
     t = make_thread()
-    new_scan_data = SimpleNamespace(id='scan-new', _type='scan')
+    new_scan_data = SimpleNamespace(id='scan-new', _type='scan', target_id='target-new')
     t.recon_manager.collector_poll.return_value = None
 
     # First call returns one new scan, second stops the loop
@@ -260,6 +261,7 @@ def test_run_kills_individual_cancelled_tools():
 
     t = make_thread()
     existing = MagicMock(id='scan-existing', scan_id='scan-existing')
+    existing.killed_tool_ids = set()
     t.scheduled_scan_map['scan-existing'] = existing
     t.recon_manager.collector_poll.return_value = None
 
@@ -285,6 +287,81 @@ def test_run_kills_individual_cancelled_tools():
     assert 'scan-existing' in t.scheduled_scan_map
 
 
+def test_run_kills_cancelled_tools_only_once_across_polls():
+    """The server keeps listing the same cancelled tool ids while the scan is
+    RUNNING. We must kill each tool once, not re-kill (and re-log) it every
+    poll iteration."""
+    from reverge_collector import data_model
+
+    t = make_thread()
+    existing = MagicMock(id='scan-existing', scan_id='scan-existing')
+    existing.killed_tool_ids = set()
+    t.scheduled_scan_map['scan-existing'] = existing
+    t.recon_manager.collector_poll.return_value = None
+
+    server_view = SimpleNamespace(id='scan-existing', _type='scan')
+    status_obj = SimpleNamespace(
+        scan_status=data_model.ScanStatus.RUNNING.value,
+        cancelled_tool_ids=['tool-a', 'tool-b'],
+    )
+    t.recon_manager.get_scan_status.return_value = status_obj
+    call = [0]
+
+    def get_scans(*args, **kwargs):
+        call[0] += 1
+        # Same cancelled ids returned on two consecutive polls.
+        if call[0] <= 2:
+            return [server_view]
+        t._is_running = False
+        return []
+
+    t.recon_manager.get_scheduled_scans.side_effect = get_scans
+    t.run()
+    # Killed exactly once despite the ids appearing on both polls.
+    existing.kill_scan_processes.assert_called_once_with(['tool-a', 'tool-b'])
+
+
+def test_run_kills_newly_cancelled_tools_on_later_poll():
+    """A tool cancelled in a later poll is still killed (only the already-killed
+    ones are skipped)."""
+    from reverge_collector import data_model
+
+    t = make_thread()
+    existing = MagicMock(id='scan-existing', scan_id='scan-existing')
+    existing.killed_tool_ids = set()
+    t.scheduled_scan_map['scan-existing'] = existing
+    t.recon_manager.collector_poll.return_value = None
+
+    server_view = SimpleNamespace(id='scan-existing', _type='scan')
+    statuses = [
+        SimpleNamespace(
+            scan_status=data_model.ScanStatus.RUNNING.value,
+            cancelled_tool_ids=['tool-a'],
+        ),
+        SimpleNamespace(
+            scan_status=data_model.ScanStatus.RUNNING.value,
+            cancelled_tool_ids=['tool-a', 'tool-b'],
+        ),
+    ]
+    t.recon_manager.get_scan_status.side_effect = statuses
+    call = [0]
+
+    def get_scans(*args, **kwargs):
+        call[0] += 1
+        if call[0] <= 2:
+            return [server_view]
+        t._is_running = False
+        return []
+
+    t.recon_manager.get_scheduled_scans.side_effect = get_scans
+    t.run()
+    # First poll kills tool-a; second poll kills only the newly-cancelled tool-b.
+    assert existing.kill_scan_processes.call_args_list == [
+        unittest_call(['tool-a']),
+        unittest_call(['tool-b']),
+    ]
+
+
 # ===========================================================================
 # Job dispatch (item_type='job')
 # ===========================================================================
@@ -292,7 +369,7 @@ def test_run_kills_individual_cancelled_tools():
 
 def test_run_dispatches_new_job_via_process_job_with_slot():
     t = make_thread()
-    new_job = SimpleNamespace(id='job-new', _type='job')
+    new_job = SimpleNamespace(id='job-new', _type='job', target_id='target-new')
     t.recon_manager.collector_poll.return_value = None
     call = [0]
 
@@ -311,6 +388,62 @@ def test_run_dispatches_new_job_via_process_job_with_slot():
     assert 'job-new' in t.scheduled_scan_map
     # Thread was created
     assert ThreadCls.called
+
+
+def test_run_defers_different_target_work_while_target_active():
+    # Two jobs on different targets in one poll: the first checks out its target
+    # (switcher); the second targets a different one and must be deferred so it
+    # doesn't switch the launchpoint out from under the first.
+    t = make_thread()
+    job_a = SimpleNamespace(id='job-a', _type='job', target_id='A')
+    job_b = SimpleNamespace(id='job-b', _type='job', target_id='B')
+    t.recon_manager.collector_poll.return_value = None
+    call = [0]
+
+    def get_scans(*args, **kwargs):
+        call[0] += 1
+        if call[0] == 1:
+            return [job_a, job_b]
+        t._is_running = False
+        return []
+
+    t.recon_manager.get_scheduled_scans.side_effect = get_scans
+    with patch('reverge_collector.recon_manager.Thread') as ThreadCls:
+        ThreadCls.return_value = MagicMock()
+        t.run()
+    # First admitted (switcher), second deferred (re-fetched next poll).
+    assert 'job-a' in t.scheduled_scan_map
+    assert 'job-b' not in t.scheduled_scan_map
+    assert ThreadCls.call_count == 1
+    # Dispatched as switcher.
+    assert ThreadCls.call_args.kwargs['target'].args[-1] == 'switch'
+
+
+def test_run_admits_same_target_peer():
+    # A new job for the already-active, reachable target is admitted as a
+    # concurrent peer.
+    t = make_thread()
+    t._active_target_id = 'A'
+    t._active_worker_count = 1
+    t._active_target_reachable = True
+    job = SimpleNamespace(id='job-peer', _type='job', target_id='A')
+    t.recon_manager.collector_poll.return_value = None
+    call = [0]
+
+    def get_scans(*args, **kwargs):
+        call[0] += 1
+        if call[0] == 1:
+            return [job]
+        t._is_running = False
+        return []
+
+    t.recon_manager.get_scheduled_scans.side_effect = get_scans
+    with patch('reverge_collector.recon_manager.Thread') as ThreadCls:
+        ThreadCls.return_value = MagicMock()
+        t.run()
+    assert 'job-peer' in t.scheduled_scan_map
+    assert ThreadCls.call_args.kwargs['target'].args[-1] == 'join'
+    assert t._active_worker_count == 2
 
 
 # ===========================================================================
@@ -357,14 +490,18 @@ def test_run_handles_generic_exception_without_exiting():
     assert call[0] >= 2
 
 
-def test_run_releases_connection_lock_in_finally():
+def test_run_does_not_hold_connection_lock():
+    # The poll loop no longer holds the connection lock — it only talks to the
+    # server and dispatches workers. Holding it would block behind a long-running
+    # switcher and stop same-target peers from ever being dispatched. The
+    # target-affinity gate coordinates launchpoint use instead.
     cm = MagicMock()
     t = make_thread(connection_manager=cm)
     t.recon_manager.get_scheduled_scans.side_effect = _stop_after_first_iter(t)
     t.recon_manager.collector_poll.return_value = None
     t.run()
-    cm.get_connection_lock.assert_called()
-    cm.free_connection_lock.assert_called()
+    cm.get_connection_lock.assert_not_called()
+    cm.free_connection_lock.assert_not_called()
 
 
 def test_run_handles_connection_error_with_connection_manager():

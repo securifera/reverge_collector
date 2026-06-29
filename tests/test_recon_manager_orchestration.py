@@ -33,7 +33,10 @@ def make_thread(*, connection_manager=None, recon_manager=None):
     real attribute setup."""
     rm = recon_manager if recon_manager is not None else MagicMock()
     cm = connection_manager  # may be None
-    return ScheduledScanThread(rm, connection_manager=cm)
+    t = ScheduledScanThread(rm, connection_manager=cm)
+    # Keep the reachability-confirm probe instant in tests (no real sleeps).
+    t._target_reachable_confirm_delay = 0
+    return t
 
 
 def make_job(job_id='job-1', target_id='target-1', job_type='shell', args=None):
@@ -537,7 +540,10 @@ class TestProcessScanObj:
         # Always popped at the end
         assert scan.id not in t.scheduled_scan_map
 
-    def test_reachable_scan_skips_connection_lock_and_extender(self):
+    def test_reachable_scan_takes_lock_but_skips_extender(self):
+        # When the server is reachable from the target, the scan still takes the
+        # connection lock and reports its status, but skips the costly switch
+        # back to the extender — it reports directly over the target tunnel.
         cm = MagicMock()
         cm.is_server_reachable.return_value = True
         t = make_thread(connection_manager=cm)
@@ -545,68 +551,209 @@ class TestProcessScanObj:
         t.scheduled_scan_map[scan.id] = scan
         with patch.object(t, 'execute_scan_jobs', return_value=None):
             t.process_scan_obj(scan)
-        cm.get_connection_lock.assert_not_called()
-        cm.free_connection_lock.assert_not_called()
+        cm.get_connection_lock.assert_called()
+        cm.free_connection_lock.assert_called()
         cm.connect_to_extender.assert_not_called()
         # Still reports COMPLETED and cleans up
         scan.update_scan_status.assert_called_once_with(data_model.ScanStatus.COMPLETED.value)
         assert scan.id not in t.scheduled_scan_map
 
-
-# ===========================================================================
-# Server-reachability gate (_server_reachable / _active_connection_manager)
-# ===========================================================================
-
-
-class TestServerReachabilityGate:
-    def test_no_connection_manager_is_not_reachable(self):
-        t = make_thread()
-        assert t._server_reachable() is False
-        assert t._active_connection_manager() is None
-
-    def test_connection_manager_without_probe_is_not_reachable(self):
-        # A connection manager that doesn't expose is_server_reachable falls
-        # back to the safe, serial default.
-        cm = SimpleNamespace()
+    def test_unreachable_scan_switches_back_to_extender(self):
+        # When the server is NOT reachable from the target, the scan switches
+        # the launchpoint back to the extender before reporting.
+        cm = MagicMock()
+        cm.is_server_reachable.return_value = False
+        cm.connect_to_extender.return_value = True
         t = make_thread(connection_manager=cm)
-        assert t._server_reachable() is False
-        assert t._active_connection_manager() is cm
+        scan = self._scan()
+        t.scheduled_scan_map[scan.id] = scan
+        with patch.object(t, 'execute_scan_jobs', return_value=None):
+            t.process_scan_obj(scan)
+        cm.get_connection_lock.assert_called()
+        cm.free_connection_lock.assert_called()
+        cm.connect_to_extender.assert_called()
+        scan.update_scan_status.assert_called_once_with(data_model.ScanStatus.COMPLETED.value)
+        assert scan.id not in t.scheduled_scan_map
 
-    def test_probe_true_marks_reachable_and_bypasses_manager(self):
+
+# ===========================================================================
+# Connection dance: always connect to target, skip extender when reachable
+# ===========================================================================
+
+
+class TestServerReachableHelpers:
+    """_server_reachable (safe probe) and _ensure_server_reachable (probe-or-switch)."""
+
+    def test_server_reachable_none_cm(self):
+        t = make_thread()
+        assert t._server_reachable(None) is False
+
+    def test_server_reachable_probe_missing(self):
+        t = make_thread()
+        assert t._server_reachable(SimpleNamespace()) is False
+
+    def test_server_reachable_probe_true(self):
         cm = MagicMock()
         cm.is_server_reachable.return_value = True
-        t = make_thread(connection_manager=cm)
-        assert t._server_reachable() is True
-        # Reachable => the connection dance is bypassed entirely.
-        assert t._active_connection_manager() is None
+        assert make_thread()._server_reachable(cm) is True
 
-    def test_probe_false_uses_serial_manager(self):
+    def test_server_reachable_non_true_truthy(self):
+        # Only a literal True counts (guards against a bare MagicMock return).
+        cm = MagicMock()
+        cm.is_server_reachable.return_value = 1
+        assert make_thread()._server_reachable(cm) is False
+
+    def test_server_reachable_probe_raises(self):
+        cm = MagicMock()
+        cm.is_server_reachable.side_effect = RuntimeError('boom')
+        assert make_thread()._server_reachable(cm) is False
+
+    def test_ensure_none_cm_is_true(self):
+        assert make_thread()._ensure_server_reachable(None) is True
+
+    def test_ensure_reachable_skips_extender(self):
+        cm = MagicMock()
+        cm.is_server_reachable.return_value = True
+        assert make_thread()._ensure_server_reachable(cm) is True
+        cm.connect_to_extender.assert_not_called()
+
+    def test_ensure_unreachable_switches_to_extender(self):
+        cm = MagicMock()
+        cm.is_server_reachable.return_value = False
+        cm.connect_to_extender.return_value = True
+        assert make_thread()._ensure_server_reachable(cm) is True
+        cm.connect_to_extender.assert_called_once()
+
+    def test_ensure_extender_failure_returns_false(self):
+        cm = MagicMock()
+        cm.is_server_reachable.return_value = False
+        cm.connect_to_extender.return_value = False
+        assert make_thread()._ensure_server_reachable(cm) is False
+
+    def test_ensure_unreachable_with_peers_does_not_switch(self):
+        # When concurrent same-target peers are in flight (count > 1) a worker
+        # that can't reach the server must NOT switch the launchpoint back to the
+        # extender — that would yank the network out from under the peers. It
+        # returns False so the caller queues the report for retry instead. The
+        # reachable gate stays open so peers keep being admitted.
         cm = MagicMock()
         cm.is_server_reachable.return_value = False
         t = make_thread(connection_manager=cm)
-        assert t._server_reachable() is False
-        assert t._active_connection_manager() is cm
+        t._active_target_id = 'T'
+        t._active_worker_count = 2  # a peer is also running
+        t._active_target_reachable = True
+        assert t._ensure_server_reachable(cm) is False
+        cm.connect_to_extender.assert_not_called()
+        assert t._active_target_reachable is True
 
-    def test_probe_exception_is_not_reachable(self):
+    def test_ensure_unreachable_sole_holder_switches_and_closes_gate(self):
+        # When the sole holder must fall back to the extender, the sole-holder
+        # check and the gate-close must be atomic: it clears reachable BEFORE
+        # switching so the poll loop can't admit a peer that would then run on
+        # the wrong network.
         cm = MagicMock()
-        cm.is_server_reachable.side_effect = RuntimeError('probe blew up')
+        cm.is_server_reachable.return_value = False
+        cm.connect_to_extender.return_value = True
         t = make_thread(connection_manager=cm)
-        assert t._server_reachable() is False
-        assert t._active_connection_manager() is cm
-
-    def test_non_true_truthy_probe_is_not_reachable(self):
-        # Guards against truthy-but-not-True returns (e.g. a bare MagicMock):
-        # only a literal True flips into reachable mode.
-        cm = MagicMock()
-        cm.is_server_reachable.return_value = 1
-        t = make_thread(connection_manager=cm)
-        assert t._server_reachable() is False
+        t._active_target_id = 'T'
+        t._active_worker_count = 1  # sole holder
+        t._active_target_reachable = True
+        assert t._ensure_server_reachable(cm) is True
+        cm.connect_to_extender.assert_called_once()
+        # Gate closed: a same-target admit now defers instead of joining.
+        assert t._active_target_reachable is False
+        assert t._admit_work('T') is None
 
 
-class TestJobReachableModeBypassesLock:
-    def test_reachable_job_skips_connection_dance_but_still_reports(self):
+# ===========================================================================
+# Target-affinity gate (same-target concurrency, cross-target deferral)
+# ===========================================================================
+
+
+class TestTargetAffinityGate:
+    def test_first_work_admitted_as_switcher(self):
+        t = make_thread()
+        assert t._admit_work('T') == 'switch'
+        assert t._active_target_id == 'T'
+        assert t._active_worker_count == 1
+        # Not reachable until the switcher connects and confirms.
+        assert t._active_target_reachable is False
+
+    def test_same_target_deferred_until_reachable(self):
+        t = make_thread()
+        t._admit_work('T')  # switcher
+        # Switcher hasn't confirmed reachability yet → peer is deferred.
+        assert t._admit_work('T') is None
+        assert t._active_worker_count == 1
+
+    def test_same_target_peer_admitted_when_reachable(self):
+        t = make_thread()
+        t._admit_work('T')  # switcher
+        t._mark_target_reachable(True)
+        assert t._admit_work('T') == 'join'
+        assert t._active_worker_count == 2
+
+    def test_different_target_deferred(self):
+        t = make_thread()
+        t._admit_work('T')
+        t._mark_target_reachable(True)
+        # Different target must not switch while T is active.
+        assert t._admit_work('OTHER') is None
+        assert t._active_worker_count == 1
+        assert t._active_target_id == 'T'
+
+    def test_finish_work_resets_on_drain(self):
+        t = make_thread()
+        t._admit_work('T')
+        t._mark_target_reachable(True)
+        t._admit_work('T')  # peer, count == 2
+        t._finish_work()
+        assert t._active_worker_count == 1
+        assert t._active_target_id == 'T'  # still active
+        t._finish_work()
+        assert t._active_worker_count == 0
+        assert t._active_target_id is None
+        assert t._active_target_reachable is False
+
+    def test_after_drain_new_target_admitted(self):
+        t = make_thread()
+        t._admit_work('T')
+        t._finish_work()
+        assert t._admit_work('OTHER') == 'switch'
+        assert t._active_target_id == 'OTHER'
+
+    def test_finish_work_never_goes_negative(self):
+        t = make_thread()
+        t._finish_work()  # no admits — must not underflow
+        assert t._active_worker_count == 0
+
+    def test_try_begin_launchpoint_switch_sole_holder_closes_gate(self):
+        t = make_thread()
+        t._admit_work('T')  # count 1, switcher
+        t._mark_target_reachable(True)
+        # Sole holder → may switch, and the peer gate is closed atomically.
+        assert t._try_begin_launchpoint_switch() is True
+        assert t._active_target_reachable is False
+        assert t._admit_work('T') is None  # no new peer admitted
+
+    def test_try_begin_launchpoint_switch_blocked_by_peers(self):
+        t = make_thread()
+        t._admit_work('T')  # switcher
+        t._mark_target_reachable(True)
+        t._admit_work('T')  # peer, count 2
+        # Peers present → may NOT switch, and the gate stays open.
+        assert t._try_begin_launchpoint_switch() is False
+        assert t._active_target_reachable is True
+
+
+class TestJobConnectionDance:
+    def test_reachable_job_connects_to_target_but_skips_extender(self):
+        # Correctness: the job ALWAYS connects to the target so it runs on the
+        # target network. Optimization: when the server is reachable from the
+        # target it reports directly and skips the extender round-trip entirely.
         cm = MagicMock()
         cm.is_server_reachable.return_value = True
+        cm.connect_to_target.return_value = True
         t = make_thread(connection_manager=cm)
         job = make_job()
         t.scheduled_scan_map[job.id] = job
@@ -615,11 +762,10 @@ class TestJobReachableModeBypassesLock:
             return_value={'exit_code': 0},
         ):
             t._process_job_with_slot(job)
-        # No mutex, no network switching — runs in parallel.
-        cm.get_connection_lock.assert_not_called()
-        cm.free_connection_lock.assert_not_called()
+        cm.get_connection_lock.assert_called()
+        cm.free_connection_lock.assert_called()
+        cm.connect_to_target.assert_called()
         cm.connect_to_extender.assert_not_called()
-        cm.connect_to_target.assert_not_called()
         # Result still reported and map cleaned up.
         calls = t.recon_manager.update_job_status.call_args_list
         assert any(c.args[1] == data_model.ScanStatus.COMPLETED.value for c in calls)
@@ -642,14 +788,63 @@ class TestJobReachableModeBypassesLock:
         cm.connect_to_target.assert_called()
 
 
-class TestScanReachableModeBypassesLock:
-    def test_reachable_scan_skips_extender_and_target(self, tmp_path, monkeypatch):
+class TestPeerJob:
+    """A peer (mode='join') rides the launchpoint the switcher already committed
+    to the target: no lock, no launchpoint switching, reports over the tunnel."""
+
+    def test_peer_skips_lock_and_launchpoint(self):
+        cm = MagicMock()
+        t = make_thread(connection_manager=cm)
+        # Simulate the gate having admitted a switcher + this peer.
+        t._active_target_id = 'target-1'
+        t._active_worker_count = 2
+        t._active_target_reachable = True
+        job = make_job()
+        t.scheduled_scan_map[job.id] = job
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ):
+            t._process_job_with_slot(job, mode='join')
+        cm.get_connection_lock.assert_not_called()
+        cm.free_connection_lock.assert_not_called()
+        cm.connect_to_target.assert_not_called()
+        cm.connect_to_extender.assert_not_called()
+        # Still reports COMPLETED and cleans up.
+        calls = t.recon_manager.update_job_status.call_args_list
+        assert any(c.args[1] == data_model.ScanStatus.COMPLETED.value for c in calls)
+        assert job.id not in t.scheduled_scan_map
+        # Slot released (count back to switcher only).
+        assert t._active_worker_count == 1
+
+    def test_peer_completed_post_failure_queues_without_switching(self):
+        cm = MagicMock()
+        t = make_thread(connection_manager=cm)
+        t._active_target_id = 'target-1'
+        t._active_worker_count = 2
+        t._active_target_reachable = True
+        # RUNNING ok, COMPLETED fails (server briefly unreachable over tunnel).
+        t.recon_manager.update_job_status.side_effect = [True, Exception('500')]
+        job = make_job()
+        t.scheduled_scan_map[job.id] = job
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0, 'foo': 'bar'},
+        ):
+            t._process_job_with_slot(job, mode='join')
+        # Queued for retry, never switched the launchpoint.
+        assert job.id in t.pending_job_completions
+        cm.connect_to_extender.assert_not_called()
+        assert job.id in t.scheduled_scan_map
+        assert t._active_worker_count == 1
+
+
+class TestScanConnectionDance:
+    def test_reachable_scan_connects_to_target_but_skips_extender(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         cm = MagicMock()
         cm.is_server_reachable.return_value = True
-        # These would force an error if the code actually called them.
-        cm.connect_to_extender.return_value = False
-        cm.connect_to_target.return_value = False
+        cm.connect_to_target.return_value = True
         t = make_thread(connection_manager=cm)
         ct = make_collection_tool(tool_type=2)  # active scanner
         scan = make_scheduled_scan(collection_tool_map={'a': ct})
@@ -657,7 +852,45 @@ class TestScanReachableModeBypassesLock:
         t.recon_manager.scan_func.return_value = True
         t.recon_manager.import_func.return_value = True
         out = t.execute_scan_jobs(scan)
-        # Not blocked by the (uncalled) extender/target failures.
         assert out is None
+        cm.connect_to_target.assert_called()
         cm.connect_to_extender.assert_not_called()
+
+    def test_unreachable_scan_connects_to_target_and_extender(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        cm = MagicMock()
+        cm.is_server_reachable.return_value = False
+        cm.connect_to_extender.return_value = True
+        cm.connect_to_target.return_value = True
+        t = make_thread(connection_manager=cm)
+        ct = make_collection_tool(tool_type=2)  # active scanner
+        scan = make_scheduled_scan(collection_tool_map={'a': ct})
+        t.recon_manager.get_scan_status.return_value = _scan_status()
+        t.recon_manager.scan_func.return_value = True
+        t.recon_manager.import_func.return_value = True
+        out = t.execute_scan_jobs(scan)
+        assert out is None
+        cm.connect_to_target.assert_called()
+        cm.connect_to_extender.assert_called()
+
+    def test_peer_scan_runs_without_touching_launchpoint(self, tmp_path, monkeypatch):
+        # A peer scan rides the launchpoint the switcher already committed to the
+        # target: it never connects to target or extender, but still scans and
+        # imports over the tunnel.
+        monkeypatch.chdir(tmp_path)
+        cm = MagicMock()
+        # Even if reachability would say "switch", a peer must not.
+        cm.is_server_reachable.return_value = False
+        t = make_thread(connection_manager=cm)
+        ct = make_collection_tool(tool_type=2)  # active scanner
+        scan = make_scheduled_scan(collection_tool_map={'a': ct})
+        t.recon_manager.get_scan_status.return_value = _scan_status()
+        t.recon_manager.scan_func.return_value = True
+        t.recon_manager.import_func.return_value = True
+        out = t.execute_scan_jobs(scan, mode='join')
+        assert out is None
         cm.connect_to_target.assert_not_called()
+        cm.connect_to_extender.assert_not_called()
+        # The scan still ran and imported.
+        t.recon_manager.scan_func.assert_called()
+        t.recon_manager.import_func.assert_called()

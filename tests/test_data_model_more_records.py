@@ -40,6 +40,27 @@ def test_screenshot_data_to_jsonable():
     assert out == {'screenshot': 'b64data', 'image_hash': 'h1'}
 
 
+def test_screenshot_release_after_import_drops_blob_keeps_hash():
+    s = Screenshot()
+    s.screenshot = 'b64data'
+    s.image_hash = 'h1'
+    s.release_after_import()
+    assert s.screenshot is None
+    # Hash and id survive so downstream scope references stay intact.
+    assert s.image_hash == 'h1'
+    assert s.id is not None
+
+
+def test_record_release_after_import_is_noop_by_default():
+    from reverge_collector.data_model import Host
+
+    h = Host()
+    h.ipv4_addr = '1.2.3.4'
+    # Default hook must be a harmless no-op for records with no heavy payload.
+    assert h.release_after_import() is None
+    assert h.ipv4_addr == '1.2.3.4'
+
+
 def test_screenshot_from_jsonsable_roundtrip():
     s1 = Screenshot()
     s1.screenshot = 'b64data'

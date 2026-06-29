@@ -39,6 +39,28 @@ class _StubTool(ToolSpec):
         return self.fake_records
 
 
+class _StreamingTool(ToolSpec):
+    """Concrete ToolSpec exercising the streaming/batched import path."""
+
+    name = 'streamer'
+    streaming_import = True
+    delete_output_after_import = True
+
+    def __init__(self, batches):
+        super().__init__()
+        self._batches = batches
+        self.batch_calls = []
+
+    def execute_scan(self, scan_input):
+        pass
+
+    def parse_output(self, output_path, scan_input):
+        return []
+
+    def iter_parsed_batches(self, output_path, scan_input):
+        yield from self._batches
+
+
 class _BrokenTool(ToolSpec):
     """Concrete ToolSpec that raises in execute_scan — for error paths."""
 
@@ -217,6 +239,163 @@ def test_run_import_skips_parse_when_already_done(tmp_path):
         result = t._run_import(scan_input)
     assert result is True
     assert t.parse_calls == []
+
+
+def test_run_import_retries_from_pre_import_cache_even_when_output_deleted(tmp_path):
+    """Gate reorder: a deleted raw output must NOT hide a pending pre-import.
+
+    With the raw output removed (e.g. a streaming/delete tool that crashed
+    mid-POST) but ``tool_pre_import_json`` present, the retry path must still
+    fire instead of short-circuiting on the missing output file.
+    """
+    t = _StubTool()
+    scan_input = SimpleNamespace(id='s1', current_tool=SimpleNamespace(name='stub'))
+    nonexistent = str(tmp_path / 'deleted-output.json')
+    cached_records = [{'id': 'r1'}]
+    with (
+        patch.object(t, 'get_output_path', return_value=nonexistent),
+        patch('reverge_collector.tool_spec._import_already_done', return_value=False),
+        patch(
+            'reverge_collector.tool_spec._load_pre_import_arr',
+            return_value=cached_records,
+        ),
+        patch('reverge_collector.tool_spec._post_pre_import') as mock_post,
+    ):
+        result = t._run_import(scan_input)
+    assert result is True
+    mock_post.assert_called_once_with(scan_input, cached_records, nonexistent)
+
+
+def test_run_import_already_done_checked_before_output_existence(tmp_path):
+    """Gate reorder: a completion marker wins even if the raw output is gone."""
+    t = _StubTool()
+    scan_input = SimpleNamespace(id='s1', current_tool=SimpleNamespace(name='stub'))
+    nonexistent = str(tmp_path / 'deleted-output.json')
+    with (
+        patch.object(t, 'get_output_path', return_value=nonexistent),
+        patch('reverge_collector.tool_spec._import_already_done', return_value=True) as done,
+        patch('reverge_collector.tool_spec._load_pre_import_arr') as load,
+    ):
+        result = t._run_import(scan_input)
+    assert result is True
+    done.assert_called_once()
+    load.assert_not_called()
+    assert t.parse_calls == []
+
+
+def test_run_import_streaming_imports_each_batch_and_finishes(tmp_path):
+    """streaming_import → import each batch, write completion marker, delete output."""
+    batch_a = [SimpleNamespace(id='a')]
+    batch_b = [SimpleNamespace(id='b')]
+    t = _StreamingTool([batch_a, batch_b])
+    scan_input = SimpleNamespace(id='s1', current_tool=SimpleNamespace(name='streamer'))
+    output_path = tmp_path / 'screenshots.json'
+    output_path.write_text('lines')
+    with (
+        patch.object(t, 'get_output_path', return_value=str(output_path)),
+        patch('reverge_collector.tool_spec._import_already_done', return_value=False),
+        patch('reverge_collector.tool_spec._load_pre_import_arr', return_value=None),
+        patch('reverge_collector.tool_spec._import_batch') as mock_batch,
+        patch('reverge_collector.tool_spec._write_import_complete_marker') as mock_marker,
+    ):
+        result = t._run_import(scan_input)
+    assert result is True
+    assert [c.args for c in mock_batch.call_args_list] == [
+        (scan_input, batch_a),
+        (scan_input, batch_b),
+    ]
+    mock_marker.assert_called_once_with(str(output_path))
+    # delete_output_after_import → raw output removed once import completes
+    assert not output_path.exists()
+
+
+def test_run_import_streaming_prefers_raw_output_over_pre_import_cache(tmp_path):
+    """Regression: a streaming tool must stream from the raw output even when a
+    (potentially huge) tool_pre_import_json exists.
+
+    Loading that whole-file cache and POSTing it in one shot is exactly the
+    unbounded-memory crash the streaming path exists to avoid, so the pre-import
+    retry helpers must not be consulted while the raw output is present.
+    """
+    batch_a = [SimpleNamespace(id='a')]
+    t = _StreamingTool([batch_a])
+    scan_input = SimpleNamespace(id='s1', current_tool=SimpleNamespace(name='streamer'))
+    output_path = tmp_path / 'screenshots.json'
+    output_path.write_text('lines')
+    with (
+        patch.object(t, 'get_output_path', return_value=str(output_path)),
+        patch('reverge_collector.tool_spec._import_already_done', return_value=False),
+        patch('reverge_collector.tool_spec._load_pre_import_arr') as load,
+        patch('reverge_collector.tool_spec._post_pre_import') as post,
+        patch('reverge_collector.tool_spec._import_batch') as mock_batch,
+        patch('reverge_collector.tool_spec._write_import_complete_marker') as mock_marker,
+    ):
+        result = t._run_import(scan_input)
+    assert result is True
+    mock_batch.assert_called_once_with(scan_input, batch_a)
+    load.assert_not_called()
+    post.assert_not_called()
+    mock_marker.assert_called_once_with(str(output_path))
+
+
+def test_run_import_streaming_reclaims_stale_pre_import_and_raw_output(tmp_path):
+    """On streaming completion, both large on-disk files are removed."""
+    t = _StreamingTool([[SimpleNamespace(id='a')]])
+    scan_input = SimpleNamespace(id='s1', current_tool=SimpleNamespace(name='streamer'))
+    output_path = tmp_path / 'screenshots.json'
+    output_path.write_text('lines')
+    stale_pre = tmp_path / 'tool_pre_import_json'
+    stale_pre.write_text('["huge-stale-blob"]')
+    with (
+        patch.object(t, 'get_output_path', return_value=str(output_path)),
+        patch('reverge_collector.tool_spec._import_already_done', return_value=False),
+        patch('reverge_collector.tool_spec._import_batch'),
+    ):
+        result = t._run_import(scan_input)
+    assert result is True
+    # Completion marker written; both giant files reclaimed.
+    assert (tmp_path / 'tool_import_json').exists()
+    assert not output_path.exists()
+    assert not stale_pre.exists()
+
+
+def test_run_import_streaming_falls_back_to_pre_import_when_output_gone(tmp_path):
+    """If the raw output is gone (already reclaimed) but a pre-import cache
+    remains and completion isn't marked, fall back to the cached re-POST."""
+    t = _StreamingTool([])
+    scan_input = SimpleNamespace(id='s1', current_tool=SimpleNamespace(name='streamer'))
+    nonexistent = str(tmp_path / 'gone.json')
+    cached = [{'id': 'r1'}]
+    with (
+        patch.object(t, 'get_output_path', return_value=nonexistent),
+        patch('reverge_collector.tool_spec._import_already_done', return_value=False),
+        patch('reverge_collector.tool_spec._load_pre_import_arr', return_value=cached),
+        patch('reverge_collector.tool_spec._post_pre_import') as post,
+    ):
+        result = t._run_import(scan_input)
+    assert result is True
+    post.assert_called_once_with(scan_input, cached, nonexistent)
+
+
+def test_run_import_deletes_output_on_non_streaming_path_when_flagged(tmp_path):
+    """delete_output_after_import also applies to the standard parse path."""
+
+    class _DeletingTool(_StubTool):
+        delete_output_after_import = True
+
+    t = _DeletingTool()
+    scan_input = SimpleNamespace(id='s1', current_tool=SimpleNamespace(name='stub'))
+    output_path = tmp_path / 'output.json'
+    output_path.write_text('{}')
+    with (
+        patch.object(t, 'get_output_path', return_value=str(output_path)),
+        patch('reverge_collector.tool_spec._import_already_done', return_value=False),
+        patch('reverge_collector.tool_spec._load_pre_import_arr', return_value=None),
+        patch('reverge_collector.tool_spec._import_results'),
+    ):
+        result = t._run_import(scan_input)
+    assert result is True
+    assert not output_path.exists()
 
 
 def test_run_import_uses_pre_import_cache_when_present(tmp_path):

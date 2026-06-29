@@ -59,7 +59,7 @@ Canonical pattern for every tool file
 import json
 import logging
 import os
-from typing import Any, List
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +214,79 @@ def post_pre_import(
         fh.write(json.dumps(updated_import_arr))
 
     scheduled_scan_obj.scan_data.update(updated_import_arr)
+
+
+def import_batch(
+    scheduled_scan_obj: Any,
+    obj_arr: List[Any],
+) -> None:
+    """Serialize *obj_arr*, POST it, remap server IDs, and update scope.
+
+    This is the single-batch primitive used by the streaming import path. It
+    deliberately writes **no** marker files: with batched imports the
+    ``tool_pre_import_json`` blob would be overwritten by every batch (losing
+    all but the last), so streaming idempotency is instead provided by the
+    final completion marker (:func:`write_import_complete_marker`) plus the
+    server's hash-based dedup, which collapses any records re-POSTed when an
+    interrupted import is retried from the start.
+    """
+    from reverge_collector import data_model  # noqa: PLC0415
+
+    if not obj_arr:
+        return
+
+    scan_id = scheduled_scan_obj.scan_id
+    recon_manager = scheduled_scan_obj.scan_thread.recon_manager
+    tool_id = scheduled_scan_obj.current_tool.id
+
+    record_map: dict = {}
+    import_arr: list = []
+    for obj in obj_arr:
+        record_map[obj.id] = obj
+        import_arr.append(obj.to_jsonable())
+
+    updated_record_map = recon_manager.import_data(scan_id, tool_id, import_arr)
+
+    # Drop heavy per-record payload (e.g. screenshot blobs) now that the POST
+    # carrying it has completed, so the scope array built next — and the
+    # in-memory scope it feeds — stays bounded across the whole streamed scan.
+    for obj in record_map.values():
+        obj.release_after_import()
+
+    updated_import_arr = data_model.update_scope_array(record_map, updated_record_map)
+    scheduled_scan_obj.scan_data.update(updated_import_arr)
+
+
+def remove_pre_import_marker(output_path: str) -> None:
+    """Delete the ``tool_pre_import_json`` cache for *output_path* if present.
+
+    Once a streaming import has written its completion marker the whole-file
+    pre-import cache is dead weight (and, for tools with large output, very
+    large).  Removing it reclaims the disk and ensures the unbounded-memory
+    whole-file retry path can never pick it up again.
+    """
+    marker = get_pre_import_marker(output_path)
+    try:
+        os.remove(marker)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning('Could not remove pre-import marker %s: %s', marker, exc)
+
+
+def write_import_complete_marker(
+    output_path: str,
+    import_arr: Optional[List[Any]] = None,
+) -> None:
+    """Write the ``tool_import_json`` completion marker for a streaming import.
+
+    Defaults to an empty array sentinel so a post-completion restart short-
+    circuits via :func:`import_already_done` without re-loading a potentially
+    huge serialized scope into memory.
+    """
+    marker = get_import_marker(output_path)
+    with open(marker, 'w') as fh:
+        fh.write(json.dumps(import_arr if import_arr is not None else []))
 
 
 def import_results(
