@@ -55,6 +55,9 @@ from reverge_collector.tool_runner import (
     import_already_done as _import_already_done,
 )
 from reverge_collector.tool_runner import (
+    import_batch as _import_batch,
+)
+from reverge_collector.tool_runner import (
     import_results as _import_results,
 )
 from reverge_collector.tool_runner import (
@@ -62,6 +65,12 @@ from reverge_collector.tool_runner import (
 )
 from reverge_collector.tool_runner import (
     post_pre_import as _post_pre_import,
+)
+from reverge_collector.tool_runner import (
+    remove_pre_import_marker as _remove_pre_import_marker,
+)
+from reverge_collector.tool_runner import (
+    write_import_complete_marker as _write_import_complete_marker,
 )
 
 logger = logging.getLogger(__name__)
@@ -91,6 +100,15 @@ class ToolSpec(data_model.RevergeTool, ABC):
     # Maximum number of URL targets allowed per scan job.  None = unlimited.
     # Set this on slow tools to force users to break large jobs into chunks.
     max_targets: Optional[int] = None
+    # Streaming import: when True, ``_run_import`` consumes ``iter_parsed_batches()``
+    # and POSTs each batch independently so peak memory stays bounded to one
+    # batch rather than the whole parsed result set.  Set this on tools whose
+    # output can be very large (e.g. screenshots with embedded base64 blobs).
+    streaming_import: bool = False
+    # Delete the raw scan output once the import has fully completed.  Useful
+    # for tools whose output duplicates what is already persisted server-side
+    # (and in ``tool_pre_import_json``), to avoid keeping two large copies.
+    delete_output_after_import: bool = False
 
     # -----------------------------------------------------------------------
     # Initialisation
@@ -193,10 +211,14 @@ class ToolSpec(data_model.RevergeTool, ABC):
         """
         try:
             output_path = self.get_output_path(scan_input)
-            if not os.path.exists(output_path):
-                return True
+            # Completion marker wins regardless of whether the raw output still
+            # exists (a tool may delete it after importing): restore scope, skip.
             if _import_already_done(scan_input, output_path):
                 return True
+
+            if self.streaming_import:
+                return self._run_streaming_import(scan_input, output_path)
+
             # Retry path: parse already done but POST was interrupted.
             pre_import_arr = _load_pre_import_arr(output_path)
             if pre_import_arr is not None:
@@ -205,13 +227,62 @@ class ToolSpec(data_model.RevergeTool, ABC):
                     self.name,
                 )
                 _post_pre_import(scan_input, pre_import_arr, output_path)
-            else:
-                ret_arr = self.parse_output(output_path, scan_input)
-                _import_results(scan_input, ret_arr, output_path)
+                return True
+            # No cached state — we need the raw output to parse from.
+            if not os.path.exists(output_path):
+                return True
+            ret_arr = self.parse_output(output_path, scan_input)
+            _import_results(scan_input, ret_arr, output_path)
+            if self.delete_output_after_import:
+                self._safe_remove(output_path)
             return True
         except Exception as e:
             logger.error('%s import failed: %s', self.name, e, exc_info=True)
             raise
+
+    def _run_streaming_import(
+        self, scan_input: 'data_model.ScheduledScan', output_path: str
+    ) -> bool:
+        """Memory-bounded import for tools with large output.
+
+        The raw output file is the source of truth.  We stream it in batches
+        and POST each batch independently, so peak memory stays bounded to one
+        batch rather than the whole result set.  Re-running after an interrupted
+        import is safe: the server dedups by record hash, so anything POSTed
+        before a crash collapses rather than duplicates.
+
+        Crucially, this path does **not** consult the whole-file
+        ``tool_pre_import_json`` cache while the raw output exists — loading and
+        POSTing that giant blob in one shot is the exact unbounded-memory crash
+        streaming exists to avoid.  It's only used as a last-resort fallback if
+        the raw output is already gone.
+        """
+        if os.path.exists(output_path):
+            for batch in self.iter_parsed_batches(output_path, scan_input):
+                _import_batch(scan_input, batch)
+            _write_import_complete_marker(output_path)
+            # Reclaim disk: drop the raw output and any stale whole-file
+            # pre-import cache left by a previous (pre-streaming) run.
+            _remove_pre_import_marker(output_path)
+            if self.delete_output_after_import:
+                self._safe_remove(output_path)
+            return True
+
+        # Raw output gone but not marked complete — best-effort re-POST from a
+        # cached pre-import array if a prior run left one.
+        pre_import_arr = _load_pre_import_arr(output_path)
+        if pre_import_arr is not None:
+            _post_pre_import(scan_input, pre_import_arr, output_path)
+        return True
+
+    def _safe_remove(self, path: str) -> None:
+        """Remove *path*, logging (not raising) on failure."""
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning('%s: could not delete %s after import: %s', self.name, path, exc)
 
     # -----------------------------------------------------------------------
     # Abstract interface — every tool must implement these two methods
@@ -232,3 +303,23 @@ class ToolSpec(data_model.RevergeTool, ABC):
         scan_input: 'data_model.ScheduledScan',
     ) -> List[Any]:
         """Parse tool output and return a list of ``data_model.Record`` objects."""
+
+    # -----------------------------------------------------------------------
+    # Streaming import hook — override when ``streaming_import`` is True
+    # -----------------------------------------------------------------------
+
+    def iter_parsed_batches(
+        self,
+        output_path: str,
+        scan_input: 'data_model.ScheduledScan',
+    ):
+        """Yield successive batches (lists) of records for streaming import.
+
+        Only invoked when ``streaming_import`` is True.  Tools that set that
+        flag must override this to parse their output incrementally so peak
+        memory stays bounded to a single batch.  The default raises to make a
+        missing override obvious.
+        """
+        raise NotImplementedError(
+            f'{self.name}: streaming_import is set but iter_parsed_batches() is not implemented'
+        )

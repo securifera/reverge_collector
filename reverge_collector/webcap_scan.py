@@ -88,6 +88,13 @@ class Webcap(ToolSpec):
         data_model.ServerRecordType.HTTP_ENDPOINT,
         data_model.ServerRecordType.HTTP_ENDPOINT_DATA,
     ]
+    # Screenshot output embeds large base64 blobs, so import it in bounded
+    # batches and drop the raw JSON-lines file once it's been imported (the
+    # same data is already persisted server-side).
+    streaming_import = True
+    delete_output_after_import = True
+    # Source lines (one screenshot each) imported per POST.
+    import_batch_size = 25
 
     def __init__(self):
         super().__init__()
@@ -109,6 +116,13 @@ class Webcap(ToolSpec):
                 scan_input.current_tool_instance_id,
             )
             or []
+        )
+
+    def iter_parsed_batches(self, output_path: str, scan_input):
+        yield from iter_webcap_batches(
+            output_path,
+            scan_input.current_tool_instance_id,
+            self.import_batch_size,
         )
 
 
@@ -404,6 +418,94 @@ def execute_scan(scan_input) -> None:
         )
 
 
+def _parse_screenshot_line(
+    screenshot_meta,
+    tool_instance_id,
+    screenshot_hash_map,
+    path_hash_map,
+    domain_name_id_map,
+):
+    """Convert one parsed Webcap JSON record into its data-model objects.
+
+    The three ``*_map`` dicts carry dedup state across calls; callers control
+    their lifetime — whole-file for :func:`parse_webcap_output`, per-batch for
+    :func:`iter_webcap_batches` so peak memory stays bounded.
+    """
+    records = []
+
+    web_path = screenshot_meta['path']
+    port_id = screenshot_meta['port_id']
+    status_code = screenshot_meta['status_code']
+    screenshot_bytes_b64 = screenshot_meta['image_data']
+    title = screenshot_meta['title']
+    http_endpoint_data_id = screenshot_meta['http_endpoint_data_id']
+
+    hash_alg = hashlib.sha1
+    hashobj = hash_alg()
+    hashobj.update(base64.b64decode(screenshot_bytes_b64))
+    image_hash = hashobj.digest()
+    image_hash_str = binascii.hexlify(image_hash).decode()
+
+    if image_hash_str in screenshot_hash_map:
+        screenshot_obj = screenshot_hash_map[image_hash_str]
+    else:
+        screenshot_obj = data_model.Screenshot()
+        screenshot_obj.collection_tool_instance_id = tool_instance_id
+        screenshot_obj.screenshot = screenshot_bytes_b64
+        screenshot_obj.image_hash = image_hash_str
+        screenshot_hash_map[image_hash_str] = screenshot_obj
+
+    records.append(screenshot_obj)
+    screenshot_id = screenshot_obj.id
+
+    hashobj = hash_alg()
+    hashobj.update(web_path.encode())
+    path_hash = hashobj.digest()
+    web_path_hash = binascii.hexlify(path_hash).decode()
+
+    endpoint_domain_id = None
+    if 'domain' in screenshot_meta and screenshot_meta['domain']:
+        domain_str = screenshot_meta['domain']
+        if domain_str in domain_name_id_map:
+            domain_obj = domain_name_id_map[domain_str]
+        else:
+            domain_obj = data_model.Domain()
+            domain_obj.collection_tool_instance_id = tool_instance_id
+            domain_obj.name = domain_str
+            domain_name_id_map[domain_str] = domain_obj
+        records.append(domain_obj)
+        endpoint_domain_id = domain_obj.id
+
+    if web_path_hash in path_hash_map:
+        path_obj = path_hash_map[web_path_hash]
+    else:
+        path_obj = data_model.ListItem()
+        path_obj.collection_tool_instance_id = tool_instance_id
+        path_obj.web_path = web_path
+        path_obj.web_path_hash = web_path_hash
+        path_hash_map[web_path_hash] = path_obj
+
+    records.append(path_obj)
+    web_path_id = path_obj.id
+
+    http_endpoint_obj = data_model.HttpEndpoint(parent_id=port_id)
+    http_endpoint_obj.collection_tool_instance_id = tool_instance_id
+    http_endpoint_obj.web_path_id = web_path_id
+    records.append(http_endpoint_obj)
+
+    http_endpoint_data_obj = data_model.HttpEndpointData(parent_id=http_endpoint_obj.id)
+    http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
+    http_endpoint_data_obj.domain_id = endpoint_domain_id
+    http_endpoint_data_obj.status = status_code
+    http_endpoint_data_obj.title = title
+    http_endpoint_data_obj.screenshot_id = screenshot_id
+    if http_endpoint_data_id:
+        http_endpoint_data_obj.id = http_endpoint_data_id
+    records.append(http_endpoint_data_obj)
+
+    return records
+
+
 def parse_webcap_output(meta_file, tool_instance_id):
     """Parse a Webcap JSON-lines metadata file and return data-model objects."""
     ret_arr = []
@@ -418,76 +520,58 @@ def parse_webcap_output(meta_file, tool_instance_id):
         for line in file_fd:
             if not line.strip():
                 continue
-
-            screenshot_meta = json.loads(line)
-            web_path = screenshot_meta['path']
-            port_id = screenshot_meta['port_id']
-            status_code = screenshot_meta['status_code']
-            screenshot_bytes_b64 = screenshot_meta['image_data']
-            title = screenshot_meta['title']
-            http_endpoint_data_id = screenshot_meta['http_endpoint_data_id']
-
-            hash_alg = hashlib.sha1
-            hashobj = hash_alg()
-            hashobj.update(base64.b64decode(screenshot_bytes_b64))
-            image_hash = hashobj.digest()
-            image_hash_str = binascii.hexlify(image_hash).decode()
-
-            if image_hash_str in screenshot_hash_map:
-                screenshot_obj = screenshot_hash_map[image_hash_str]
-            else:
-                screenshot_obj = data_model.Screenshot()
-                screenshot_obj.collection_tool_instance_id = tool_instance_id
-                screenshot_obj.screenshot = screenshot_bytes_b64
-                screenshot_obj.image_hash = image_hash_str
-                screenshot_hash_map[image_hash_str] = screenshot_obj
-
-            ret_arr.append(screenshot_obj)
-            screenshot_id = screenshot_obj.id
-
-            hashobj = hash_alg()
-            hashobj.update(web_path.encode())
-            path_hash = hashobj.digest()
-            web_path_hash = binascii.hexlify(path_hash).decode()
-
-            endpoint_domain_id = None
-            if 'domain' in screenshot_meta and screenshot_meta['domain']:
-                domain_str = screenshot_meta['domain']
-                if domain_str in domain_name_id_map:
-                    domain_obj = domain_name_id_map[domain_str]
-                else:
-                    domain_obj = data_model.Domain()
-                    domain_obj.collection_tool_instance_id = tool_instance_id
-                    domain_obj.name = domain_str
-                    domain_name_id_map[domain_str] = domain_obj
-                ret_arr.append(domain_obj)
-                endpoint_domain_id = domain_obj.id
-
-            if web_path_hash in path_hash_map:
-                path_obj = path_hash_map[web_path_hash]
-            else:
-                path_obj = data_model.ListItem()
-                path_obj.collection_tool_instance_id = tool_instance_id
-                path_obj.web_path = web_path
-                path_obj.web_path_hash = web_path_hash
-                path_hash_map[web_path_hash] = path_obj
-
-            ret_arr.append(path_obj)
-            web_path_id = path_obj.id
-
-            http_endpoint_obj = data_model.HttpEndpoint(parent_id=port_id)
-            http_endpoint_obj.collection_tool_instance_id = tool_instance_id
-            http_endpoint_obj.web_path_id = web_path_id
-            ret_arr.append(http_endpoint_obj)
-
-            http_endpoint_data_obj = data_model.HttpEndpointData(parent_id=http_endpoint_obj.id)
-            http_endpoint_data_obj.collection_tool_instance_id = tool_instance_id
-            http_endpoint_data_obj.domain_id = endpoint_domain_id
-            http_endpoint_data_obj.status = status_code
-            http_endpoint_data_obj.title = title
-            http_endpoint_data_obj.screenshot_id = screenshot_id
-            if http_endpoint_data_id:
-                http_endpoint_data_obj.id = http_endpoint_data_id
-            ret_arr.append(http_endpoint_data_obj)
+            ret_arr.extend(
+                _parse_screenshot_line(
+                    json.loads(line),
+                    tool_instance_id,
+                    screenshot_hash_map,
+                    path_hash_map,
+                    domain_name_id_map,
+                )
+            )
 
     return ret_arr
+
+
+def iter_webcap_batches(meta_file, tool_instance_id, batch_size):
+    """Stream a Webcap JSON-lines file as successive batches of records.
+
+    Yields a list of data-model objects for every ``batch_size`` source lines.
+    Dedup maps are reset per batch so the resident set never exceeds one
+    batch's worth of screenshots (the base64 blobs dominate memory); identical
+    screenshots / paths that straddle a batch boundary are re-sent and
+    collapsed server-side by their hashes, the same dedup the interrupted-POST
+    retry already relies on.
+    """
+    if not os.path.exists(meta_file):
+        return
+
+    with open(meta_file, 'r') as file_fd:
+        batch = []
+        line_count = 0
+        screenshot_hash_map = {}
+        path_hash_map = {}
+        domain_name_id_map = {}
+        for line in file_fd:
+            if not line.strip():
+                continue
+            batch.extend(
+                _parse_screenshot_line(
+                    json.loads(line),
+                    tool_instance_id,
+                    screenshot_hash_map,
+                    path_hash_map,
+                    domain_name_id_map,
+                )
+            )
+            line_count += 1
+            if line_count >= batch_size:
+                yield batch
+                batch = []
+                line_count = 0
+                screenshot_hash_map = {}
+                path_hash_map = {}
+                domain_name_id_map = {}
+
+        if batch:
+            yield batch

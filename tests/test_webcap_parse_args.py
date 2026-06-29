@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+from types import SimpleNamespace
 
 # ===========================================================================
 # parse_args
@@ -176,3 +177,81 @@ class TestParseWebcapOutput:
         records = parse_webcap_output(meta, 'ti')
         epds = [r for r in records if type(r).__name__ == 'HttpEndpointData']
         assert epds and epds[0].id == 'epd-keep'
+
+
+# ===========================================================================
+# iter_webcap_batches — streaming, memory-bounded import
+# ===========================================================================
+
+
+def _entry(path, img):
+    return {
+        'path': path,
+        'port_id': 'p1',
+        'status_code': 200,
+        'image_data': _b64(img),
+        'title': 't',
+        'http_endpoint_data_id': None,
+    }
+
+
+class TestIterWebcapBatches:
+    def test_returns_nothing_when_meta_missing(self, tmp_path):
+        from reverge_collector.webcap_scan import iter_webcap_batches
+
+        assert list(iter_webcap_batches(str(tmp_path / 'missing'), 'ti', 2)) == []
+
+    def test_chunks_lines_into_batches(self, tmp_path):
+        from reverge_collector.webcap_scan import iter_webcap_batches
+
+        meta = _write_meta(tmp_path, [_entry(f'/p{i}', f'IMG{i}'.encode()) for i in range(5)])
+        batches = list(iter_webcap_batches(meta, 'ti', 2))
+        # 5 lines, batch_size 2 → 3 batches of source lines: 2, 2, 1
+        assert len(batches) == 3
+        # Each batch is a non-empty list of record objects
+        assert all(isinstance(b, list) and b for b in batches)
+        # Every batch carries one screenshot per source line it covers
+        shots_per_batch = [sum(1 for r in b if type(r).__name__ == 'Screenshot') for b in batches]
+        assert shots_per_batch == [2, 2, 1]
+
+    def test_skips_blank_lines(self, tmp_path):
+        from reverge_collector.webcap_scan import iter_webcap_batches
+
+        p = tmp_path / 'screenshots.json'
+        with open(p, 'w') as f:
+            f.write('\n')
+            f.write(json.dumps(_entry('/a', b'A')) + '\n')
+            f.write('   \n')
+            f.write(json.dumps(_entry('/b', b'B')) + '\n')
+        batches = list(iter_webcap_batches(str(p), 'ti', 10))
+        shots = [r for b in batches for r in b if type(r).__name__ == 'Screenshot']
+        assert len(shots) == 2
+
+    def test_dedups_identical_screenshots_within_a_batch(self, tmp_path):
+        from reverge_collector.webcap_scan import iter_webcap_batches
+
+        same = b'SAMEBYTES'
+        meta = _write_meta(tmp_path, [_entry('/a', same), _entry('/b', same)])
+        batches = list(iter_webcap_batches(meta, 'ti', 10))
+        shots = {id(r) for b in batches for r in b if type(r).__name__ == 'Screenshot'}
+        assert len(shots) == 1
+
+
+class TestWebcapStreamingConfig:
+    def test_webcap_is_configured_for_streaming_import(self):
+        from reverge_collector.webcap_scan import Webcap
+
+        w = Webcap()
+        assert w.streaming_import is True
+        assert w.delete_output_after_import is True
+
+    def test_iter_parsed_batches_delegates_to_iter_webcap_batches(self, tmp_path):
+        from reverge_collector.webcap_scan import Webcap
+
+        meta = _write_meta(tmp_path, [_entry('/a', b'A'), _entry('/b', b'B')])
+        w = Webcap()
+        scan_input = SimpleNamespace(current_tool_instance_id='ti-77')
+        batches = list(w.iter_parsed_batches(meta, scan_input))
+        shots = [r for b in batches for r in b if type(r).__name__ == 'Screenshot']
+        assert len(shots) == 2
+        assert all(r.collection_tool_instance_id == 'ti-77' for r in shots)

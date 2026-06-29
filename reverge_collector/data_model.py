@@ -421,6 +421,12 @@ class ScheduledScan:
         # the next polling iteration retries the import without re-scanning.
         self.has_pending_imports: bool = False
 
+        # Tool instance ids already killed in response to a per-tool
+        # cancellation.  The server keeps listing cancelled tool ids while the
+        # scan is RUNNING, so this lets the poll loop kill each one once instead
+        # of re-killing (and re-logging) it every iteration.
+        self.killed_tool_ids: set = set()
+
         # Validate and retrieve scan configuration from server
         scan_obj = self.scan_thread.recon_manager.get_scheduled_scan(self.id)
         if scan_obj is None or 'scan_id' not in scan_obj or scan_obj['scan_id'] is None:
@@ -1921,6 +1927,18 @@ class Record:
 
         return ret
 
+    def release_after_import(self) -> None:
+        """Drop heavy in-memory payload once this record has been imported.
+
+        Called by the streaming import path after a batch has been POSTed but
+        before the record enters the in-memory scope, so large fields (e.g. a
+        screenshot's base64 blob) don't accumulate in ``ScanData`` for the
+        lifetime of the scan.  The default is a no-op; records carrying bulky
+        data override it.  The record's ``id`` and any fields other records
+        reference must survive so the scope stays internally consistent.
+        """
+        return None
+
     def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
         """
         Populate the record from a JSON-serializable dictionary.
@@ -2787,6 +2805,10 @@ class Screenshot(Record):
             Dict[str, Optional[str]]: Dictionary containing screenshot and hash data
         """
         return {'screenshot': self.screenshot, 'image_hash': self.image_hash}
+
+    def release_after_import(self) -> None:
+        """Drop the base64 image blob after import; keep id + hash for scope."""
+        self.screenshot = None
 
     def from_jsonsable(self, input_data_dict: Dict[str, Any]) -> None:
         """

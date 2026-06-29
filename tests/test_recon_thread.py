@@ -76,7 +76,8 @@ def test_process_scan_obj_with_slot_calls_process_scan_obj():
     fake_scan = MagicMock()
     with patch.object(t, 'process_scan_obj') as p:
         t._process_scan_obj_with_slot(fake_scan)
-        p.assert_called_once_with(fake_scan)
+        # Default dispatch mode is the switcher (owns the target).
+        p.assert_called_once_with(fake_scan, mode='switch')
 
 
 def test_stop_signals_exit_event():

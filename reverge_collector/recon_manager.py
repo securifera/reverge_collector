@@ -54,6 +54,7 @@ Constants:
 
 import logging
 import threading
+import time
 import traceback
 from functools import cmp_to_key, partial
 from threading import Event, Thread
@@ -264,23 +265,141 @@ class ScheduledScanThread(threading.Thread):
         # Maps job_id -> {"status": int, "result": dict|None, "err_msg": str|None}
         self.pending_job_completions: Dict[str, dict] = {}
 
-    def _server_reachable(self) -> bool:
-        """Whether the reverge server is reachable directly from the current network.
+        # --- Target-affinity gate ------------------------------------------
+        # The launchpoint (single shared Synack browser target) can only point
+        # at one target at a time.  This gate lets same-target jobs/scans run
+        # concurrently while preventing a different target from switching the
+        # launchpoint out from under in-flight work.
+        #   _active_target_id        — the target currently checked out (or None)
+        #   _active_worker_count     — in-flight workers on that target
+        #   _active_target_reachable — set True by the switcher once it has
+        #                              connected to the target and confirmed the
+        #                              reverge server is reachable from it; peers
+        #                              are only admitted once this is True
+        self._target_state_lock = threading.Lock()
+        self._active_target_id: Optional[str] = None
+        self._active_worker_count = 0
+        self._active_target_reachable = False
+        # After a target switch the SSH tunnel comes up asynchronously, so the
+        # switcher polls is_server_reachable a few times before deciding whether
+        # the target is reachable (and therefore whether peers may join).  Tests
+        # set the delay to 0 to keep the suite fast.
+        self._target_reachable_confirm_attempts = 3
+        self._target_reachable_confirm_delay = 1.0
 
-        In the Synack environment the collector normally has to switch the
-        launchpoint back to the extender (tearing down the target connection)
-        every time it needs to talk to the server, which forces jobs and scans
-        to run one at a time behind the connection lock. When the active target
-        VPN can still reach the internet — and therefore the reverge server —
-        that round-trip is unnecessary, so same-target work can run in parallel.
+    def _admit_work(self, target_id: Optional[str]) -> Optional[str]:
+        """Decide whether to dispatch a unit of work for ``target_id`` now.
 
-        Delegates to ``connection_manager.is_server_reachable()`` when present.
-        Returns ``False`` — the safe, serial default — when there is no
-        connection manager, it exposes no such probe, the probe raises, or the
-        probe returns anything other than the literal ``True`` (guards against
-        truthy-but-not-True values such as a bare mock).
+        Returns:
+            ``'switch'`` — admitted; this worker owns the target and must
+                connect to it (it is the first/only worker on it).
+            ``'join'`` — admitted; the same target is already active and
+                confirmed reachable, so this worker runs as a concurrent peer
+                without touching the launchpoint.
+            ``None`` — defer; a different target is active, or the same target
+                is not yet confirmed reachable.  The item is left undispatched
+                and re-evaluated on the next poll.
         """
-        cm = self.connection_manager
+        with self._target_state_lock:
+            if self._active_worker_count == 0:
+                self._active_target_id = target_id
+                self._active_worker_count = 1
+                self._active_target_reachable = False
+                return 'switch'
+            if self._active_target_id == target_id and self._active_target_reachable:
+                self._active_worker_count += 1
+                return 'join'
+            return None
+
+    def _finish_work(self) -> None:
+        """Release this worker's slot in the affinity gate.
+
+        Resets the active target once the last in-flight worker drains so the
+        next poll can switch the launchpoint to a different target.
+        """
+        with self._target_state_lock:
+            if self._active_worker_count > 0:
+                self._active_worker_count -= 1
+            if self._active_worker_count == 0:
+                self._active_target_id = None
+                self._active_target_reachable = False
+
+    def _mark_target_reachable(self, reachable: bool) -> None:
+        """Record whether the active target can reach the server.
+
+        Called by the switcher after it connects to the target.  Once ``True``,
+        same-target peers may be admitted to run concurrently.
+        """
+        with self._target_state_lock:
+            self._active_target_reachable = reachable
+
+    def _confirm_active_target_reachable(self, cm: Optional[Any]) -> bool:
+        """Probe the freshly-connected target for server reachability and record it.
+
+        The SSH tunnel is brought up from the target asynchronously (non-blocking
+        connect_ssh), so this polls a few times to give it a window to come up
+        before deciding.  When reachable, same-target peers may join and run
+        concurrently; otherwise work on this target stays serial.
+        """
+        reachable = False
+        attempts = max(1, self._target_reachable_confirm_attempts)
+        for i in range(attempts):
+            if self._server_reachable(cm):
+                reachable = True
+                break
+            if i < attempts - 1 and self._target_reachable_confirm_delay > 0:
+                time.sleep(self._target_reachable_confirm_delay)
+        self._mark_target_reachable(reachable)
+        return reachable
+
+    def _try_begin_launchpoint_switch(self) -> bool:
+        """Atomically decide whether this worker may switch the launchpoint.
+
+        A switch (connect_to_extender) is only safe when this worker is the sole
+        holder of the active target — otherwise it would yank the network out
+        from under concurrent same-target peers.
+
+        Crucially, the sole-holder check and closing the peer gate happen under
+        the same lock: on success the reachable flag is cleared so the poll loop
+        cannot admit a new peer between this check and the switch (which would
+        otherwise leave that peer running on the wrong network once we switch).
+        Returns ``True`` only when the caller may switch; ``False`` leaves the
+        gate untouched so peers keep running and being admitted.
+        """
+        with self._target_state_lock:
+            if self._active_worker_count <= 1:
+                self._active_target_reachable = False
+                return True
+            return False
+
+    def _no_workers_in_flight(self) -> bool:
+        """Whether no worker currently owns a target.
+
+        Used by the poll loop (which is not itself a worker) before it switches
+        the launchpoint back to the extender — doing so while any worker is
+        mid-turn would break that work.
+        """
+        with self._target_state_lock:
+            return self._active_worker_count == 0
+
+    def _server_reachable(self, cm: Optional[Any]) -> bool:
+        """Whether the reverge server is reachable over the *current* connection.
+
+        Probed by the worker threads *after* connecting to the target, so a
+        ``True`` result means the active target VPN can still reach the server
+        (the SSH tunnel survived the switch to the target). The caller then
+        reports results directly and skips the costly launchpoint switch back to
+        the extender.
+
+        This must never be used to decide whether to connect to the target —
+        connecting to the target is unconditional. It only gates the
+        *return trip* to the extender for server communication.
+
+        Delegates to ``cm.is_server_reachable()``. Safe default ``False`` (do the
+        extender round-trip) when there is no connection manager, it exposes no
+        such probe, the probe raises, or returns anything other than the literal
+        ``True`` (guards against truthy-but-not-True values such as a bare mock).
+        """
         if cm is None:
             return False
         probe = getattr(cm, 'is_server_reachable', None)
@@ -291,20 +410,39 @@ class ScheduledScanThread(threading.Thread):
         except Exception:
             return False
 
-    def _active_connection_manager(self) -> Optional[Any]:
-        """The connection manager to drive for this unit of work, or None.
+    def _ensure_server_reachable(self, cm: Optional[Any]) -> bool:
+        """Ensure the reverge server is reachable for server communication.
 
-        Returns ``None`` when the server is reachable directly (so callers skip
-        the connection lock and extender/target switching and run in parallel),
-        otherwise the real connection manager for the serial connect dance.
+        When the server is already reachable over the current connection (e.g.
+        the target VPN still has internet) we stay put and avoid the expensive
+        launchpoint switch back to the extender. Otherwise we switch the
+        launchpoint back to the extender.
+
+        Returns:
+            bool: ``True`` when the server should be reachable afterwards (it
+            already was, there is no connection manager, or
+            ``connect_to_extender()`` did not explicitly fail). ``False`` only
+            when the extender switch returned ``False``.
         """
-        if self._server_reachable():
-            return None
-        return self.connection_manager
+        if cm is None:
+            return True
+        if self._server_reachable(cm):
+            return True
+        # Not reachable: switching the launchpoint back to the extender is only
+        # safe when this worker is the sole holder of the active target.  With
+        # concurrent same-target peers in flight the switch would yank the
+        # network out from under them, so report failure instead and let the
+        # caller queue the result for retry.  The claim also atomically closes
+        # the peer gate so the poll loop can't admit a new peer mid-switch.
+        if not self._try_begin_launchpoint_switch():
+            return False
+        return cm.connect_to_extender() is not False
 
-    def _process_scan_obj_with_slot(self, scheduled_scan_obj: data_model.ScheduledScan) -> None:
+    def _process_scan_obj_with_slot(
+        self, scheduled_scan_obj: data_model.ScheduledScan, mode: str = 'switch'
+    ) -> None:
         """Run scan processing in a dedicated thread."""
-        self.process_scan_obj(scheduled_scan_obj)
+        self.process_scan_obj(scheduled_scan_obj, mode=mode)
 
     def _flush_pending_job_completions(self) -> None:
         """Retry POSTing results for jobs that completed locally but failed to report."""
@@ -330,10 +468,20 @@ class ScheduledScanThread(threading.Thread):
                     'Job %s result flush failed; will retry next poll', job_id
                 )
 
-    def _process_job_with_slot(self, job_item) -> None:
-        """Execute a CollectorJob and post results back to the server."""
+    def _process_job_with_slot(self, job_item, mode: str = 'switch') -> None:
+        """Execute a CollectorJob and post results back to the server.
+
+        ``mode`` comes from the target-affinity gate:
+          - ``'switch'`` — this worker owns the target: it takes the connection
+            lock, switches the launchpoint to the target, and (once on it)
+            records reachability so peers may join.
+          - ``'join'`` — a concurrent same-target peer: the launchpoint is
+            already committed to the target, so it never takes the lock or
+            touches the launchpoint; it just runs and reports over the tunnel.
+        """
         from reverge_collector.job_executor import run_job
 
+        is_peer = mode == 'join'
         err_msg = None
         result = None
         # When the COMPLETED/ERROR status POST fails we queue the result for
@@ -343,15 +491,17 @@ class ScheduledScanThread(threading.Thread):
         # by the inner status-post except handlers; checked by the outer
         # finally to skip the otherwise-unconditional pop.
         job_queued_for_retry = False
-        # None when the server is reachable directly — skips the lock and the
-        # extender/target switching so same-target jobs run in parallel.
-        cm = self._active_connection_manager()
+        cm = self.connection_manager
         try:
-            if cm:
+            # Only the switcher serializes launchpoint use behind the connection
+            # lock; peers ride the already-committed target connection.
+            if cm and not is_peer:
                 cm.get_connection_lock()
 
-            # connect_to_extender before any server communication
-            if cm and cm.connect_to_extender() == False:
+            # Ensure the server is reachable before any server communication.
+            # The peer's target is already confirmed reachable, so it skips the
+            # probe (and must never switch the launchpoint).
+            if not is_peer and not self._ensure_server_reachable(cm):
                 raise RuntimeError('Failed connecting to extender')
 
             # Configure connection target for this scan
@@ -370,17 +520,24 @@ class ScheduledScanThread(threading.Thread):
                 )
 
             try:
-                # connect_to_target before executing the job
-                if cm and cm.connect_to_target(target_id) == False:
-                    raise RuntimeError('Failed connecting to target %s' % job_item.target_id)
+                # The switcher connects to the target and, once on it, confirms
+                # whether the server is reachable so same-target peers may join.
+                # Peers skip this — the launchpoint is already on the target.
+                if not is_peer:
+                    if cm and cm.connect_to_target(target_id) == False:
+                        raise RuntimeError('Failed connecting to target %s' % job_item.target_id)
+                    self._confirm_active_target_reachable(cm)
 
                 result = run_job(job_item.job_type, job_item.args)
 
             finally:
-                # Always return to extender after target work, whether run_job
-                # succeeded or raised.
-                if cm:
-                    cm.connect_to_extender()
+                # After target work, make sure the server is reachable to report
+                # results. When the target VPN can still reach the server we
+                # report directly over that tunnel and skip the costly switch
+                # back to the extender; otherwise (and only when sole holder) we
+                # switch back. Peers never switch the launchpoint.
+                if not is_peer:
+                    self._ensure_server_reachable(cm)
 
             # Post result + COMPLETED status
             try:
@@ -439,8 +596,11 @@ class ScheduledScanThread(threading.Thread):
                 job_queued_for_retry = True
                 return
         finally:
-            if cm:
+            if cm and not is_peer:
                 cm.free_connection_lock()
+            # Release this worker's slot in the affinity gate so the target can
+            # drain and a different target can take the launchpoint.
+            self._finish_work()
             if not job_queued_for_retry:
                 with self.scan_thread_lock:
                     self.scheduled_scan_map.pop(job_item.id, None)
@@ -471,7 +631,9 @@ class ScheduledScanThread(threading.Thread):
             self._enabled = True
             logging.getLogger(__name__).debug('Scan poller enabled.')
 
-    def execute_scan_jobs(self, scheduled_scan_obj: data_model.ScheduledScan) -> Optional[str]:
+    def execute_scan_jobs(
+        self, scheduled_scan_obj: data_model.ScheduledScan, mode: str = 'switch'
+    ) -> Optional[str]:
         """
         Execute all collection tools for a scheduled scan in proper order.
 
@@ -510,18 +672,20 @@ class ScheduledScanThread(threading.Thread):
             - Automatically performs cleanup on successful completion
         """
         err_msg = None
+        is_peer = mode == 'join'
         # Configure connection target for this scan
         target_id = scheduled_scan_obj.target_id
-        # None when the server is reachable directly — skips extender/target
-        # switching so same-target scans run in parallel.
-        cm = self._active_connection_manager()
+        cm = self.connection_manager
 
         # Sort tools by execution order for proper dependency handling
         collection_tools = scheduled_scan_obj.collection_tool_map.values()
         sorted_list = sorted(collection_tools, key=cmp_to_key(tool_order_cmp))
 
-        # Establish connection to extender for scan status monitoring
-        if cm and cm.connect_to_extender() == False:
+        # Ensure the server is reachable for scan status monitoring. No-op when
+        # the current connection already reaches the server; otherwise switches
+        # the launchpoint to the extender. Peers ride the already-reachable
+        # target connection and never switch the launchpoint.
+        if not is_peer and not self._ensure_server_reachable(cm):
             err_msg = 'Failed connecting to extender'
             logging.getLogger(__name__).error(err_msg)
             return err_msg
@@ -578,12 +742,16 @@ class ScheduledScanThread(threading.Thread):
                 )
 
                 try:
-                    # Connect to target only for active scanning tools
-                    if tool_obj.tool_type == 2:
+                    # Connect to target only for active scanning tools, and only
+                    # as the switcher — a peer's launchpoint is already on the
+                    # target. Once on it, the switcher confirms reachability so
+                    # same-target peers may join.
+                    if tool_obj.tool_type == 2 and not is_peer:
                         if cm and cm.connect_to_target(target_id) == False:
                             err_msg = 'Failed connecting to target'
                             logging.getLogger(__name__).error(err_msg)
                             return err_msg
+                        self._confirm_active_target_reachable(cm)
 
                     # Execute the actual scanning function
                     try:
@@ -607,7 +775,11 @@ class ScheduledScanThread(threading.Thread):
                         err_msg = task_err if not err_msg else f'{err_msg}\n{task_err}'
 
                 finally:
-                    if cm and cm.connect_to_extender() == False:
+                    # After scanning the target, ensure the server is reachable
+                    # to import results. Reports directly over the target tunnel
+                    # when reachable; otherwise (switcher only, sole holder)
+                    # switches back to the extender. Peers never switch.
+                    if not is_peer and not self._ensure_server_reachable(cm):
                         err_msg = 'Failed connecting to extender'
                         logging.getLogger(__name__).error(err_msg)
                         return err_msg
@@ -718,7 +890,9 @@ class ScheduledScanThread(threading.Thread):
             logging.getLogger(__name__).error('Error processing collector settings: %s' % str(e))
             logging.getLogger(__name__).debug(traceback.format_exc())
 
-    def process_scan_obj(self, scheduled_scan_obj: data_model.ScheduledScan) -> None:
+    def process_scan_obj(
+        self, scheduled_scan_obj: data_model.ScheduledScan, mode: str = 'switch'
+    ) -> None:
         """
         Process a single scheduled scan from creation to completion.
 
@@ -747,20 +921,23 @@ class ScheduledScanThread(threading.Thread):
         """
         # Initialize scan processing
         err_msg = None
+        is_peer = mode == 'join'
 
         # Default to error status for safety
         scan_status = data_model.ScanStatus.ERROR.value
-        # None when the server is reachable directly — skips the lock and the
-        # extender switching so same-target scans run in parallel.
-        cm = self._active_connection_manager()
+        cm = self.connection_manager
         try:
-            if cm:
+            # Only the switcher serializes launchpoint use behind the connection
+            # lock; a same-target peer rides the already-committed connection.
+            if cm and not is_peer:
                 cm.get_connection_lock()
 
-            err_msg = self.execute_scan_jobs(scheduled_scan_obj)
+            err_msg = self.execute_scan_jobs(scheduled_scan_obj, mode=mode)
 
-            # Ensure connection to extender for status updates
-            if cm and cm.connect_to_extender() == False:
+            # Ensure the server is reachable for status updates — reports over
+            # the target tunnel when reachable, otherwise switches back to the
+            # extender. Peers never switch the launchpoint.
+            if not is_peer and not self._ensure_server_reachable(cm):
                 logging.getLogger(__name__).error('Failed connecting to extender')
                 return False
 
@@ -789,9 +966,11 @@ class ScheduledScanThread(threading.Thread):
                 scan_status = data_model.ScanStatus.CANCELLED.value
         finally:
             try:
-                # Always release connection lock
-                if cm:
-                    cm.connect_to_extender()
+                # Ensure the server is reachable before the final status update
+                # (no-op when already reachable from the target). Peers never
+                # switch the launchpoint.
+                if not is_peer:
+                    self._ensure_server_reachable(cm)
 
                 # Update final scan status on server
                 scheduled_scan_obj.update_scan_status(scan_status)
@@ -807,8 +986,10 @@ class ScheduledScanThread(threading.Thread):
             except Exception as e:
                 logging.getLogger(__name__).debug(traceback.format_exc())
             finally:
-                if cm:
+                if cm and not is_peer:
                     cm.free_connection_lock()
+                # Release this worker's slot in the affinity gate.
+                self._finish_work()
 
         # Always remove the scan from the map when processing is done.
         # If the server wants a retry, it will return the scan again in
@@ -865,15 +1046,21 @@ class ScheduledScanThread(threading.Thread):
                     else:
                         self.exit_event.wait(self.checkin_interval)
 
-                    # Flush any pending job results before acquiring the
-                    # connection lock so HTTP retries never stall running jobs.
+                    # Flush any pending job results first so HTTP retries never
+                    # stall running jobs.
                     self._flush_pending_job_completions()
 
                     if self._enabled:
                         try:
-                            # Acquire connection lock if using connection manager
-                            if self.connection_manager:
-                                self.connection_manager.get_connection_lock()
+                            # The poll loop does not hold the connection lock: it
+                            # only talks to the server (HTTP over the current
+                            # tunnel) and dispatches workers. Holding the lock here
+                            # would block behind a long-running switcher and stop
+                            # same-target peers from ever being dispatched. The
+                            # target-affinity gate coordinates launchpoint use;
+                            # the only launchpoint switch in this loop (the
+                            # ConnectionError handler below) is guarded by
+                            # _no_workers_in_flight().
 
                             # Collect log messages for transmission
                             result_str = None
@@ -901,6 +1088,14 @@ class ScheduledScanThread(threading.Thread):
                                     # --- Collector Job dispatch ---
                                     if item_type == 'job':
                                         if sched_scan_obj.id not in self.scheduled_scan_map:
+                                            # Target-affinity gate: switch/join, or
+                                            # defer (None) when a different target
+                                            # is active or this one isn't yet
+                                            # confirmed reachable. Deferred items
+                                            # come back on the next poll.
+                                            mode = self._admit_work(sched_scan_obj.target_id)
+                                            if mode is None:
+                                                continue
                                             self.scheduled_scan_map[sched_scan_obj.id] = (
                                                 sched_scan_obj
                                             )
@@ -908,13 +1103,23 @@ class ScheduledScanThread(threading.Thread):
                                                 target=partial(
                                                     self._process_job_with_slot,
                                                     sched_scan_obj,
+                                                    mode,
                                                 )
                                             ).start()
                                         continue
 
-                                    # --- Scan dispatch (unchanged) ---
+                                    # --- Scan dispatch ---
                                     # Handle new scans
                                     if sched_scan_obj.id not in self.scheduled_scan_map:
+                                        # Target-affinity gate: switch/join, or
+                                        # defer (None) when a different target is
+                                        # active or this one isn't yet confirmed
+                                        # reachable. Deferred scans come back on
+                                        # the next poll.
+                                        mode = self._admit_work(sched_scan_obj.target_id)
+                                        if mode is None:
+                                            continue
+
                                         logging.getLogger(__name__).debug(
                                             'Processing new scan: %s', sched_scan_obj.id
                                         )
@@ -932,6 +1137,7 @@ class ScheduledScanThread(threading.Thread):
                                             target=partial(
                                                 self._process_scan_obj_with_slot,
                                                 scheduled_scan_obj,
+                                                mode,
                                             )
                                         ).start()
 
@@ -957,28 +1163,40 @@ class ScheduledScanThread(threading.Thread):
                                             del self.scheduled_scan_map[scheduled_scan_obj.id]
 
                                         else:
-                                            # Process individual tool cancellation
+                                            # Process individual tool cancellation.
+                                            # The server keeps listing cancelled
+                                            # tool ids while the scan is RUNNING,
+                                            # so only kill ones we haven't already
+                                            # killed — otherwise we'd re-kill (and
+                                            # re-log) the same dead tools every
+                                            # poll iteration.
                                             cancelled_tool_ids = status_obj.cancelled_tool_ids
+                                            new_tool_ids = [
+                                                tid
+                                                for tid in cancelled_tool_ids
+                                                if tid not in scheduled_scan_obj.killed_tool_ids
+                                            ]
 
-                                            # Terminate cancelled tools
-                                            if len(cancelled_tool_ids) > 0:
+                                            # Terminate newly-cancelled tools
+                                            if len(new_tool_ids) > 0:
                                                 logging.getLogger(__name__).debug(
                                                     'Killing cancelled tools'
                                                 )
-                                                scheduled_scan_obj.kill_scan_processes(
-                                                    cancelled_tool_ids
+                                                scheduled_scan_obj.kill_scan_processes(new_tool_ids)
+                                                scheduled_scan_obj.killed_tool_ids.update(
+                                                    new_tool_ids
                                                 )
 
                         except requests.exceptions.ConnectionError as e:
                             logging.getLogger(__name__).error('Unable to connect to server.')
-                            if self.connection_manager:
+                            # Only switch the launchpoint back to the extender when
+                            # no worker is mid-turn on a target — otherwise we'd
+                            # yank the network out from under in-flight work. If a
+                            # target is active the poll just retries next cycle.
+                            if self.connection_manager and self._no_workers_in_flight():
                                 self.connection_manager.connect_to_extender()
                         except Exception as e:
                             logging.getLogger(__name__).debug(traceback.format_exc())
-                        finally:
-                            # Always release connection lock
-                            if self.connection_manager:
-                                self.connection_manager.free_connection_lock()
 
     def stop(self, timeout: Optional[float] = None) -> None:
         """

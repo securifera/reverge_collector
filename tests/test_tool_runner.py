@@ -170,6 +170,102 @@ def test_post_pre_import_calls_recon_manager_and_writes_marker(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# import_batch — POST a single batch without writing any markers
+# ---------------------------------------------------------------------------
+
+
+def test_import_batch_no_op_for_empty_obj_arr(tmp_path):
+    recon_manager = MagicMock()
+    scan_obj = SimpleNamespace(
+        scan_id='s',
+        scan_thread=SimpleNamespace(recon_manager=recon_manager),
+        current_tool=SimpleNamespace(id='t'),
+        scan_data=MagicMock(),
+    )
+    tool_runner.import_batch(scan_obj, [])
+    recon_manager.import_data.assert_not_called()
+
+
+def test_import_batch_releases_heavy_payload_before_updating_scope(tmp_path):
+    """The blob is POSTed but dropped from the in-memory scope to bound memory."""
+    from reverge_collector.data_model import Screenshot
+
+    shot = Screenshot()
+    shot.screenshot = 'BASE64BLOB'
+    shot.image_hash = 'deadbeef'
+
+    recon_manager = MagicMock()
+    recon_manager.import_data.return_value = []
+
+    scan_data = MagicMock()
+    scan_obj = SimpleNamespace(
+        scan_id='s',
+        scan_thread=SimpleNamespace(recon_manager=recon_manager),
+        current_tool=SimpleNamespace(id='t'),
+        scan_data=scan_data,
+    )
+
+    tool_runner.import_batch(scan_obj, [shot])
+
+    # The POST payload still carries the blob (server needs the image).
+    posted = recon_manager.import_data.call_args[0][2]
+    assert posted[0]['data']['screenshot'] == 'BASE64BLOB'
+    # But the scope-update array has the blob stripped (hash retained).
+    scope_arr = scan_data.update.call_args[0][0]
+    assert scope_arr[0]['data']['screenshot'] is None
+    assert scope_arr[0]['data']['image_hash'] == 'deadbeef'
+
+
+def test_import_batch_posts_and_updates_scope_without_markers(tmp_path):
+    from reverge_collector.data_model import Host
+
+    h = Host()
+    h.ipv4_addr = '9.9.9.9'
+
+    recon_manager = MagicMock()
+    recon_manager.import_data.return_value = []  # no remappings
+
+    scan_data = MagicMock()
+    scan_obj = SimpleNamespace(
+        scan_id='s',
+        scan_thread=SimpleNamespace(recon_manager=recon_manager),
+        current_tool=SimpleNamespace(id='t'),
+        scan_data=scan_data,
+    )
+
+    tool_runner.import_batch(scan_obj, [h])
+
+    recon_manager.import_data.assert_called_once()
+    # POSTed payload contains the host's jsonable form
+    posted = recon_manager.import_data.call_args[0][2]
+    assert posted[0]['type'] == 'host'
+    scan_data.update.assert_called_once()
+    # Crucially: batch imports write NO marker files (idempotency for the
+    # streaming path is handled by the completion marker + server hash dedup).
+    assert not (tmp_path / 'tool_pre_import_json').exists()
+    assert not (tmp_path / 'tool_import_json').exists()
+
+
+# ---------------------------------------------------------------------------
+# write_import_complete_marker — final sentinel for streaming imports
+# ---------------------------------------------------------------------------
+
+
+def test_write_import_complete_marker_defaults_to_empty_array(tmp_path):
+    out = tmp_path / 'screenshots.json'
+    tool_runner.write_import_complete_marker(str(out))
+    marker = tmp_path / 'tool_import_json'
+    assert marker.exists()
+    assert json.loads(marker.read_text()) == []
+
+
+def test_write_import_complete_marker_honours_payload(tmp_path):
+    out = tmp_path / 'screenshots.json'
+    tool_runner.write_import_complete_marker(str(out), [{'id': 'r1'}])
+    assert json.loads((tmp_path / 'tool_import_json').read_text()) == [{'id': 'r1'}]
+
+
 def test_import_results_no_op_for_empty_obj_arr(tmp_path):
     scan_obj = SimpleNamespace(
         scan_id='s',

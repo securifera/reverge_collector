@@ -52,9 +52,7 @@ def test_execute_shell_handles_timeout():
 
 def test_execute_shell_accepts_base64_command():
     cmd = 'echo from-b64-shell'
-    out = job_executor.execute_shell(
-        {'command_b64': base64.b64encode(cmd.encode()).decode()}
-    )
+    out = job_executor.execute_shell({'command_b64': base64.b64encode(cmd.encode()).decode()})
     assert out['exit_code'] == 0
     assert 'from-b64-shell' in out['output_text']
 
@@ -107,9 +105,7 @@ def test_execute_python_empty_output_replaced():
 
 def test_execute_python_accepts_base64_script():
     script = 'print("from b64", 1 + 1)'
-    out = job_executor.execute_python(
-        {'script_b64': base64.b64encode(script.encode()).decode()}
-    )
+    out = job_executor.execute_python({'script_b64': base64.b64encode(script.encode()).decode()})
     assert out['exit_code'] == 0
     assert 'from b64 2' in out['output_text']
 

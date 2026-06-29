@@ -320,6 +320,13 @@ python3 -m build
 python3 -m pip install dist/webcap*.whl
 
 # Install netexec
+# NetExec pulls in aardwolf, which builds native extensions and needs a Rust
+# toolchain. Install rustup non-interactively and put cargo on PATH so the
+# pipx build can find the compiler.
+if ! command -v cargo >/dev/null 2>&1; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+fi
+. "$HOME/.cargo/env"
 pipx ensurepath
 pipx install git+https://github.com/securifera/NetExec
 ~/.local/bin/netexec --version
