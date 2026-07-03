@@ -40,6 +40,14 @@ _HTTP_TIMEOUT: tuple = (15, 300)
 _POST_MAX_RETRIES: int = 3
 _POST_RETRY_DELAYS: tuple = (5, 30, 120)  # seconds; one entry per retry
 
+# Connection-pool sizing for the shared requests.Session. Job threads run
+# concurrently and each reports over the same tunnel to the manager, so a
+# keep-alive pool avoids a fresh TCP+TLS handshake per status POST. maxsize
+# is set above the collector's concurrent-job fan-out so threads don't block
+# waiting for a free socket (urllib3 would otherwise discard the overflow).
+_POOL_CONNECTIONS: int = 4
+_POOL_MAXSIZE: int = 16
+
 _CUSTOM_USER_AGENT = 'Mozilla/5.0 (Windows NT 6.1; WOW64; Trident/7.0; AS; rv:11.0) like Gecko'
 
 
@@ -96,7 +104,36 @@ class ApiClient:
             'true',
             'yes',
         )
+        self._session: requests.Session = self._build_session()
         self.session_key: bytes = self._init_session_key()
+
+    @staticmethod
+    def _build_session() -> requests.Session:
+        """Create a keep-alive session with a connection pool for the manager."""
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=_POOL_CONNECTIONS,
+            pool_maxsize=_POOL_MAXSIZE,
+        )
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+        return session
+
+    def reset_pool(self) -> None:
+        """Drop all pooled connections and mount a fresh session.
+
+        Keep-alive sockets are bound to the route that existed when they were
+        opened. After the collector switches the launchpoint (to a target VPN
+        or back to the extender) any pooled connection to the manager is stale:
+        reusing it either forces a slow retry (server sent RST) or hangs until
+        timeout (route black-holed). Call this on every launchpoint switch so
+        the next manager request opens a clean connection on the new route.
+        """
+        try:
+            self._session.close()
+        except Exception:
+            pass
+        self._session = self._build_session()
 
     # ------------------------------------------------------------------
     # Session helpers
@@ -157,7 +194,9 @@ class ApiClient:
         Returns ``None`` on 404; raises on other non-200 responses.
         """
         url = '%s%s' % (self.manager_url, path)
-        r = requests.get(url, headers=self.headers, verify=self.verify_ssl, timeout=_HTTP_TIMEOUT)
+        r = self._session.get(
+            url, headers=self.headers, verify=self.verify_ssl, timeout=_HTTP_TIMEOUT
+        )
         if r.status_code == 404:
             return None
         if r.status_code != 200:
@@ -216,7 +255,7 @@ class ApiClient:
                 time.sleep(delay)
 
             try:
-                r = requests.post(
+                r = self._session.post(
                     url,
                     headers=self.headers,
                     json={'data': b64_val},
@@ -418,4 +457,15 @@ class ApiClient:
         if result is not None:
             payload['result'] = result
         self._post('/api/collector/job/%s/' % job_id, payload)
+        return True
+
+    def update_jobs_status_batch(self, entries: List[Dict[str, Any]]) -> bool:
+        """Report several job statuses (and optional results) in a single POST.
+
+        Each entry is ``{'job_id': <hex>, 'status': int, 'status_message'?: str,
+        'result'?: {...}}``. Collapsing a batch's reports into one request means
+        one network round-trip (and one retry ladder on failure) instead of one
+        per job.
+        """
+        self._post('/api/collector/jobs/status/', {'jobs': entries})
         return True

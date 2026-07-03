@@ -37,8 +37,9 @@ class TestPostRetry:
         """All attempts hit ConnectionError → last_exc raised."""
         client = _make_client()
         with (
-            patch(
-                'reverge_collector.api_client.requests.post',
+            patch.object(
+                client._session,
+                'post',
                 side_effect=requests.ConnectionError('down'),
             ),
             patch('time.sleep'),
@@ -49,8 +50,9 @@ class TestPostRetry:
     def test_timeout_retries_then_raises(self):
         client = _make_client()
         with (
-            patch(
-                'reverge_collector.api_client.requests.post',
+            patch.object(
+                client._session,
+                'post',
                 side_effect=requests.Timeout('slow'),
             ),
             patch('time.sleep'),
@@ -61,8 +63,9 @@ class TestPostRetry:
     def test_500_retries_then_raises_runtime(self):
         client = _make_client()
         with (
-            patch(
-                'reverge_collector.api_client.requests.post',
+            patch.object(
+                client._session,
+                'post',
                 return_value=_mock_resp(500),
             ),
             patch('time.sleep'),
@@ -72,8 +75,9 @@ class TestPostRetry:
 
     def test_non_2xx_4xx_raises_immediately(self):
         client = _make_client()
-        with patch(
-            'reverge_collector.api_client.requests.post',
+        with patch.object(
+            client._session,
+            'post',
             return_value=_mock_resp(403),
         ):
             with pytest.raises(RuntimeError, match='HTTP 403'):
@@ -81,24 +85,27 @@ class TestPostRetry:
 
     def test_404_returns_none(self):
         client = _make_client()
-        with patch(
-            'reverge_collector.api_client.requests.post',
+        with patch.object(
+            client._session,
+            'post',
             return_value=_mock_resp(404),
         ):
             assert client._post('/x', {'a': 1}) is None
 
     def test_200_no_response_expected_returns_true(self):
         client = _make_client()
-        with patch(
-            'reverge_collector.api_client.requests.post',
+        with patch.object(
+            client._session,
+            'post',
             return_value=_mock_resp(200),
         ):
             assert client._post('/x', {'a': 1}) is True
 
     def test_200_empty_body_when_response_expected_returns_none(self):
         client = _make_client()
-        with patch(
-            'reverge_collector.api_client.requests.post',
+        with patch.object(
+            client._session,
+            'post',
             return_value=_mock_resp(200, content=b''),
         ):
             assert client._post('/x', {'a': 1}, expect_response=True) is None
@@ -107,8 +114,9 @@ class TestPostRetry:
         """When _decrypt raises, the except path returns None."""
         client = _make_client()
         with (
-            patch(
-                'reverge_collector.api_client.requests.post',
+            patch.object(
+                client._session,
+                'post',
                 return_value=_mock_resp(200),
             ),
             patch.object(client, '_decrypt', side_effect=Exception('decrypt-fail')),
@@ -118,8 +126,9 @@ class TestPostRetry:
     def test_200_decrypt_returns_none_returns_none(self):
         client = _make_client()
         with (
-            patch(
-                'reverge_collector.api_client.requests.post',
+            patch.object(
+                client._session,
+                'post',
                 return_value=_mock_resp(200),
             ),
             patch.object(client, '_decrypt', return_value=None),
@@ -129,8 +138,9 @@ class TestPostRetry:
     def test_200_success_returns_parsed_json(self):
         client = _make_client()
         with (
-            patch(
-                'reverge_collector.api_client.requests.post',
+            patch.object(
+                client._session,
+                'post',
                 return_value=_mock_resp(200),
             ),
             patch.object(client, '_decrypt', return_value=b'{"key": "value"}'),
@@ -153,10 +163,57 @@ class TestPostRetry:
             return r
 
         with (
-            patch('reverge_collector.api_client.requests.post', side_effect=_side),
+            patch.object(client._session, 'post', side_effect=_side),
             patch('time.sleep'),
         ):
             assert client._post('/x', {}) is True
+
+
+# ===========================================================================
+# Connection pooling (session reuse)
+# ===========================================================================
+
+
+class TestConnectionPooling:
+    def test_client_has_pooled_session(self):
+        """The client owns a single requests.Session so connections are reused
+        across requests instead of a fresh TCP+TLS handshake per call."""
+        client = _make_client()
+        assert isinstance(client._session, requests.Session)
+
+    def test_post_goes_through_session(self):
+        """_post issues its request via the pooled session, not the module-level
+        requests.post (which would open a new connection every time)."""
+        client = _make_client()
+        with patch.object(client._session, 'post', return_value=_mock_resp(200)) as sp:
+            assert client._post('/x', {'a': 1}) is True
+        sp.assert_called_once()
+
+    def test_get_goes_through_session(self):
+        client = _make_client()
+        with patch.object(client._session, 'get', return_value=_mock_resp(404)) as sg:
+            assert client._get('/x') is None
+        sg.assert_called_once()
+
+    def test_session_adapter_pool_configured(self):
+        """The mounted adapter keeps a real pool (maxsize > 1) so concurrent
+        job threads share keep-alive connections."""
+        client = _make_client()
+        adapter = client._session.get_adapter('https://test-server')
+        assert adapter._pool_maxsize > 1
+
+    def test_reset_pool_replaces_session_and_closes_old(self):
+        """reset_pool() drops all pooled connections (stale after a launchpoint
+        switch) by closing the old session and mounting a fresh pooled one."""
+        client = _make_client()
+        old = client._session
+        with patch.object(old, 'close') as old_close:
+            client.reset_pool()
+        old_close.assert_called_once()
+        assert client._session is not old
+        assert isinstance(client._session, requests.Session)
+        adapter = client._session.get_adapter('https://test-server')
+        assert adapter._pool_maxsize > 1
 
 
 # ===========================================================================
@@ -181,3 +238,15 @@ class TestUpdateJobStatus:
         payload = p.call_args.args[1]
         assert 'result' not in payload
         assert payload['status'] == 3
+
+
+class TestUpdateJobsStatusBatch:
+    def test_batch_posts_all_entries_in_one_request(self):
+        client = _make_client()
+        entries = [
+            {'job_id': 'j1', 'status': 2, 'result': {'exit_code': 0}},
+            {'job_id': 'j2', 'status': 3, 'status_message': 'boom'},
+        ]
+        with patch.object(client, '_post', return_value=True) as p:
+            assert client.update_jobs_status_batch(entries) is True
+        p.assert_called_once_with('/api/collector/jobs/status/', {'jobs': entries})

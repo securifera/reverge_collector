@@ -80,14 +80,14 @@ class TestGet:
     def test_get_returns_none_on_404(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 404
-        with patch('requests.get', return_value=mock_resp):
+        with patch.object(self.client._session, 'get', return_value=mock_resp):
             result = self.client._get('/api/scheduler/')
         assert result is None
 
     def test_get_returns_none_on_non_200(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 500
-        with patch('requests.get', return_value=mock_resp):
+        with patch.object(self.client._session, 'get', return_value=mock_resp):
             result = self.client._get('/api/scheduler/')
         assert result is None
 
@@ -95,7 +95,7 @@ class TestGet:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.content = b''
-        with patch('requests.get', return_value=mock_resp):
+        with patch.object(self.client._session, 'get', return_value=mock_resp):
             result = self.client._get('/api/scheduler/')
         assert result is None
 
@@ -103,7 +103,7 @@ class TestGet:
         payload = {'key': 'value'}
         mock_resp = _encrypted_response(payload)
         with (
-            patch('requests.get', return_value=mock_resp),
+            patch.object(self.client._session, 'get', return_value=mock_resp),
             patch.object(self.client, '_decrypt', return_value=json.dumps(payload).encode()),
         ):
             result = self.client._get('/api/something')
@@ -113,7 +113,7 @@ class TestGet:
         payload = {'name': 'scan1'}
         mock_resp = _encrypted_response(payload)
         with (
-            patch('requests.get', return_value=mock_resp),
+            patch.object(self.client._session, 'get', return_value=mock_resp),
             patch.object(self.client, '_decrypt', return_value=json.dumps(payload).encode()),
         ):
             result = self.client._get('/api/something', as_namespace=True)
@@ -134,7 +134,7 @@ class TestPost:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         with (
-            patch('requests.post', return_value=mock_resp),
+            patch.object(self.client._session, 'post', return_value=mock_resp),
             patch.object(self.client, '_encrypt', return_value='b64data'),
         ):
             result = self.client._post('/api/something', {'x': 1})
@@ -144,7 +144,7 @@ class TestPost:
         mock_resp = MagicMock()
         mock_resp.status_code = 404
         with (
-            patch('requests.post', return_value=mock_resp),
+            patch.object(self.client._session, 'post', return_value=mock_resp),
             patch.object(self.client, '_encrypt', return_value='b64data'),
         ):
             result = self.client._post('/api/something', {'x': 1})
@@ -154,7 +154,7 @@ class TestPost:
         mock_resp = MagicMock()
         mock_resp.status_code = 500
         with (
-            patch('requests.post', return_value=mock_resp),
+            patch.object(self.client._session, 'post', return_value=mock_resp),
             patch.object(self.client, '_encrypt', return_value='b64data'),
         ):
             with pytest.raises(RuntimeError):
@@ -164,7 +164,7 @@ class TestPost:
         payload = {'result': 'ok'}
         mock_resp = _encrypted_response(payload)
         with (
-            patch('requests.post', return_value=mock_resp),
+            patch.object(self.client._session, 'post', return_value=mock_resp),
             patch.object(self.client, '_encrypt', return_value='b64data'),
             patch.object(self.client, '_decrypt', return_value=json.dumps(payload).encode()),
         ):
