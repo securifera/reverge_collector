@@ -37,8 +37,16 @@ _HTTP_TIMEOUT: tuple = (15, 300)
 # Retry policy for POST requests: how many *extra* attempts to make after the
 # first failure and how long to wait between them.  Applied to connection
 # errors and HTTP 5xx responses only — 4xx errors are not retried.
-_POST_MAX_RETRIES: int = 3
-_POST_RETRY_DELAYS: tuple = (5, 30, 120)  # seconds; one entry per retry
+#
+# The leading 0 makes the FIRST retry immediate: with a keep-alive connection
+# pool, the first attempt can land on a socket the server already closed while
+# idle (RemoteDisconnected / connection reset).  urllib3 discards that dead
+# connection on failure, so retrying at once opens a fresh one — waiting out a
+# backoff there would just add latency to every poll after an idle gap.  Only
+# if the immediate retry also fails do we fall into the real backoff ladder for
+# a genuinely unavailable server.
+_POST_MAX_RETRIES: int = 4
+_POST_RETRY_DELAYS: tuple = (0, 5, 30, 120)  # seconds; one entry per retry
 
 # Connection-pool sizing for the shared requests.Session. Job threads run
 # concurrently and each reports over the same tunnel to the manager, so a
@@ -128,12 +136,19 @@ class ApiClient:
         reusing it either forces a slow retry (server sent RST) or hangs until
         timeout (route black-holed). Call this on every launchpoint switch so
         the next manager request opens a clean connection on the new route.
+
+        The fresh session is swapped in BEFORE the old one is closed so that a
+        concurrent request on another thread (e.g. the poll loop) never reads a
+        session whose pool has just been torn down — reading a closed pool is
+        itself a source of ``RemoteDisconnected``. Any in-flight request still
+        holds its own reference to the old session and finishes on it safely.
         """
+        old = self._session
+        self._session = self._build_session()
         try:
-            self._session.close()
+            old.close()
         except Exception:
             pass
-        self._session = self._build_session()
 
     # ------------------------------------------------------------------
     # Session helpers
@@ -194,9 +209,18 @@ class ApiClient:
         Returns ``None`` on 404; raises on other non-200 responses.
         """
         url = '%s%s' % (self.manager_url, path)
-        r = self._session.get(
-            url, headers=self.headers, verify=self.verify_ssl, timeout=_HTTP_TIMEOUT
-        )
+        try:
+            r = self._session.get(
+                url, headers=self.headers, verify=self.verify_ssl, timeout=_HTTP_TIMEOUT
+            )
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            # First attempt can land on a keep-alive socket the server already
+            # closed while idle; urllib3 discards it, so one immediate retry
+            # opens a fresh connection.  Re-raise if the retry also fails.
+            logger.warning('GET %s — connection error: %s; retrying once', path, exc)
+            r = self._session.get(
+                url, headers=self.headers, verify=self.verify_ssl, timeout=_HTTP_TIMEOUT
+            )
         if r.status_code == 404:
             return None
         if r.status_code != 200:

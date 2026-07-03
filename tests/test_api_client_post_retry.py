@@ -168,6 +168,52 @@ class TestPostRetry:
         ):
             assert client._post('/x', {}) is True
 
+    def test_connection_error_first_retry_is_immediate(self):
+        """A first-attempt connection error is almost always a stale pooled
+        socket (RemoteDisconnected) — urllib3 has already discarded it, so the
+        retry must open a fresh connection with NO backoff wait, not eat the 5s
+        first-tier delay."""
+        client = _make_client()
+        responses = [requests.ConnectionError('stale-socket'), _mock_resp(200)]
+
+        def _side(*a, **kw):
+            r = responses.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+        with (
+            patch.object(client._session, 'post', side_effect=_side),
+            patch('time.sleep') as slp,
+        ):
+            assert client._post('/x', {}) is True
+        # The retry after the stale-socket failure did not wait.
+        assert slp.call_args_list[0].args[0] == 0
+
+    def test_get_retries_once_on_stale_connection(self):
+        """A GET that lands on a stale pooled socket retries once on a fresh
+        connection instead of propagating the RemoteDisconnected error."""
+        client = _make_client()
+        responses = [requests.ConnectionError('stale-socket'), _mock_resp(200)]
+
+        def _side(*a, **kw):
+            r = responses.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+        with (
+            patch.object(client._session, 'get', side_effect=_side),
+            patch.object(client, '_decrypt', return_value=b'{"k": 1}'),
+        ):
+            assert client._get('/x') == {'k': 1}
+
+    def test_get_reraises_when_both_attempts_fail(self):
+        client = _make_client()
+        with patch.object(client._session, 'get', side_effect=requests.ConnectionError('down')):
+            with pytest.raises(requests.ConnectionError):
+                client._get('/x')
+
 
 # ===========================================================================
 # Connection pooling (session reuse)
@@ -214,6 +260,25 @@ class TestConnectionPooling:
         assert isinstance(client._session, requests.Session)
         adapter = client._session.get_adapter('https://test-server')
         assert adapter._pool_maxsize > 1
+
+    def test_reset_pool_swaps_in_new_session_before_closing_old(self):
+        """self._session must never transiently point at a closed session: the
+        fresh session is swapped in BEFORE the old one is closed. Otherwise a
+        concurrent request (poll thread) can read a just-closed session and get
+        RemoteDisconnected."""
+        client = _make_client()
+        old = client._session
+        observed = {}
+
+        def _record_close():
+            # At close() time the swap must already have happened.
+            observed['still_old'] = client._session is old
+
+        with patch.object(old, 'close', side_effect=_record_close):
+            client.reset_pool()
+
+        assert observed['still_old'] is False
+        assert client._session is not old
 
 
 # ===========================================================================
