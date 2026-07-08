@@ -56,6 +56,7 @@ import logging
 import threading
 import time
 import traceback
+from collections import OrderedDict
 from functools import cmp_to_key, partial
 from threading import Event, Thread
 from typing import Any, Dict, List, Optional, Tuple
@@ -144,6 +145,15 @@ class ScanNotFoundException(Exception):
             >>> raise ScanNotFoundException("Scan ID 123 not found")
         """
         super().__init__(message)
+
+
+class _LaunchpointSwitchError(Exception):
+    """Internal signal that a batch could not reach a usable network.
+
+    Raised inside ``_process_job_batch_with_slot`` when the launchpoint switch
+    (to the extender or the target) fails, so the whole batch is reported as
+    ERROR rather than run against the wrong network. Not part of the public API.
+    """
 
 
 def tool_order_cmp(x: Any, y: Any) -> int:
@@ -436,7 +446,10 @@ class ScheduledScanThread(threading.Thread):
         # the peer gate so the poll loop can't admit a new peer mid-switch.
         if not self._try_begin_launchpoint_switch():
             return False
-        return cm.connect_to_extender() is not False
+        switched = cm.connect_to_extender() is not False
+        # Launchpoint moved back to the extender: drop the stale manager pool.
+        self.recon_manager.reset_api_pool()
+        return switched
 
     def _process_scan_obj_with_slot(
         self, scheduled_scan_obj: data_model.ScheduledScan, mode: str = 'switch'
@@ -445,52 +458,142 @@ class ScheduledScanThread(threading.Thread):
         self.process_scan_obj(scheduled_scan_obj, mode=mode)
 
     def _flush_pending_job_completions(self) -> None:
-        """Retry POSTing results for jobs that completed locally but failed to report."""
+        """Retry reporting jobs that completed locally but failed to report.
+
+        All pending completions are flushed in a single batched request, so a
+        backlog costs one round-trip (and one retry ladder) rather than one per
+        job. On failure the whole backlog stays queued for the next poll.
+        """
         with self.scan_thread_lock:
             pending = dict(self.pending_job_completions)
 
-        for job_id, payload in pending.items():
-            try:
-                self.recon_manager.update_job_status(
-                    job_id,
-                    payload['status'],
-                    status_message=payload['err_msg'] or '',
-                    result=payload['result'],
-                )
-                logging.getLogger(__name__).debug(
-                    'Job %s pending result flushed successfully', job_id
-                )
-                with self.scan_thread_lock:
-                    self.pending_job_completions.pop(job_id, None)
-                    self.scheduled_scan_map.pop(job_id, None)
-            except Exception:
-                logging.getLogger(__name__).warning(
-                    'Job %s result flush failed; will retry next poll', job_id
-                )
+        if not pending:
+            return
+
+        entries = [self._pending_to_entry(jid, p) for jid, p in pending.items()]
+        try:
+            self.recon_manager.update_jobs_status_batch(entries)
+        except Exception:
+            logging.getLogger(__name__).warning(
+                'Pending job flush (%d job(s)) failed; will retry next poll', len(pending)
+            )
+            return
+
+        logging.getLogger(__name__).debug('Flushed %d pending job result(s)', len(pending))
+        with self.scan_thread_lock:
+            for job_id in pending:
+                self.pending_job_completions.pop(job_id, None)
+                self.scheduled_scan_map.pop(job_id, None)
+
+    def _bucket_jobs_by_target(self, items: List[Any]) -> 'OrderedDict[str, List[Any]]':
+        """Group not-yet-dispatched CollectorJob items by ``target_id``.
+
+        Only items whose ``_type`` is ``'job'`` and that are not already
+        in-flight (``scheduled_scan_map``) are bucketed; scans are left for the
+        scan-dispatch path.  Insertion order is preserved so the poll loop
+        admits targets in the order the server returned them.
+
+        Batching same-target jobs into one worker means a single launchpoint
+        switch (and one affinity slot) covers the whole group instead of one
+        switch per job.
+        """
+        buckets: OrderedDict[str, List[Any]] = OrderedDict()
+        for item in items:
+            if getattr(item, '_type', 'scan') != 'job':
+                continue
+            if item.id in self.scheduled_scan_map:
+                continue
+            buckets.setdefault(item.target_id, []).append(item)
+        return buckets
+
+    def _dispatch_job_batches(self, items: List[Any]) -> None:
+        """Admit and dispatch not-yet-running CollectorJobs as per-target batches.
+
+        Caller holds ``scan_thread_lock``.  Jobs are bucketed by target and each
+        admitted target gets ONE worker thread that runs all its queued jobs
+        under a single launchpoint switch (and a single affinity slot).  Targets
+        the affinity gate defers (a different target is active, or this one isn't
+        confirmed reachable yet) are simply left for the next poll.
+        """
+        for target_id, target_jobs in self._bucket_jobs_by_target(items).items():
+            mode = self._admit_work(target_id)
+            if mode is None:
+                continue
+            for job_item in target_jobs:
+                self.scheduled_scan_map[job_item.id] = job_item
+            Thread(
+                target=partial(self._process_job_batch_with_slot, list(target_jobs), mode)
+            ).start()
+
+    @staticmethod
+    def _pending_to_entry(job_id: str, pending: Dict[str, Any]) -> Dict[str, Any]:
+        """Build a wire entry from a ``{status, result, err_msg}`` completion."""
+        entry: Dict[str, Any] = {'job_id': job_id, 'status': pending['status']}
+        if pending.get('err_msg'):
+            entry['status_message'] = pending['err_msg'][:2048]
+        if pending.get('result') is not None:
+            entry['result'] = pending['result']
+        return entry
+
+    def _report_job_batch(self, batch: Dict[str, Dict[str, Any]]) -> set:
+        """Report a whole batch of terminal job statuses in one request.
+
+        ``batch`` maps job_id -> ``{status, result, err_msg}``. Collapsing the
+        reports into a single POST means one network round-trip (and one retry
+        ladder on failure) instead of one per job.
+
+        Returns the set of job_ids that must be queued for retry (the report
+        POST failed) — the caller must NOT pop those from ``scheduled_scan_map``
+        or the poll loop would re-run the already-executed, side-effecting
+        commands.  On success returns an empty set.
+        """
+        if not batch:
+            return set()
+        entries = [self._pending_to_entry(jid, p) for jid, p in batch.items()]
+        try:
+            self.recon_manager.update_jobs_status_batch(entries)
+            return set()
+        except Exception:
+            logging.getLogger(__name__).warning(
+                'Batch status POST for %d job(s) failed; will retry on next poll',
+                len(batch),
+            )
+            with self.scan_thread_lock:
+                for jid, p in batch.items():
+                    self.pending_job_completions[jid] = p
+            return set(batch.keys())
 
     def _process_job_with_slot(self, job_item, mode: str = 'switch') -> None:
-        """Execute a CollectorJob and post results back to the server.
+        """Execute a single CollectorJob (batch-of-one) and report the result."""
+        self._process_job_batch_with_slot([job_item], mode)
 
-        ``mode`` comes from the target-affinity gate:
+    def _process_job_batch_with_slot(self, jobs: List[Any], mode: str = 'switch') -> None:
+        """Execute a batch of same-target CollectorJobs under one launchpoint switch.
+
+        All ``jobs`` share a ``target_id``.  ``mode`` comes from the
+        target-affinity gate:
           - ``'switch'`` — this worker owns the target: it takes the connection
-            lock, switches the launchpoint to the target, and (once on it)
-            records reachability so peers may join.
+            lock, switches the launchpoint to the target once, runs every job,
+            switches back, and reports.  One affinity slot covers the batch.
           - ``'join'`` — a concurrent same-target peer: the launchpoint is
             already committed to the target, so it never takes the lock or
-            touches the launchpoint; it just runs and reports over the tunnel.
+            touches the launchpoint; it just runs its jobs and reports.
+
+        A single job failing (connect/run) is reported as that job's ERROR and
+        never aborts its siblings.  A launchpoint-switch failure fails the whole
+        batch (no target to run on).
         """
         from reverge_collector.job_executor import run_job
 
+        if not jobs:
+            return
+
         is_peer = mode == 'join'
-        err_msg = None
-        result = None
-        # When the COMPLETED/ERROR status POST fails we queue the result for
-        # retry in self.pending_job_completions AND keep the job in
-        # scheduled_scan_map so the poll loop doesn't re-dispatch it (which
-        # would re-run the side-effecting shell/python/file command). Set
-        # by the inner status-post except handlers; checked by the outer
-        # finally to skip the otherwise-unconditional pop.
-        job_queued_for_retry = False
+        target_id = jobs[0].target_id
+        # Job ids queued for retry (status POST failed): their scheduled_scan_map
+        # entry must survive so the poll loop won't re-run the side-effecting
+        # command while the retry is pending.
+        queued_for_retry: set = set()
         cm = self.connection_manager
         try:
             # Only the switcher serializes launchpoint use behind the connection
@@ -499,36 +602,46 @@ class ScheduledScanThread(threading.Thread):
                 cm.get_connection_lock()
 
             # Ensure the server is reachable before any server communication.
-            # The peer's target is already confirmed reachable, so it skips the
-            # probe (and must never switch the launchpoint).
+            # A failure here means we never reached a usable network, so the
+            # whole batch errors out.
             if not is_peer and not self._ensure_server_reachable(cm):
-                raise RuntimeError('Failed connecting to extender')
+                raise _LaunchpointSwitchError('Failed connecting to extender')
 
-            # Configure connection target for this scan
-            target_id = job_item.target_id
+            # RUNNING for every job (best-effort, still on the extender/server).
+            for job_item in jobs:
+                try:
+                    self.recon_manager.update_job_status(
+                        job_item.id, data_model.ScanStatus.RUNNING.value
+                    )
+                except Exception:
+                    logging.getLogger(__name__).warning(
+                        'Job %s: failed to set RUNNING status; proceeding anyway',
+                        job_item.id,
+                    )
 
-            # Update status to RUNNING (best-effort: if the server is briefly
-            # down we proceed anyway rather than blocking or aborting the job).
+            results: Dict[str, Any] = {}
+            run_errors: Dict[str, str] = {}
             try:
-                self.recon_manager.update_job_status(
-                    job_item.id, data_model.ScanStatus.RUNNING.value
-                )
-            except Exception:
-                logging.getLogger(__name__).warning(
-                    'Job %s: failed to set RUNNING status; proceeding anyway',
-                    job_item.id,
-                )
-
-            try:
-                # The switcher connects to the target and, once on it, confirms
-                # whether the server is reachable so same-target peers may join.
-                # Peers skip this — the launchpoint is already on the target.
+                # Switch to the target once for the whole batch, then confirm
+                # reachability so same-target peers may join.  Peers skip this.
                 if not is_peer:
                     if cm and cm.connect_to_target(target_id) == False:
-                        raise RuntimeError('Failed connecting to target %s' % job_item.target_id)
+                        raise _LaunchpointSwitchError('Failed connecting to target %s' % target_id)
+                    if cm:
+                        # Launchpoint moved to the target: pooled manager
+                        # connections are stale for the new route.
+                        self.recon_manager.reset_api_pool()
                     self._confirm_active_target_reachable(cm)
 
-                result = run_job(job_item.job_type, job_item.args)
+                # Run every job on the committed target.  Per-job failures are
+                # captured so one bad job can't abort the rest of the batch.
+                for job_item in jobs:
+                    try:
+                        results[job_item.id] = run_job(job_item.job_type, job_item.args)
+                    except Exception as e:
+                        run_errors[job_item.id] = str(e)
+                        logging.getLogger(__name__).error('Job %s failed: %s', job_item.id, e)
+                        logging.getLogger(__name__).debug(traceback.format_exc())
 
             finally:
                 # After target work, make sure the server is reachable to report
@@ -539,71 +652,48 @@ class ScheduledScanThread(threading.Thread):
                 if not is_peer:
                     self._ensure_server_reachable(cm)
 
-            # Post result + COMPLETED status
-            try:
-                self.recon_manager.update_job_status(
-                    job_item.id,
-                    data_model.ScanStatus.COMPLETED.value,
-                    result=result,
-                )
-                logging.getLogger(__name__).debug(
-                    'Job %s completed (exit_code=%s)',
-                    job_item.id,
-                    result.get('exit_code'),
-                )
-            except Exception:
-                # Server unreachable / 5xx — keep job in scheduled_scan_map so
-                # the poll loop won't re-dispatch it, and store the result so
-                # the next poll iteration can retry the POST without re-running.
-                logging.getLogger(__name__).warning(
-                    'Job %s status POST failed; will retry on next poll',
-                    job_item.id,
-                )
-                with self.scan_thread_lock:
-                    self.pending_job_completions[job_item.id] = {
+            # Build each job's terminal status and report the whole batch in a
+            # single request (one round-trip / one retry ladder for the group).
+            batch: Dict[str, Dict[str, Any]] = {}
+            for job_item in jobs:
+                if job_item.id in run_errors:
+                    batch[job_item.id] = {
+                        'status': data_model.ScanStatus.ERROR.value,
+                        'result': None,
+                        'err_msg': run_errors[job_item.id],
+                    }
+                else:
+                    result = results.get(job_item.id)
+                    batch[job_item.id] = {
                         'status': data_model.ScanStatus.COMPLETED.value,
                         'result': result,
                         'err_msg': None,
                     }
-                # Skip the scheduled_scan_map pop in finally so the poll
-                # loop sees this id as still-in-progress and doesn't
-                # re-dispatch the (already-executed, side-effecting) job.
-                job_queued_for_retry = True
-                return
+            queued_for_retry |= self._report_job_batch(batch)
 
-        except Exception as e:
+        except _LaunchpointSwitchError as e:
+            # No usable target/network for the batch: error out every job.
             err_msg = str(e)
-            logging.getLogger(__name__).error('Job %s failed: %s', job_item.id, e)
-            logging.getLogger(__name__).debug(traceback.format_exc())
-            try:
-                self.recon_manager.update_job_status(
-                    job_item.id,
-                    data_model.ScanStatus.ERROR.value,
-                    status_message=err_msg[:2048],
-                )
-            except Exception:
-                # Server unreachable — store the error result for retry.
-                logging.getLogger(__name__).warning(
-                    'Job %s error-status POST failed; will retry on next poll',
-                    job_item.id,
-                )
-                with self.scan_thread_lock:
-                    self.pending_job_completions[job_item.id] = {
-                        'status': data_model.ScanStatus.ERROR.value,
-                        'result': None,
-                        'err_msg': err_msg,
-                    }
-                job_queued_for_retry = True
-                return
+            logging.getLogger(__name__).error('Job batch on target %s failed: %s', target_id, e)
+            batch = {
+                job_item.id: {
+                    'status': data_model.ScanStatus.ERROR.value,
+                    'result': None,
+                    'err_msg': err_msg,
+                }
+                for job_item in jobs
+            }
+            queued_for_retry |= self._report_job_batch(batch)
         finally:
             if cm and not is_peer:
                 cm.free_connection_lock()
-            # Release this worker's slot in the affinity gate so the target can
-            # drain and a different target can take the launchpoint.
+            # Release this worker's single slot in the affinity gate so the
+            # target can drain and a different target can take the launchpoint.
             self._finish_work()
-            if not job_queued_for_retry:
-                with self.scan_thread_lock:
-                    self.scheduled_scan_map.pop(job_item.id, None)
+            with self.scan_thread_lock:
+                for job_item in jobs:
+                    if job_item.id not in queued_for_retry:
+                        self.scheduled_scan_map.pop(job_item.id, None)
 
     def catch_failure(self, task: Any, exception: Exception) -> None:
         """Capture tool task failures for inclusion in status updates."""
@@ -751,6 +841,10 @@ class ScheduledScanThread(threading.Thread):
                             err_msg = 'Failed connecting to target'
                             logging.getLogger(__name__).error(err_msg)
                             return err_msg
+                        if cm:
+                            # Launchpoint moved to the target: drop the stale
+                            # manager connection pool.
+                            self.recon_manager.reset_api_pool()
                         self._confirm_active_target_reachable(cm)
 
                     # Execute the actual scanning function
@@ -1082,30 +1176,20 @@ class ScheduledScanThread(threading.Thread):
                             # Process scheduled scans and jobs with thread safety
                             with self.scan_thread_lock:
                                 sched_scan_obj_arr = recon_manager.get_scheduled_scans()
+
+                                # --- Collector Job dispatch ---
+                                # Batch same-target jobs into one worker per
+                                # target so a single launchpoint switch (and one
+                                # affinity slot) covers the whole group instead
+                                # of one switch per job.
+                                self._dispatch_job_batches(sched_scan_obj_arr)
+
                                 for sched_scan_obj in sched_scan_obj_arr:
                                     item_type = getattr(sched_scan_obj, '_type', 'scan')
 
-                                    # --- Collector Job dispatch ---
+                                    # Jobs were dispatched in per-target batches
+                                    # above.
                                     if item_type == 'job':
-                                        if sched_scan_obj.id not in self.scheduled_scan_map:
-                                            # Target-affinity gate: switch/join, or
-                                            # defer (None) when a different target
-                                            # is active or this one isn't yet
-                                            # confirmed reachable. Deferred items
-                                            # come back on the next poll.
-                                            mode = self._admit_work(sched_scan_obj.target_id)
-                                            if mode is None:
-                                                continue
-                                            self.scheduled_scan_map[sched_scan_obj.id] = (
-                                                sched_scan_obj
-                                            )
-                                            Thread(
-                                                target=partial(
-                                                    self._process_job_with_slot,
-                                                    sched_scan_obj,
-                                                    mode,
-                                                )
-                                            ).start()
                                         continue
 
                                     # --- Scan dispatch ---
@@ -1195,6 +1279,9 @@ class ScheduledScanThread(threading.Thread):
                             # target is active the poll just retries next cycle.
                             if self.connection_manager and self._no_workers_in_flight():
                                 self.connection_manager.connect_to_extender()
+                                # Launchpoint moved back to the extender: drop
+                                # the stale manager connection pool.
+                                self.recon_manager.reset_api_pool()
                         except Exception as e:
                             logging.getLogger(__name__).debug(traceback.format_exc())
 
@@ -1667,3 +1754,17 @@ class ReconManager:
         result: Optional[Dict[str, Any]] = None,
     ) -> bool:
         return self._api_client.update_job_status(job_id, status, status_message, result)
+
+    def update_jobs_status_batch(self, entries: List[Dict[str, Any]]) -> bool:
+        return self._api_client.update_jobs_status_batch(entries)
+
+    def reset_api_pool(self) -> None:
+        """Drop the manager connection pool after a launchpoint switch.
+
+        Pooled keep-alive sockets are stale once the network route changes;
+        the worker calls this after every launchpoint switch so the next
+        manager POST opens a clean connection. Safe no-op if the client hasn't
+        been created yet.
+        """
+        if self._api_client is not None:
+            self._api_client.reset_pool()

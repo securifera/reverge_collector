@@ -47,7 +47,22 @@ def make_job(job_id='job-1', target_id='target-1', job_type='shell', args=None):
         target_id=target_id,
         job_type=job_type,
         args=args,
+        _type='job',
     )
+
+
+def _reported(recon_manager):
+    """All (job_id, status) pairs reported via batched job-status calls."""
+    pairs = []
+    for c in recon_manager.update_jobs_status_batch.call_args_list:
+        for entry in c.args[0]:
+            pairs.append((entry['job_id'], entry['status']))
+    return pairs
+
+
+def _reported_statuses(recon_manager):
+    """Just the reported status values (order preserved)."""
+    return [s for _, s in _reported(recon_manager)]
 
 
 # ===========================================================================
@@ -67,24 +82,38 @@ class TestProcessJobWithSlot:
         ):
             t._process_job_with_slot(job)
 
-        # COMPLETED status was POSTed
-        calls = t.recon_manager.update_job_status.call_args_list
-        # Two calls: RUNNING then COMPLETED
-        assert any(c.args[1] == data_model.ScanStatus.COMPLETED.value for c in calls)
+        # COMPLETED status was reported (in the batch report).
+        assert data_model.ScanStatus.COMPLETED.value in _reported_statuses(t.recon_manager)
         # Map cleaned up
         assert job.id not in t.scheduled_scan_map
         # No pending retries
         assert t.pending_job_completions == {}
 
+    def test_launchpoint_switch_resets_api_pool(self):
+        """After switching the launchpoint (connect_to_target / back to the
+        extender), the pooled manager connections are stale for the new route,
+        so the worker must reset the api_client pool before reporting."""
+        cm = MagicMock()
+        cm.connect_to_extender.return_value = True
+        cm.connect_to_target.return_value = True
+        t = make_thread(connection_manager=cm)
+        job = make_job()
+        t.scheduled_scan_map[job.id] = job
+
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ):
+            t._process_job_with_slot(job)
+
+        assert t.recon_manager.reset_api_pool.called
+
     def test_running_status_post_failure_is_swallowed(self):
         """If the initial RUNNING status update fails (server down), the
         job should still run — we don't want a flaky server to block jobs."""
         t = make_thread()
-        # First call (RUNNING) raises; second call (COMPLETED) succeeds
-        t.recon_manager.update_job_status.side_effect = [
-            Exception('server down'),
-            True,
-        ]
+        # The RUNNING status update (per-job) fails.
+        t.recon_manager.update_job_status.side_effect = Exception('server down')
 
         job = make_job()
         with patch(
@@ -92,16 +121,15 @@ class TestProcessJobWithSlot:
             return_value={'exit_code': 0},
         ):
             t._process_job_with_slot(job)
-        # Despite the first failure, COMPLETED was posted
-        assert t.recon_manager.update_job_status.call_count == 2
+        # RUNNING was attempted, and despite its failure COMPLETED was still
+        # reported (via the batch report).
+        t.recon_manager.update_job_status.assert_called_once()
+        assert data_model.ScanStatus.COMPLETED.value in _reported_statuses(t.recon_manager)
 
     def test_completed_post_failure_queues_for_retry(self):
         t = make_thread()
-        # RUNNING ok, COMPLETED fails
-        t.recon_manager.update_job_status.side_effect = [
-            True,
-            Exception('500 internal error'),
-        ]
+        # RUNNING ok (per-job), batch COMPLETED report fails.
+        t.recon_manager.update_jobs_status_batch.side_effect = Exception('500 internal error')
 
         job = make_job()
         t.scheduled_scan_map[job.id] = job
@@ -130,17 +158,13 @@ class TestProcessJobWithSlot:
         ):
             t._process_job_with_slot(job)
 
-        calls = t.recon_manager.update_job_status.call_args_list
-        # ERROR was posted
-        assert any(c.args[1] == data_model.ScanStatus.ERROR.value for c in calls)
+        # ERROR was reported (in the batch report).
+        assert data_model.ScanStatus.ERROR.value in _reported_statuses(t.recon_manager)
 
     def test_error_status_post_failure_queues_for_retry(self):
         t = make_thread()
-        # RUNNING ok, ERROR post fails
-        t.recon_manager.update_job_status.side_effect = [
-            True,
-            Exception('server unreachable'),
-        ]
+        # RUNNING ok (per-job), batch ERROR report fails.
+        t.recon_manager.update_jobs_status_batch.side_effect = Exception('server unreachable')
         job = make_job()
         with patch(
             'reverge_collector.job_executor.run_job',
@@ -159,9 +183,8 @@ class TestProcessJobWithSlot:
         job = make_job()
         # Should NOT raise; the wrapper catches all exceptions
         t._process_job_with_slot(job)
-        # Should have posted ERROR
-        calls = t.recon_manager.update_job_status.call_args_list
-        assert any(c.args[1] == data_model.ScanStatus.ERROR.value for c in calls)
+        # Should have reported ERROR
+        assert data_model.ScanStatus.ERROR.value in _reported_statuses(t.recon_manager)
 
     def test_connect_to_target_failure_routes_to_error(self):
         cm = MagicMock()
@@ -170,8 +193,7 @@ class TestProcessJobWithSlot:
         t = make_thread(connection_manager=cm)
         job = make_job()
         t._process_job_with_slot(job)
-        calls = t.recon_manager.update_job_status.call_args_list
-        assert any(c.args[1] == data_model.ScanStatus.ERROR.value for c in calls)
+        assert data_model.ScanStatus.ERROR.value in _reported_statuses(t.recon_manager)
 
     def test_connection_lock_released_in_finally(self):
         cm = MagicMock()
@@ -185,6 +207,147 @@ class TestProcessJobWithSlot:
             t._process_job_with_slot(make_job())
         cm.get_connection_lock.assert_called()
         cm.free_connection_lock.assert_called()
+
+
+# ===========================================================================
+# _bucket_jobs_by_target + _process_job_batch_with_slot
+# ===========================================================================
+
+
+class TestBucketJobsByTarget:
+    def test_groups_jobs_by_target_and_ignores_scans(self):
+        t = make_thread()
+        scan = SimpleNamespace(id='scan-1', target_id='target-A', _type='scan')
+        items = [
+            make_job('j1', target_id='target-A'),
+            scan,
+            make_job('j2', target_id='target-A'),
+            make_job('j3', target_id='target-B'),
+        ]
+        buckets = t._bucket_jobs_by_target(items)
+        assert [j.id for j in buckets['target-A']] == ['j1', 'j2']
+        assert [j.id for j in buckets['target-B']] == ['j3']
+        # Scans are not bucketed here.
+        assert all(getattr(x, '_type', 'scan') == 'job' for v in buckets.values() for x in v)
+
+    def test_skips_jobs_already_in_scheduled_map(self):
+        t = make_thread()
+        j1 = make_job('j1', target_id='target-A')
+        j2 = make_job('j2', target_id='target-A')
+        t.scheduled_scan_map['j1'] = j1  # already dispatched
+        buckets = t._bucket_jobs_by_target([j1, j2])
+        assert [j.id for j in buckets['target-A']] == ['j2']
+
+
+class TestProcessJobBatchWithSlot:
+    def test_batch_runs_all_jobs_with_single_target_switch(self):
+        cm = MagicMock()
+        cm.connect_to_extender.return_value = True
+        cm.connect_to_target.return_value = True
+        t = make_thread(connection_manager=cm)
+        jobs = [make_job('j1'), make_job('j2'), make_job('j3')]
+        for j in jobs:
+            t.scheduled_scan_map[j.id] = j
+
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ) as rj:
+            t._process_job_batch_with_slot(jobs, 'switch')
+
+        # Exactly one launchpoint switch for the whole batch.
+        assert cm.connect_to_target.call_count == 1
+        # Every job ran.
+        assert rj.call_count == 3
+        # All three reported COMPLETED, in a single batched request.
+        assert t.recon_manager.update_jobs_status_batch.call_count == 1
+        statuses = _reported_statuses(t.recon_manager)
+        assert statuses == [data_model.ScanStatus.COMPLETED.value] * 3
+        # Every job removed from the in-flight map; one affinity slot released.
+        assert t.scheduled_scan_map == {}
+
+    def test_batch_slot_released_once_for_whole_batch(self):
+        cm = MagicMock()
+        cm.connect_to_extender.return_value = True
+        cm.connect_to_target.return_value = True
+        t = make_thread(connection_manager=cm)
+        # Occupy the affinity gate as this batch's single slot.
+        assert t._admit_work('target-1') == 'switch'
+        jobs = [make_job('j1'), make_job('j2')]
+        for j in jobs:
+            t.scheduled_scan_map[j.id] = j
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ):
+            t._process_job_batch_with_slot(jobs, 'switch')
+        # The single slot drained → target released for the next poll.
+        assert t._no_workers_in_flight()
+
+    def test_batch_one_job_failure_does_not_abort_others(self):
+        cm = MagicMock()
+        cm.connect_to_extender.return_value = True
+        cm.connect_to_target.return_value = True
+        t = make_thread(connection_manager=cm)
+        jobs = [make_job('j1'), make_job('j2'), make_job('j3')]
+        for j in jobs:
+            t.scheduled_scan_map[j.id] = j
+
+        def _run(job_type, args):
+            # Second job blows up; the others must still run + report.
+            if 'boom' in args:
+                raise RuntimeError('handler crashed')
+            return {'exit_code': 0}
+
+        jobs[1].args = 'boom'
+        with patch('reverge_collector.job_executor.run_job', side_effect=_run):
+            t._process_job_batch_with_slot(jobs, 'switch')
+
+        statuses = _reported_statuses(t.recon_manager)
+        assert statuses.count(data_model.ScanStatus.COMPLETED.value) == 2
+        assert statuses.count(data_model.ScanStatus.ERROR.value) == 1
+        assert t.scheduled_scan_map == {}
+
+
+class TestDispatchJobBatches:
+    def test_dispatches_first_target_and_defers_other_target(self):
+        """Only one target can hold the launchpoint, so a poll admits the first
+        target's whole batch and leaves the other target for the next poll."""
+        t = make_thread()
+        items = [
+            make_job('j1', target_id='A'),
+            make_job('j2', target_id='A'),
+            make_job('j3', target_id='B'),
+        ]
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches(items)
+
+        # One batch worker for the admitted target A; target B deferred.
+        assert MockThread.call_count == 1
+        p = MockThread.call_args.kwargs['target']
+        assert p.func == t._process_job_batch_with_slot
+        assert [j.id for j in p.args[0]] == ['j1', 'j2']
+        assert p.args[1] == 'switch'
+        # Only the admitted target's jobs are marked in-flight.
+        assert set(t.scheduled_scan_map) == {'j1', 'j2'}
+        MockThread.return_value.start.assert_called_once()
+
+    def test_same_target_batch_joins_when_active_and_reachable(self):
+        t = make_thread()
+        assert t._admit_work('A') == 'switch'
+        t._mark_target_reachable(True)
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j9', target_id='A')])
+        p = MockThread.call_args.kwargs['target']
+        assert p.args[1] == 'join'
+
+    def test_no_jobs_dispatches_nothing(self):
+        t = make_thread()
+        scan = SimpleNamespace(id='s1', target_id='A', _type='scan')
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([scan])
+        MockThread.assert_not_called()
+        assert t.scheduled_scan_map == {}
 
 
 # ===========================================================================
@@ -767,8 +930,7 @@ class TestJobConnectionDance:
         cm.connect_to_target.assert_called()
         cm.connect_to_extender.assert_not_called()
         # Result still reported and map cleaned up.
-        calls = t.recon_manager.update_job_status.call_args_list
-        assert any(c.args[1] == data_model.ScanStatus.COMPLETED.value for c in calls)
+        assert data_model.ScanStatus.COMPLETED.value in _reported_statuses(t.recon_manager)
         assert job.id not in t.scheduled_scan_map
 
     def test_unreachable_job_uses_serial_connection_dance(self):
@@ -811,8 +973,7 @@ class TestPeerJob:
         cm.connect_to_target.assert_not_called()
         cm.connect_to_extender.assert_not_called()
         # Still reports COMPLETED and cleans up.
-        calls = t.recon_manager.update_job_status.call_args_list
-        assert any(c.args[1] == data_model.ScanStatus.COMPLETED.value for c in calls)
+        assert data_model.ScanStatus.COMPLETED.value in _reported_statuses(t.recon_manager)
         assert job.id not in t.scheduled_scan_map
         # Slot released (count back to switcher only).
         assert t._active_worker_count == 1
@@ -823,8 +984,9 @@ class TestPeerJob:
         t._active_target_id = 'target-1'
         t._active_worker_count = 2
         t._active_target_reachable = True
-        # RUNNING ok, COMPLETED fails (server briefly unreachable over tunnel).
-        t.recon_manager.update_job_status.side_effect = [True, Exception('500')]
+        # RUNNING ok (per-job), batch COMPLETED report fails (server briefly
+        # unreachable over the tunnel).
+        t.recon_manager.update_jobs_status_batch.side_effect = Exception('500')
         job = make_job()
         t.scheduled_scan_map[job.id] = job
         with patch(

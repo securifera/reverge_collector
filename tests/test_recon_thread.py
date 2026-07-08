@@ -51,20 +51,37 @@ def test_catch_failure_records_tuple():
 def test_flush_pending_job_completions_clears_on_success():
     t = _make_thread()
     t.pending_job_completions = {'j1': {'status': 2, 'result': {'x': 1}, 'err_msg': None}}
-    t.recon_manager.update_job_status.return_value = True
+    t.recon_manager.update_jobs_status_batch.return_value = True
 
     t._flush_pending_job_completions()
     # Cleared on success
     assert t.pending_job_completions == {}
-    t.recon_manager.update_job_status.assert_called_once_with(
-        'j1', 2, status_message='', result={'x': 1}
+    # Flushed as one batched request.
+    t.recon_manager.update_jobs_status_batch.assert_called_once_with(
+        [{'job_id': 'j1', 'status': 2, 'result': {'x': 1}}]
     )
+
+
+def test_flush_pending_job_completions_batches_multiple():
+    t = _make_thread()
+    t.pending_job_completions = {
+        'j1': {'status': 2, 'result': {'x': 1}, 'err_msg': None},
+        'j2': {'status': 3, 'result': None, 'err_msg': 'boom'},
+    }
+    t.recon_manager.update_jobs_status_batch.return_value = True
+
+    t._flush_pending_job_completions()
+    assert t.pending_job_completions == {}
+    # A single batched request carried both jobs.
+    t.recon_manager.update_jobs_status_batch.assert_called_once()
+    entries = t.recon_manager.update_jobs_status_batch.call_args.args[0]
+    assert {e['job_id'] for e in entries} == {'j1', 'j2'}
 
 
 def test_flush_pending_job_completions_keeps_on_failure():
     t = _make_thread()
     t.pending_job_completions = {'j1': {'status': 2, 'result': None, 'err_msg': 'oops'}}
-    t.recon_manager.update_job_status.side_effect = RuntimeError('server down')
+    t.recon_manager.update_jobs_status_batch.side_effect = RuntimeError('server down')
 
     t._flush_pending_job_completions()
     # Still pending after a failed retry

@@ -156,6 +156,27 @@ Once running, the interactive console provides real-time control:
 > q                    # Quit application
 ```
 
+### Import findings without a collector run
+
+`scan_import_cli` serializes scan objects into the `{scan_id, tool_id, obj_list}`
+envelope that the Reverge server's `import_scan_data` tool accepts — handy for
+recording manual/external findings. It enforces the record dependency graph (a
+port needs a host; a component/vuln/endpoint needs a port) and wires parents
+automatically.
+
+```bash
+# Flag mode — one object graph:
+python -m reverge_collector.scan_import_cli --scan-id <hex> \
+    --host 1.2.3.4 --port 80 --component Apache --version 1.0 --url https://www.example.com
+
+# Document mode — many objects from a JSON file:
+python -m reverge_collector.scan_import_cli --in findings.json --out envelope.json
+```
+
+See [docs/import_scan_findings.md](docs/import_scan_findings.md) for the full flag
+list, findings-document format, supported record types, and the end-to-end
+workflow.
+
 ## 🏛️ Architecture
 
 ### System Overview
