@@ -21,6 +21,7 @@ import binascii
 import json
 import logging
 import os
+import time
 import zlib
 from typing import Any, Dict, List, Optional
 
@@ -29,6 +30,18 @@ from Cryptodome.Cipher import AES, PKCS1_OAEP
 from Cryptodome.PublicKey import RSA
 
 logger = logging.getLogger(__name__)
+
+
+# Retry policy for the session-key handshake (POST /api/session).  This mirrors
+# the ladder used by ApiClient._post: a transient connection error (server
+# briefly down, RST on an idle keep-alive socket) almost certainly never reached
+# the server, so retrying is safe.  The leading 0 makes the first retry
+# immediate; only if that also fails do we fall into the backoff ladder for a
+# genuinely unavailable server.  After the ladder is exhausted we raise a clean
+# RuntimeError so the caller can decide whether to keep waiting rather than a raw
+# ConnectionError crashing the whole registration.
+_SESSION_MAX_RETRIES: int = 4
+_SESSION_RETRY_DELAYS: tuple = (0, 5, 30, 120)  # seconds; one entry per retry
 
 
 # ---------------------------------------------------------------------------
@@ -168,13 +181,38 @@ def get_session_key(
     private_key_der = key.export_key(format='DER')
     public_key_b64 = base64.b64encode(key.publickey().export_key(format='DER')).decode()
 
-    r = requests.post(
-        '%s/api/session' % manager_url,
-        headers=headers,
-        json={'data': public_key_b64},
-        verify=False,
-        timeout=30,
-    )
+    last_exc: Optional[Exception] = None
+    r = None
+    for attempt in range(_SESSION_MAX_RETRIES + 1):
+        if attempt > 0:
+            delay = _SESSION_RETRY_DELAYS[attempt - 1]
+            logger.warning(
+                'POST /api/session attempt %d/%d — retrying in %ds',
+                attempt + 1,
+                _SESSION_MAX_RETRIES + 1,
+                delay,
+            )
+            time.sleep(delay)
+        try:
+            r = requests.post(
+                '%s/api/session' % manager_url,
+                headers=headers,
+                json={'data': public_key_b64},
+                verify=False,
+                timeout=30,
+            )
+            break
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            logger.warning('POST /api/session attempt %d — connection error: %s', attempt + 1, exc)
+            last_exc = exc
+            continue
+
+    if r is None:
+        raise RuntimeError(
+            'Reverge session key exchange failed after %d attempts: %s'
+            % (_SESSION_MAX_RETRIES + 1, last_exc)
+        ) from last_exc
+
     if r.status_code != 200:
         raise RuntimeError('Reverge session key exchange failed (HTTP %d)' % r.status_code)
 
