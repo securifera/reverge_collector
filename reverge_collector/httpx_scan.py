@@ -41,7 +41,7 @@ class Httpx(ToolSpec):
     tags = ['http-crawl', 'service-detection', 'fast']
     collector_type = data_model.CollectorType.ACTIVE.value
     scan_order = 4
-    args = '-favicon -td -t 50 -timeout 3 -maxhr 5 -rstr 10000 -tls-grab'
+    args = '-favicon -td -t 50 -timeout 3 -maxhr 5 -tls-grab -fhr -s -sd -rstr 10000'
     input_records = [
         data_model.ServerRecordType.HOST,
         data_model.ServerRecordType.PORT,
@@ -209,8 +209,6 @@ def execute_scan(scan_input) -> None:
             '-json',
             '-silent',
             '-irr',
-            '-s',
-            '-sd',
             '-l',
             scan_input_file_path,
             '-o',
@@ -507,6 +505,7 @@ def parse_httpx_output(
                     if 'product' in cpe_entry and 'cpe' in cpe_entry:
                         cpe_map[cpe_entry['product'].lower()] = cpe_entry['cpe']
 
+            emitted_products: set = set()
             if 'tech' in httpx_scan:
                 for tech_entry in httpx_scan['tech']:
                     comp = data_model.Cpe(parent_id=port_obj.id)
@@ -523,7 +522,24 @@ def parse_httpx_output(
                     structured_cpe = cpe_map.get(comp.product)
                     if structured_cpe:
                         comp.cpe = structured_cpe
+                    emitted_products.add(comp.product)
                     ret_arr.append(comp)
+
+            # httpx's cpe array is independent of tech: a CPE can be reported with
+            # no corresponding tech entry (e.g. vmware:horizon_view detected while
+            # tech only lists Java).  Emit an object for each cpe product not
+            # already produced from tech so those detections aren't dropped.
+            for product, structured_cpe in cpe_map.items():
+                if product in emitted_products:
+                    continue
+                comp = data_model.Cpe(parent_id=port_obj.id)
+                comp.collection_tool_instance_id = tool_instance_id
+                comp.part = 'a'
+                comp.cpe = structured_cpe
+                if not comp.product:
+                    comp.product = product
+                emitted_products.add(product)
+                ret_arr.append(comp)
 
             if 'raw_header' in httpx_scan:
                 output = httpx_scan['raw_header']

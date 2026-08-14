@@ -238,6 +238,44 @@ def test_parse_tech_and_cpe_metadata_overlay(tmp_path):
     assert any(c.product == 'jquery' for c in cpes)
 
 
+def test_parse_cpe_without_matching_tech_still_produces_object(tmp_path):
+    """A cpe entry whose product has no corresponding tech entry must still
+    produce its own Cpe object.
+
+    Regression: httpx reports a structured cpe array independent of the tech
+    array.  When httpx detects e.g. vmware:horizon_view in ``cpe`` but only
+    ``Java`` in ``tech``, the horizon_view CPE was silently dropped because
+    Cpe objects were only ever built from the tech array.
+    """
+    from reverge_collector.httpx_scan import parse_httpx_output
+
+    out = _write_blobs(
+        tmp_path,
+        [
+            {
+                'input': 'desktop.example.com',
+                'port': '443',
+                'tech': ['Java'],
+                'cpe': [
+                    {
+                        'product': 'horizon_view',
+                        'vendor': 'vmware',
+                        'cpe': 'cpe:2.3:a:vmware:horizon_view:*:*:*:*:*:*:*:*',
+                    }
+                ],
+            }
+        ],
+    )
+    records = parse_httpx_output([out], tool_instance_id='ti', tool_id='td')
+    cpes = [r for r in records if type(r).__name__ == 'Cpe']
+    products = {c.product for c in cpes}
+    # Both the tech-derived and the cpe-derived component must be present.
+    assert 'java' in products
+    assert 'horizon_view' in products
+    horizon = next(c for c in cpes if c.product == 'horizon_view')
+    assert horizon.vendor == 'vmware'
+
+
 def test_parse_raw_header_and_body_emit_module_outputs(tmp_path):
     from reverge_collector.httpx_scan import parse_httpx_output
 
