@@ -1056,3 +1056,259 @@ class TestScanConnectionDance:
         # The scan still ran and imported.
         t.recon_manager.scan_func.assert_called()
         t.recon_manager.import_func.assert_called()
+
+
+# ===========================================================================
+# Returning the launchpoint to the extender once work drains
+# ===========================================================================
+
+
+class TestExtenderLaunchpointRestore:
+    """The launchpoint must not stay parked on the last target once idle.
+
+    A worker only switches back to the extender when it *needs* to reach the
+    server (_ensure_server_reachable). Two gaps left the collector sitting on a
+    target indefinitely:
+
+    * The target VPN could still reach the server, so the switch-back was
+      skipped by design — and nothing moved it afterwards.
+    * A same-target peer in flight made _try_begin_launchpoint_switch() refuse,
+      and peers never switch back themselves.
+
+    Either way the launchpoint only moved when a *different* target's work
+    arrived, or when a poll finally timed out. The poll loop now restores it
+    once the last worker drains.
+    """
+
+    def test_no_restore_when_launchpoint_never_left_the_extender(self):
+        cm = MagicMock()
+        t = make_thread(connection_manager=cm)
+        assert t._restore_extender_launchpoint() is False
+        cm.connect_to_extender.assert_not_called()
+
+    def test_restores_when_idle_after_target_work(self):
+        cm = MagicMock()
+        cm.connect_to_extender.return_value = True
+        t = make_thread(connection_manager=cm)
+        t._note_launchpoint_on_target()
+
+        assert t._restore_extender_launchpoint() is True
+        cm.connect_to_extender.assert_called_once()
+        # Pooled manager sockets are bound to the target route; drop them.
+        assert t.recon_manager.reset_api_pool.called
+        # Flag cleared, and the gate slot handed back.
+        assert t._launchpoint_on_target is False
+        assert t._no_workers_in_flight() is True
+
+    def test_restore_serializes_behind_the_connection_lock(self):
+        cm = MagicMock()
+        cm.connect_to_extender.return_value = True
+        t = make_thread(connection_manager=cm)
+        t._note_launchpoint_on_target()
+        t._restore_extender_launchpoint()
+        cm.get_connection_lock.assert_called_once()
+        cm.free_connection_lock.assert_called_once()
+
+    def test_restore_defers_while_a_worker_holds_the_target(self):
+        # Claiming the affinity slot is what keeps the restore from yanking the
+        # network out from under in-flight work.
+        cm = MagicMock()
+        t = make_thread(connection_manager=cm)
+        t._note_launchpoint_on_target()
+        t._admit_work('T')
+
+        assert t._restore_extender_launchpoint() is False
+        cm.connect_to_extender.assert_not_called()
+        # Still flagged, so it retries once the worker drains.
+        assert t._launchpoint_on_target is True
+
+    def test_restore_runs_after_a_peer_drains(self):
+        # The switcher's own switch-back is refused while a peer is in flight;
+        # the drain-time restore is what finally moves the launchpoint.
+        cm = MagicMock()
+        cm.connect_to_extender.return_value = True
+        t = make_thread(connection_manager=cm)
+        t._note_launchpoint_on_target()
+        t._admit_work('T')
+        t._mark_target_reachable(True)
+        t._admit_work('T')  # peer joins
+        assert t._restore_extender_launchpoint() is False
+
+        t._finish_work()
+        assert t._restore_extender_launchpoint() is False  # switcher still in flight
+        t._finish_work()
+        assert t._restore_extender_launchpoint() is True
+
+    def test_restore_keeps_flag_when_switch_reports_failure(self):
+        cm = MagicMock()
+        cm.connect_to_extender.return_value = False
+        t = make_thread(connection_manager=cm)
+        t._note_launchpoint_on_target()
+
+        assert t._restore_extender_launchpoint() is False
+        assert t._launchpoint_on_target is True
+        assert t._no_workers_in_flight() is True
+
+    def test_restore_releases_everything_when_switch_raises(self):
+        cm = MagicMock()
+        cm.connect_to_extender.side_effect = RuntimeError('boom')
+        t = make_thread(connection_manager=cm)
+        t._note_launchpoint_on_target()
+
+        assert t._restore_extender_launchpoint() is False
+        assert t._launchpoint_on_target is True
+        assert t._no_workers_in_flight() is True
+        cm.free_connection_lock.assert_called_once()
+
+    def test_restore_without_connection_manager(self):
+        t = make_thread(connection_manager=None)
+        t._note_launchpoint_on_target()
+        assert t._restore_extender_launchpoint() is False
+
+    def test_job_batch_on_a_reachable_target_leaves_the_launchpoint_dirty(self):
+        # The bug in miniature: the job ran, the target could reach the server
+        # so no switch back happened, and the launchpoint is still on the
+        # target. The flag is what lets the poll loop notice and fix it.
+        cm = MagicMock()
+        cm.connect_to_target.return_value = True
+        cm.is_server_reachable.return_value = True
+        t = make_thread(connection_manager=cm)
+        job = make_job()
+        t.scheduled_scan_map[job.id] = job
+
+        with patch('reverge_collector.job_executor.run_job', return_value={'exit_code': 0}):
+            t._process_job_with_slot(job)
+
+        cm.connect_to_extender.assert_not_called()
+        assert t._launchpoint_on_target is True
+
+    def test_switching_back_to_the_extender_clears_the_flag(self):
+        cm = MagicMock()
+        cm.is_server_reachable.return_value = False
+        cm.connect_to_extender.return_value = True
+        t = make_thread(connection_manager=cm)
+        t._note_launchpoint_on_target()
+        t._active_worker_count = 1  # sole holder
+
+        assert t._ensure_server_reachable(cm) is True
+        assert t._launchpoint_on_target is False
+
+    def test_scan_on_a_reachable_target_leaves_the_launchpoint_dirty(self):
+        cm = MagicMock()
+        cm.connect_to_target.return_value = True
+        cm.is_server_reachable.return_value = True
+        t = make_thread(connection_manager=cm)
+        scan = MagicMock()
+        scan.id = 'sched-lp'
+        scan.scan_id = 'scan-lp'
+        scan.target_id = 'tgt-lp'
+        scan.has_pending_imports = False
+        tool = SimpleNamespace(
+            id='ti-1',
+            enabled=1,
+            args_override=None,
+            api_key=None,
+            collection_tool=SimpleNamespace(name='nmap', scan_order=1, tool_type=2, args=''),
+        )
+        scan.collection_tool_map = {'ti-1': tool}
+        t.recon_manager.get_scan_status.return_value = SimpleNamespace(
+            scan_status=data_model.ScanStatus.RUNNING.value, cancelled_tool_ids=[]
+        )
+        t.scheduled_scan_map[scan.id] = scan
+
+        t.process_scan_obj(scan)
+
+        cm.connect_to_target.assert_called()
+        assert t._launchpoint_on_target is True
+
+
+class TestExtenderRestoreLockContention:
+    """The restore runs on the poll thread, which must never block on the
+    connection lock — a TargetMonitorThread cycle can hold it for minutes."""
+
+    def test_restore_uses_a_bounded_lock_acquire(self):
+        cm = MagicMock()
+        cm.connect_to_extender.return_value = True
+        t = make_thread(connection_manager=cm)
+        t._note_launchpoint_on_target()
+        t._restore_extender_launchpoint()
+        _, kwargs = cm.get_connection_lock.call_args
+        assert kwargs.get('timeout')
+
+    def test_restore_skips_when_the_connection_lock_is_busy(self):
+        cm = MagicMock()
+        cm.get_connection_lock.return_value = False
+        t = make_thread(connection_manager=cm)
+        t._note_launchpoint_on_target()
+
+        assert t._restore_extender_launchpoint() is False
+        cm.connect_to_extender.assert_not_called()
+        # Nothing was acquired, so nothing is released.
+        cm.free_connection_lock.assert_not_called()
+        # Gate handed back and the flag survives for the next poll.
+        assert t._no_workers_in_flight() is True
+        assert t._launchpoint_on_target is True
+
+    def test_restore_tolerates_a_lock_without_timeout_support(self):
+        # Older/simpler connection managers take no timeout kwarg.
+        class _Cm:
+            def __init__(self):
+                self.acquired = 0
+                self.freed = 0
+
+            def get_connection_lock(self):
+                self.acquired += 1
+
+            def free_connection_lock(self):
+                self.freed += 1
+
+            def connect_to_extender(self):
+                return True
+
+        cm = _Cm()
+        t = make_thread(connection_manager=cm)
+        t._note_launchpoint_on_target()
+        assert t._restore_extender_launchpoint() is True
+        assert cm.acquired == 1
+        assert cm.freed == 1
+
+
+class TestLaunchpointClaimApi:
+    """The gate is also reachable from outside the collector.
+
+    The Synack target monitor changes the launchpoint too, and it only ever
+    held the connection lock — which same-target *peers* never take. So a
+    monitor cycle could switch the network out from under running collector
+    work. It claims the gate through this API instead.
+    """
+
+    def test_claim_granted_when_idle(self):
+        t = make_thread()
+        assert t.try_claim_launchpoint() is True
+        assert t._no_workers_in_flight() is False
+
+    def test_claim_refused_while_a_worker_is_in_flight(self):
+        t = make_thread()
+        t._admit_work('T')
+        assert t.try_claim_launchpoint() is False
+
+    def test_claim_refused_while_a_peer_is_in_flight(self):
+        # The case the connection lock alone could not cover: peers hold no
+        # lock, so nothing stopped an outside switch from breaking them.
+        t = make_thread()
+        t._admit_work('T')
+        t._mark_target_reachable(True)
+        t._admit_work('T')  # peer
+        assert t.try_claim_launchpoint() is False
+
+    def test_release_frees_the_slot(self):
+        t = make_thread()
+        assert t.try_claim_launchpoint() is True
+        t.release_launchpoint()
+        assert t._no_workers_in_flight() is True
+        assert t._admit_work('T') == 'switch'
+
+    def test_claim_blocks_worker_dispatch_while_held(self):
+        t = make_thread()
+        t.try_claim_launchpoint()
+        assert t._admit_work('T') is None
