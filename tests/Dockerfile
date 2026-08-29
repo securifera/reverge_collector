@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 FROM ubuntu:24.04
 
 ENV TZ=America/New_York
@@ -16,12 +17,15 @@ RUN apt update
 RUN apt install sudo -y
 COPY . /tmp/
 RUN chmod +x /tmp/install.sh
-# GITHUB_TOKEN raises the GitHub API rate limit from 60 → 5000 req/hr.
-# install.sh hits the API for several tool releases in rapid succession;
-# without the token the Docker build IP gets rate-limited and tools fail
-# to install with a cryptic "jq: Cannot iterate over null" error.
-ARG GITHUB_TOKEN=""
-RUN GITHUB_TOKEN="$GITHUB_TOKEN" /tmp/install.sh
+# An optional BuildKit secret raises the GitHub API rate limit from 60 → 5000
+# req/hr without embedding a token in an image layer or build argument.
+# Example: docker build --secret id=github_token,env=GITHUB_TOKEN ...
+RUN --mount=type=secret,id=github_token,required=false \
+    if [ -f /run/secrets/github_token ]; then \
+        GITHUB_TOKEN="$(cat /run/secrets/github_token)" /tmp/install.sh; \
+    else \
+        /tmp/install.sh; \
+    fi
 
 # Install dev tooling (ruff for lint/format, pytest-cov for coverage gate,
 # pytest-mock for the mocker fixture used by some tests) into the same venv

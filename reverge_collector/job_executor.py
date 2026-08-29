@@ -389,9 +389,7 @@ def execute_http_request(args: dict) -> dict:
         # response bytes in an overflow blob.  This is important for a file
         # fetched via HTTP: ``resp.text`` can be lossy for binary responses.
         output = prefix + resp.text
-        return _text_result_with_overflow(
-            output, prefix.encode('utf-8') + resp.content, 0
-        )
+        return _text_result_with_overflow(output, prefix.encode('utf-8') + resp.content, 0)
     except Exception as e:
         return {
             'output_text': '[ERROR] %s' % e,
