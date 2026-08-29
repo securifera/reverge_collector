@@ -38,6 +38,7 @@ def test_execute_shell_truncates_long_output():
     assert '[output truncated]' in out['output_text']
     # Truncated length is bounded
     assert len(out['output_text']) <= 65536 + 64
+    assert base64.b64decode(out['output_blob_b64']) == b'x' * 100000 + b'\n'
 
 
 def test_execute_shell_empty_output_replaced():
@@ -346,6 +347,8 @@ def test_execute_http_request_truncates_long_body():
         out = job_executor.execute_http_request({'url': 'http://example.com/big'})
     assert '[output truncated]' in out['output_text']
     assert len(out['output_text']) <= 65536 + 128
+    full_output = base64.b64decode(out['output_blob_b64'])
+    assert full_output.endswith(b'x' * 100000)
 
 
 def test_execute_http_request_default_verify_and_timeout():

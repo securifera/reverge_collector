@@ -32,6 +32,25 @@ _MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024
 _HASH_BLOCK = 1024 * 1024
 
 
+def _text_result_with_overflow(output_text: str, output_bytes: bytes, exit_code: int) -> dict:
+    """Return a text result, preserving oversized output in the blob channel.
+
+    ``output_text`` remains a bounded preview for existing UI and tool callers.
+    When it would have been truncated, the complete, original bytes are sent in
+    ``output_blob_b64``.  The API persists that in ``CollectorJobResult`` and
+    exposes it to MCP as a ``collector-file://`` resource.
+    """
+    result = {
+        'output_text': output_text if output_text else '(no output)',
+        'exit_code': exit_code,
+        'output_type': 'text',
+    }
+    if len(output_text) > _MAX_OUTPUT:
+        result['output_text'] = output_text[:_MAX_OUTPUT] + '\n[output truncated]'
+        result['output_blob_b64'] = base64.b64encode(output_bytes).decode()
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Handlers
 # ---------------------------------------------------------------------------
@@ -65,14 +84,9 @@ def execute_shell(args: dict) -> dict:
             stderr=subprocess.STDOUT,
             timeout=timeout,
         )
-        output = proc.stdout.decode('utf-8', errors='replace')
-        if len(output) > _MAX_OUTPUT:
-            output = output[:_MAX_OUTPUT] + '\n[output truncated]'
-        return {
-            'output_text': output if output else '(no output)',
-            'exit_code': proc.returncode,
-            'output_type': 'text',
-        }
+        return _text_result_with_overflow(
+            proc.stdout.decode('utf-8', errors='replace'), proc.stdout, proc.returncode
+        )
     except subprocess.TimeoutExpired:
         return {
             'output_text': '[ERROR] command timed out after %ds' % timeout,
@@ -366,19 +380,18 @@ def execute_http_request(args: dict) -> dict:
             verify=verify,
         )
         header_lines = '\n'.join('%s: %s' % (k, v) for k, v in resp.headers.items())
-        output = 'HTTP %d %s\n%s\n\n%s' % (
+        prefix = 'HTTP %d %s\n%s\n\n' % (
             resp.status_code,
             resp.reason or '',
             header_lines,
-            resp.text,
         )
-        if len(output) > _MAX_OUTPUT:
-            output = output[:_MAX_OUTPUT] + '\n[output truncated]'
-        return {
-            'output_text': output,
-            'exit_code': 0,
-            'output_type': 'text',
-        }
+        # Keep the familiar decoded display output, but preserve the actual
+        # response bytes in an overflow blob.  This is important for a file
+        # fetched via HTTP: ``resp.text`` can be lossy for binary responses.
+        output = prefix + resp.text
+        return _text_result_with_overflow(
+            output, prefix.encode('utf-8') + resp.content, 0
+        )
     except Exception as e:
         return {
             'output_text': '[ERROR] %s' % e,
