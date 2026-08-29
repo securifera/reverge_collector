@@ -525,3 +525,107 @@ def test_run_handles_connection_error_with_connection_manager():
     t.run()
     # connect_to_extender was called from inside the ConnectionError handler
     assert cm.connect_to_extender.called
+
+
+# ===========================================================================
+# Network-change barrier: the poll loop yields while the launchpoint switches
+# ===========================================================================
+
+
+def test_run_waits_for_network_before_polling():
+    """A Synack launchpoint switch kills the route the manager tunnel rides on.
+
+    The poll loop must wait for the connection manager to report the network
+    settled before issuing a request, instead of firing one at a dead tunnel
+    and blocking until the read timeout expires.
+    """
+    cm = MagicMock()
+    order = []
+    cm.wait_for_network.side_effect = lambda *a, **k: order.append('wait') or True
+    t = make_thread(connection_manager=cm)
+    t.recon_manager.collector_poll.side_effect = lambda *a, **k: order.append('poll')
+    t.recon_manager.get_scheduled_scans.side_effect = _stop_after_first_iter(t)
+
+    t.run()
+    assert order == ['wait', 'poll']
+
+
+def test_run_polls_anyway_when_network_wait_times_out():
+    # A wedged barrier must never stop the loop permanently — a timed-out wait
+    # falls through to the normal poll (which then drives its own recovery).
+    cm = MagicMock()
+    cm.wait_for_network.return_value = False
+    t = make_thread(connection_manager=cm)
+    t.recon_manager.get_scheduled_scans.side_effect = _stop_after_first_iter(t)
+    t.run()
+    t.recon_manager.collector_poll.assert_called_once()
+
+
+def test_run_without_connection_manager_skips_network_wait():
+    t = make_thread(connection_manager=None)
+    t.recon_manager.get_scheduled_scans.side_effect = _stop_after_first_iter(t)
+    t.run()
+    t.recon_manager.collector_poll.assert_called_once()
+
+
+def test_await_network_ready_survives_a_broken_barrier():
+    cm = MagicMock()
+    cm.wait_for_network.side_effect = RuntimeError('boom')
+    t = make_thread(connection_manager=cm)
+    assert t._await_network_ready() is True
+
+
+# ===========================================================================
+# Returning the launchpoint to the extender once work drains
+# ===========================================================================
+
+
+def test_run_restores_extender_after_target_work_drains():
+    """The launchpoint must not stay parked on the last target.
+
+    Workers only switch back when they need the server, so a target whose VPN
+    still reaches the server was left connected indefinitely. The poll loop
+    restores the extender once nothing is in flight.
+    """
+    cm = MagicMock()
+    cm.connect_to_extender.return_value = True
+    t = make_thread(connection_manager=cm)
+    t._note_launchpoint_on_target()
+    t.recon_manager.collector_poll.return_value = None
+    t.recon_manager.get_scheduled_scans.side_effect = _stop_after_first_iter(t)
+
+    t.run()
+    cm.connect_to_extender.assert_called_once()
+    assert t._launchpoint_on_target is False
+
+
+def test_run_does_not_restore_extender_while_a_worker_is_in_flight():
+    cm = MagicMock()
+    t = make_thread(connection_manager=cm)
+    t._note_launchpoint_on_target()
+    t._admit_work('T')  # a worker owns the target
+    t.recon_manager.collector_poll.return_value = None
+    t.recon_manager.get_scheduled_scans.side_effect = _stop_after_first_iter(t)
+
+    t.run()
+    cm.connect_to_extender.assert_not_called()
+
+
+def test_run_restores_extender_after_dispatching_nothing_new():
+    # The restore runs after dispatch, so a poll that hands work out doesn't
+    # bounce the launchpoint back and forth.
+    cm = MagicMock()
+    cm.connect_to_extender.return_value = True
+    t = make_thread(connection_manager=cm)
+    t._note_launchpoint_on_target()
+    order = []
+    t.recon_manager.collector_poll.side_effect = lambda *a, **k: order.append('poll')
+    cm.connect_to_extender.side_effect = lambda *a, **k: order.append('restore') or True
+
+    def scans(*args, **kwargs):
+        t._is_running = False
+        return []
+
+    t.recon_manager.get_scheduled_scans.side_effect = scans
+    t.run()
+    assert order == ['poll', 'restore']

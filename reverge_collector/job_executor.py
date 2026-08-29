@@ -8,6 +8,7 @@ Python script execution.
 """
 
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -20,6 +21,34 @@ logger = logging.getLogger(__name__)
 
 # Cap on output returned to the server (64 KB).
 _MAX_OUTPUT = 65536
+
+# Hard ceiling on bytes returned by a single file_download request. Everything
+# here has to be base64'd, JSON-encoded, compressed, AES-encrypted and pushed
+# through the extender tunnel in one POST, so a caller wanting more than this
+# walks `next_offset` and reassembles instead of stalling on one giant request.
+_MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024
+
+# Block size for streaming whole-file hashing.
+_HASH_BLOCK = 1024 * 1024
+
+
+def _text_result_with_overflow(output_text: str, output_bytes: bytes, exit_code: int) -> dict:
+    """Return a text result, preserving oversized output in the blob channel.
+
+    ``output_text`` remains a bounded preview for existing UI and tool callers.
+    When it would have been truncated, the complete, original bytes are sent in
+    ``output_blob_b64``.  The API persists that in ``CollectorJobResult`` and
+    exposes it to MCP as a ``collector-file://`` resource.
+    """
+    result = {
+        'output_text': output_text if output_text else '(no output)',
+        'exit_code': exit_code,
+        'output_type': 'text',
+    }
+    if len(output_text) > _MAX_OUTPUT:
+        result['output_text'] = output_text[:_MAX_OUTPUT] + '\n[output truncated]'
+        result['output_blob_b64'] = base64.b64encode(output_bytes).decode()
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -55,14 +84,9 @@ def execute_shell(args: dict) -> dict:
             stderr=subprocess.STDOUT,
             timeout=timeout,
         )
-        output = proc.stdout.decode('utf-8', errors='replace')
-        if len(output) > _MAX_OUTPUT:
-            output = output[:_MAX_OUTPUT] + '\n[output truncated]'
-        return {
-            'output_text': output if output else '(no output)',
-            'exit_code': proc.returncode,
-            'output_type': 'text',
-        }
+        return _text_result_with_overflow(
+            proc.stdout.decode('utf-8', errors='replace'), proc.stdout, proc.returncode
+        )
     except subprocess.TimeoutExpired:
         return {
             'output_text': '[ERROR] command timed out after %ds' % timeout,
@@ -157,18 +181,116 @@ def execute_file_upload(args: dict) -> dict:
         }
 
 
-def execute_file_download(args: dict) -> dict:
-    """Read a file and return it as base64 blob + text preview."""
-    remote_path = args.get('remote_path', '')
-    max_size = 16 * 1024 * 1024  # 16 MB cap
+def _coerce_byte_count(value, name: str, default: int) -> int:
+    """Parse an offset/length argument, rejecting junk instead of guessing."""
+    if value is None:
+        return default
     try:
+        count = int(value)
+    except (TypeError, ValueError):
+        raise ValueError('%s must be an integer, got %r' % (name, value)) from None
+    if count < 0:
+        raise ValueError('%s must not be negative, got %d' % (name, count))
+    return count
+
+
+def _hash_file(path: str) -> str:
+    """SHA-256 of a whole file, streamed so a large archive stays off the heap."""
+    digest = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for block in iter(lambda: f.read(_HASH_BLOCK), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def execute_file_download(args: dict) -> dict:
+    """Read a file — or one byte range of it — and return it as a base64 blob.
+
+    The bytes always travel in ``output_blob_b64``. ``output_text`` is a UTF-8
+    preview only when the chunk actually decodes as UTF-8; binary content gets a
+    one-line summary instead. It used to be decoded with ``errors='replace'``,
+    which turned an archive into kilobytes of U+FFFD that read like the file's
+    content to anything consuming ``output_text`` — a caller could reassemble
+    that mojibake and never notice the intact base64 in the same response.
+
+    Large files are pulled in verifiable pieces by walking ``next_offset``
+    rather than in one oversized POST: the whole-file response has to be
+    encrypted, compressed and pushed through the extender tunnel in a single
+    request, which is what stalls on multi-megabyte archives.
+
+    Args:
+        remote_path (str): File to read.
+        offset (int): Byte offset to start at. Default 0.
+        length (int): Maximum bytes to return, clamped to ``_MAX_DOWNLOAD_BYTES``.
+            Defaults to the rest of the file (still clamped). Pass 0 to fetch no
+            bytes at all — useful with ``include_file_sha256`` to get the digest
+            and size before deciding how to chunk.
+        include_file_sha256 (bool): Also stream-hash the entire file. Implied
+            when the returned chunk covers the whole file (it is free then).
+
+    Returns:
+        dict: ``output_blob_b64`` (the chunk), ``sha256`` (digest of the chunk),
+        ``file_size``, ``offset``, ``bytes_returned``, ``next_offset``, ``eof``,
+        and ``file_sha256`` when computed. ``eof`` is False whenever bytes
+        remain — truncation is reported, never silent.
+    """
+    remote_path = args.get('remote_path', '')
+    try:
+        offset = _coerce_byte_count(args.get('offset'), 'offset', 0)
+        length = _coerce_byte_count(args.get('length'), 'length', _MAX_DOWNLOAD_BYTES)
+        length = min(length, _MAX_DOWNLOAD_BYTES)
+
+        file_size = os.path.getsize(remote_path)
         with open(remote_path, 'rb') as f:
-            data = f.read(max_size)
-        return {
-            'output_text': data.decode('utf-8', errors='replace')[:_MAX_OUTPUT],
+            f.seek(offset)
+            data = f.read(length)
+
+        bytes_returned = len(data)
+        next_offset = offset + bytes_returned
+        eof = next_offset >= file_size
+
+        result = {
             'output_blob_b64': base64.b64encode(data).decode(),
+            'sha256': hashlib.sha256(data).hexdigest(),
+            'file_size': file_size,
+            'offset': offset,
+            'bytes_returned': bytes_returned,
+            'next_offset': next_offset,
+            'eof': eof,
             'exit_code': 0,
             'output_type': 'binary',
+        }
+
+        # Whole file in one chunk: its digest IS the file digest, no re-read.
+        if offset == 0 and eof:
+            result['file_sha256'] = result['sha256']
+        elif args.get('include_file_sha256'):
+            result['file_sha256'] = _hash_file(remote_path)
+
+        # Text preview only when the bytes really are text. Anything else gets
+        # metadata, so no consumer can mistake a lossy decode for the content.
+        try:
+            result['output_text'] = data.decode('utf-8')[:_MAX_OUTPUT]
+        except UnicodeDecodeError:
+            result['output_text'] = (
+                'binary file %s: %d byte(s) of %d at offset %d '
+                '(sha256=%s, eof=%s) — bytes are in output_blob_b64'
+                % (
+                    remote_path,
+                    bytes_returned,
+                    file_size,
+                    offset,
+                    result['sha256'],
+                    eof,
+                )
+            )
+
+        return result
+    except ValueError as e:
+        return {
+            'output_text': '[ERROR] %s' % e,
+            'exit_code': -1,
+            'output_type': 'text',
         }
     except FileNotFoundError:
         return {
@@ -258,19 +380,16 @@ def execute_http_request(args: dict) -> dict:
             verify=verify,
         )
         header_lines = '\n'.join('%s: %s' % (k, v) for k, v in resp.headers.items())
-        output = 'HTTP %d %s\n%s\n\n%s' % (
+        prefix = 'HTTP %d %s\n%s\n\n' % (
             resp.status_code,
             resp.reason or '',
             header_lines,
-            resp.text,
         )
-        if len(output) > _MAX_OUTPUT:
-            output = output[:_MAX_OUTPUT] + '\n[output truncated]'
-        return {
-            'output_text': output,
-            'exit_code': 0,
-            'output_type': 'text',
-        }
+        # Keep the familiar decoded display output, but preserve the actual
+        # response bytes in an overflow blob.  This is important for a file
+        # fetched via HTTP: ``resp.text`` can be lossy for binary responses.
+        output = prefix + resp.text
+        return _text_result_with_overflow(output, prefix.encode('utf-8') + resp.content, 0)
     except Exception as e:
         return {
             'output_text': '[ERROR] %s' % e,

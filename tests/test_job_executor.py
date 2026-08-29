@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from unittest.mock import MagicMock, patch
 
@@ -37,6 +38,7 @@ def test_execute_shell_truncates_long_output():
     assert '[output truncated]' in out['output_text']
     # Truncated length is bounded
     assert len(out['output_text']) <= 65536 + 64
+    assert base64.b64decode(out['output_blob_b64']) == b'x' * 100000 + b'\n'
 
 
 def test_execute_shell_empty_output_replaced():
@@ -345,6 +347,8 @@ def test_execute_http_request_truncates_long_body():
         out = job_executor.execute_http_request({'url': 'http://example.com/big'})
     assert '[output truncated]' in out['output_text']
     assert len(out['output_text']) <= 65536 + 128
+    full_output = base64.b64decode(out['output_blob_b64'])
+    assert full_output.endswith(b'x' * 100000)
 
 
 def test_execute_http_request_default_verify_and_timeout():
@@ -391,3 +395,187 @@ def test_run_job_invalid_json_args():
     out = job_executor.run_job('shell', 'not json')
     assert out['exit_code'] == -1
     assert 'Invalid args JSON' in out['output_text']
+
+
+# ---------------------------------------------------------------------------
+# execute_file_download — binary safety, ranged reads, integrity
+# ---------------------------------------------------------------------------
+
+
+def _binary_blob(n=4096, seed=7):
+    import random
+
+    rnd = random.Random(seed)
+    return b'PK\x03\x04' + bytes(rnd.getrandbits(8) for _ in range(n - 4))
+
+
+def test_file_download_never_emits_replacement_characters(tmp_path):
+    """Binary payloads must not be lossily decoded into output_text.
+
+    A WAR/ZIP decoded with errors='replace' produces kilobytes of U+FFFD that
+    look like the file's content to anything reading output_text — which is how
+    a caller ends up with corrupted bytes while a perfectly good base64 blob
+    sits unread in the same response.
+    """
+    data = _binary_blob()
+    f = tmp_path / 'app.war'
+    f.write_bytes(data)
+
+    out = job_executor.execute_file_download({'remote_path': str(f)})
+    assert out['exit_code'] == 0
+    assert '�' not in out['output_text']
+    assert base64.b64decode(out['output_blob_b64']) == data
+
+
+def test_file_download_summarises_binary_instead_of_dumping_it(tmp_path):
+    data = _binary_blob()
+    f = tmp_path / 'app.war'
+    f.write_bytes(data)
+
+    out = job_executor.execute_file_download({'remote_path': str(f)})
+    # The summary is metadata, not content — it must stay small.
+    assert len(out['output_text']) < 512
+    assert str(len(data)) in out['output_text']
+
+
+def test_file_download_keeps_the_text_preview_for_utf8_files(tmp_path):
+    f = tmp_path / 'notes.txt'
+    f.write_text('hello world')
+    out = job_executor.execute_file_download({'remote_path': str(f)})
+    assert 'hello world' in out['output_text']
+
+
+def test_file_download_reports_size_offset_and_eof(tmp_path):
+    data = _binary_blob()
+    f = tmp_path / 'app.war'
+    f.write_bytes(data)
+
+    out = job_executor.execute_file_download({'remote_path': str(f)})
+    assert out['file_size'] == len(data)
+    assert out['offset'] == 0
+    assert out['bytes_returned'] == len(data)
+    assert out['eof'] is True
+
+
+def test_file_download_hashes_the_returned_chunk(tmp_path):
+    data = _binary_blob()
+    f = tmp_path / 'app.war'
+    f.write_bytes(data)
+
+    out = job_executor.execute_file_download({'remote_path': str(f)})
+    assert out['sha256'] == hashlib.sha256(data).hexdigest()
+
+
+def test_file_download_hashes_the_whole_file_when_the_chunk_covers_it(tmp_path):
+    data = _binary_blob()
+    f = tmp_path / 'app.war'
+    f.write_bytes(data)
+
+    out = job_executor.execute_file_download({'remote_path': str(f)})
+    assert out['file_sha256'] == hashlib.sha256(data).hexdigest()
+
+
+def test_file_download_reads_a_byte_range(tmp_path):
+    data = _binary_blob()
+    f = tmp_path / 'app.war'
+    f.write_bytes(data)
+
+    out = job_executor.execute_file_download({'remote_path': str(f), 'offset': 1000, 'length': 256})
+    assert base64.b64decode(out['output_blob_b64']) == data[1000:1256]
+    assert out['offset'] == 1000
+    assert out['bytes_returned'] == 256
+    assert out['eof'] is False
+    assert out['next_offset'] == 1256
+
+
+def test_file_download_chunks_reassemble_into_the_original(tmp_path):
+    data = _binary_blob(n=5000)
+    f = tmp_path / 'app.war'
+    f.write_bytes(data)
+
+    chunks, offset, guard = [], 0, 0
+    while True:
+        guard += 1
+        assert guard < 100, 'chunk walk did not terminate'
+        out = job_executor.execute_file_download(
+            {'remote_path': str(f), 'offset': offset, 'length': 1024}
+        )
+        chunk = base64.b64decode(out['output_blob_b64'])
+        assert out['sha256'] == hashlib.sha256(chunk).hexdigest()
+        chunks.append(chunk)
+        if out['eof']:
+            break
+        offset = out['next_offset']
+
+    rebuilt = b''.join(chunks)
+    assert rebuilt == data
+    whole = job_executor.execute_file_download(
+        {'remote_path': str(f), 'offset': 0, 'length': 0, 'include_file_sha256': True}
+    )
+    assert whole['file_sha256'] == hashlib.sha256(rebuilt).hexdigest()
+
+
+def test_file_download_can_hash_the_whole_file_without_sending_it(tmp_path):
+    data = _binary_blob(n=5000)
+    f = tmp_path / 'app.war'
+    f.write_bytes(data)
+
+    out = job_executor.execute_file_download(
+        {'remote_path': str(f), 'length': 0, 'include_file_sha256': True}
+    )
+    assert out['bytes_returned'] == 0
+    assert out['output_blob_b64'] == ''
+    assert out['file_sha256'] == hashlib.sha256(data).hexdigest()
+    assert out['file_size'] == len(data)
+
+
+def test_file_download_offset_past_eof_returns_empty_not_an_error(tmp_path):
+    data = _binary_blob(n=100)
+    f = tmp_path / 'app.war'
+    f.write_bytes(data)
+
+    out = job_executor.execute_file_download({'remote_path': str(f), 'offset': 999})
+    assert out['exit_code'] == 0
+    assert out['bytes_returned'] == 0
+    assert out['eof'] is True
+
+
+def test_file_download_rejects_a_negative_offset(tmp_path):
+    f = tmp_path / 'app.war'
+    f.write_bytes(b'abc')
+    out = job_executor.execute_file_download({'remote_path': str(f), 'offset': -1})
+    assert out['exit_code'] == -1
+    assert '[ERROR]' in out['output_text']
+
+
+def test_file_download_rejects_a_non_integer_offset(tmp_path):
+    f = tmp_path / 'app.war'
+    f.write_bytes(b'abc')
+    out = job_executor.execute_file_download({'remote_path': str(f), 'offset': 'lots'})
+    assert out['exit_code'] == -1
+    assert '[ERROR]' in out['output_text']
+
+
+def test_file_download_flags_truncation_instead_of_hiding_it(tmp_path, monkeypatch):
+    # Reading up to a hard cap and returning it as though it were the whole
+    # file hands the caller a silently truncated archive.
+    monkeypatch.setattr(job_executor, '_MAX_DOWNLOAD_BYTES', 64)
+    data = _binary_blob(n=512)
+    f = tmp_path / 'app.war'
+    f.write_bytes(data)
+
+    out = job_executor.execute_file_download({'remote_path': str(f)})
+    assert out['bytes_returned'] == 64
+    assert out['eof'] is False
+    assert out['file_size'] == 512
+    assert out['next_offset'] == 64
+
+
+def test_file_download_clamps_an_oversized_length(tmp_path, monkeypatch):
+    monkeypatch.setattr(job_executor, '_MAX_DOWNLOAD_BYTES', 64)
+    data = _binary_blob(n=512)
+    f = tmp_path / 'app.war'
+    f.write_bytes(data)
+
+    out = job_executor.execute_file_download({'remote_path': str(f), 'length': 10_000})
+    assert out['bytes_returned'] == 64

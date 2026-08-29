@@ -73,6 +73,21 @@ requests.packages.urllib3.disable_warnings()
 # Global singleton instance of ReconManager
 recon_mgr_inst: Optional['ReconManager'] = None
 
+# How long the poll loop yields to an in-progress Synack launchpoint switch
+# before polling anyway. Generous enough to cover a slow VPN switch plus the
+# SSH tunnel rebuild, but bounded so a wedged barrier can never stall polling.
+_NETWORK_READY_TIMEOUT: float = 180.0
+
+# Pseudo target id the poll loop claims in the affinity gate while it returns
+# the launchpoint to the extender. Never matches a real target id, so no worker
+# can 'join' the restore — they just defer to the next poll.
+_EXTENDER_LAUNCHPOINT_ID = '__extender__'
+
+# How long the poll loop waits for the connection lock before giving up on the
+# extender restore and retrying next pass. Short on purpose: the loop must stay
+# responsive rather than queue behind a target-monitor cycle.
+_RESTORE_LOCK_TIMEOUT: float = 5.0
+
 
 class SessionException(Exception):
     """
@@ -296,6 +311,12 @@ class ScheduledScanThread(threading.Thread):
         # set the delay to 0 to keep the suite fast.
         self._target_reachable_confirm_attempts = 3
         self._target_reachable_confirm_delay = 1.0
+        # True once a worker has moved the launchpoint onto a target, until it
+        # is put back on the extender.  Workers only switch back when they
+        # *need* the server, so a target whose VPN still reaches the server is
+        # left connected after the work finishes; this flag lets the poll loop
+        # notice and restore the extender once everything drains.
+        self._launchpoint_on_target = False
 
     def _admit_work(self, target_id: Optional[str]) -> Optional[str]:
         """Decide whether to dispatch a unit of work for ``target_id`` now.
@@ -392,6 +413,158 @@ class ScheduledScanThread(threading.Thread):
         with self._target_state_lock:
             return self._active_worker_count == 0
 
+    def try_claim_launchpoint(self) -> bool:
+        """Reserve the launchpoint for a non-worker that needs to switch it.
+
+        The collector is not the only thing that moves the launchpoint — the
+        Synack target monitor switches to the extender (and around targets) on
+        its own cycle. It used to guard that with the connection lock alone,
+        which same-target *peers* never take, so a monitor cycle could switch
+        the network out from under running collector work.
+
+        Callers must pair a granted claim with ``release_launchpoint()``, and
+        must take this BEFORE the connection lock — workers acquire in that
+        order, so the reverse would deadlock.
+
+        Returns:
+            bool: ``True`` when the launchpoint is reserved. ``False`` when
+            collector work is in flight; the caller should skip its cycle and
+            try again later rather than switch.
+        """
+        return self._admit_work(_EXTENDER_LAUNCHPOINT_ID) == 'switch'
+
+    def release_launchpoint(self) -> None:
+        """Hand back a claim taken with ``try_claim_launchpoint()``."""
+        self._finish_work()
+
+    def _note_launchpoint_on_target(self) -> None:
+        """Record that the launchpoint has been moved onto a target."""
+        with self._target_state_lock:
+            self._launchpoint_on_target = True
+
+    def _note_launchpoint_on_extender(self) -> None:
+        """Record that the launchpoint is back on the extender."""
+        with self._target_state_lock:
+            self._launchpoint_on_target = False
+
+    @staticmethod
+    def _acquire_connection_lock(cm: Any, timeout: float = _RESTORE_LOCK_TIMEOUT) -> bool:
+        """Take the connection lock without blocking indefinitely.
+
+        Returns:
+            bool: ``False`` only when a bounded wait timed out and nothing was
+            acquired (so the caller must not free it). Connection managers whose
+            ``get_connection_lock`` takes no timeout fall back to a plain
+            blocking acquire.
+        """
+        try:
+            return cm.get_connection_lock(timeout=timeout) is not False
+        except TypeError:
+            cm.get_connection_lock()
+            return True
+
+    def _restore_extender_launchpoint(self) -> bool:
+        """Put the launchpoint back on the extender once all work has drained.
+
+        Workers switch back only when they need to reach the server
+        (``_ensure_server_reachable``), and that call short-circuits whenever
+        the target VPN can still reach it — so after a job or scan on such a
+        target the collector stays connected to that target with nothing left
+        to move it. The same happens when a same-target peer is in flight: the
+        switcher's sole-holder check refuses the switch, and peers never switch
+        the launchpoint themselves. Either way the launchpoint sat on the last
+        target until unrelated work for a *different* target arrived, or until
+        a poll finally timed out.
+
+        Called from the poll loop after dispatch, so a poll that handed out
+        work finds the gate held and leaves the launchpoint where the worker
+        wants it instead of bouncing it back and forth.
+
+        Returns:
+            bool: ``True`` when the launchpoint was moved back to the extender.
+            ``False`` when there was nothing to restore, work was in flight, or
+            the switch failed — the flag survives a failure so the next poll
+            retries.
+        """
+        cm = self.connection_manager
+        if cm is None:
+            return False
+        with self._target_state_lock:
+            if not self._launchpoint_on_target:
+                return False
+
+        # Claim the affinity gate exactly like a worker would, so a dispatch
+        # racing this restore is deferred rather than having the network pulled
+        # out from under it. Anything already in flight holds the slot and we
+        # simply try again next poll.
+        if not self.try_claim_launchpoint():
+            return False
+
+        restored = False
+        try:
+            # Bounded acquire: this runs on the poll thread, which must not
+            # stall behind a long-running switcher (a target-monitor cycle
+            # holds the connection lock across a whole scope crawl). If the
+            # lock is busy the launchpoint stays flagged and the next poll
+            # tries again.
+            if self._acquire_connection_lock(cm) is False:
+                logging.getLogger(__name__).debug(
+                    'Connection lock busy; deferring the extender restore to the next poll'
+                )
+                return False
+            try:
+                restored = cm.connect_to_extender() is not False
+            finally:
+                cm.free_connection_lock()
+            if restored:
+                # The launchpoint moved: pooled manager sockets are bound to
+                # the target route and are stale now.
+                self.recon_manager.reset_api_pool()
+                self._note_launchpoint_on_extender()
+            else:
+                logging.getLogger(__name__).warning(
+                    'Failed returning the launchpoint to the extender; will retry next poll'
+                )
+        except Exception:
+            logging.getLogger(__name__).error('Error returning the launchpoint to the extender')
+            logging.getLogger(__name__).debug(traceback.format_exc())
+            restored = False
+        finally:
+            self._finish_work()
+
+        return restored
+
+    def _await_network_ready(self, timeout: float = _NETWORK_READY_TIMEOUT) -> bool:
+        """Block while the Synack launchpoint is mid-switch.
+
+        A launchpoint switch invalidates the route the manager tunnel rides on,
+        so the connection manager severs the tunnel deliberately and holds a
+        barrier closed until it has rebuilt it. Waiting on that barrier is what
+        keeps the poll loop from firing a request into the gap — which would
+        otherwise block for the full HTTP read timeout before the loop could
+        even discover the connection was gone.
+
+        Args:
+            timeout (float): Maximum seconds to wait.
+
+        Returns:
+            bool: ``True`` when the network is settled (or there is no barrier
+            to wait on). ``False`` only when the wait timed out — the caller
+            proceeds anyway, so a wedged barrier can never stall polling
+            permanently.
+        """
+        cm = self.connection_manager
+        if cm is None:
+            return True
+        waiter = getattr(cm, 'wait_for_network', None)
+        if not callable(waiter):
+            return True
+        try:
+            return waiter(timeout) is not False
+        except Exception:
+            logging.getLogger(__name__).debug(traceback.format_exc())
+            return True
+
     def _server_reachable(self, cm: Optional[Any]) -> bool:
         """Whether the reverge server is reachable over the *current* connection.
 
@@ -449,6 +622,8 @@ class ScheduledScanThread(threading.Thread):
         switched = cm.connect_to_extender() is not False
         # Launchpoint moved back to the extender: drop the stale manager pool.
         self.recon_manager.reset_api_pool()
+        if switched:
+            self._note_launchpoint_on_extender()
         return switched
 
     def _process_scan_obj_with_slot(
@@ -631,6 +806,7 @@ class ScheduledScanThread(threading.Thread):
                         # Launchpoint moved to the target: pooled manager
                         # connections are stale for the new route.
                         self.recon_manager.reset_api_pool()
+                        self._note_launchpoint_on_target()
                     self._confirm_active_target_reachable(cm)
 
                 # Run every job on the committed target.  Per-job failures are
@@ -845,6 +1021,7 @@ class ScheduledScanThread(threading.Thread):
                             # Launchpoint moved to the target: drop the stale
                             # manager connection pool.
                             self.recon_manager.reset_api_pool()
+                            self._note_launchpoint_on_target()
                         self._confirm_active_target_reachable(cm)
 
                     # Execute the actual scanning function
@@ -1140,6 +1317,13 @@ class ScheduledScanThread(threading.Thread):
                     else:
                         self.exit_event.wait(self.checkin_interval)
 
+                    # Yield to any launchpoint switch in progress. The tunnel is
+                    # severed for the duration of one, so anything sent now
+                    # would just block until the HTTP read timeout expired —
+                    # which is what made every network change take minutes to
+                    # recover from. Resume as soon as the tunnel is back.
+                    self._await_network_ready()
+
                     # Flush any pending job results first so HTTP retries never
                     # stall running jobs.
                     self._flush_pending_job_completions()
@@ -1271,6 +1455,15 @@ class ScheduledScanThread(threading.Thread):
                                                     new_tool_ids
                                                 )
 
+                            # Nothing left in flight? Take the launchpoint off
+                            # the last target and put it back on the extender.
+                            # Workers only switch back when they need the server,
+                            # so a target that could still reach it stayed
+                            # connected indefinitely. Runs after dispatch, so a
+                            # poll that handed out work leaves the launchpoint
+                            # where that worker wants it.
+                            self._restore_extender_launchpoint()
+
                         except requests.exceptions.ConnectionError as e:
                             logging.getLogger(__name__).error('Unable to connect to server.')
                             # Only switch the launchpoint back to the extender when
@@ -1282,6 +1475,7 @@ class ScheduledScanThread(threading.Thread):
                                 # Launchpoint moved back to the extender: drop
                                 # the stale manager connection pool.
                                 self.recon_manager.reset_api_pool()
+                                self._note_launchpoint_on_extender()
                         except Exception as e:
                             logging.getLogger(__name__).debug(traceback.format_exc())
 
