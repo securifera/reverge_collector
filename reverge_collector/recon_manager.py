@@ -681,6 +681,46 @@ class ScheduledScanThread(threading.Thread):
             buckets.setdefault(item.target_id, []).append(item)
         return buckets
 
+    @staticmethod
+    def _job_requires_target(job_item: Any) -> bool:
+        """Whether this job needs the launchpoint moved onto its target.
+
+        Honors an ``execution_scope`` field when the server sends one, falling
+        back to the job-type table in ``job_executor``.  An item missing
+        ``job_type`` entirely takes the safe, target-connected default rather
+        than breaking dispatch for the whole poll.
+        """
+        from reverge_collector.job_executor import job_requires_target
+
+        return job_requires_target(
+            getattr(job_item, 'job_type', None),
+            getattr(job_item, 'execution_scope', None),
+        )
+
+    def _split_collector_local_buckets(
+        self, buckets: 'OrderedDict[str, List[Any]]'
+    ) -> Tuple[List[Any], 'OrderedDict[str, List[Any]]']:
+        """Separate buckets that need no target connection at all.
+
+        A bucket qualifies only when EVERY job in it is collector-local (an
+        upload/download of the collector's own filesystem).  A local job queued
+        alongside target work for the same target stays with that batch so the
+        two can't be reordered — an upload the following shell command consumes
+        must still run first.
+
+        Returns:
+            ``(local_jobs, remaining_buckets)`` — the flattened collector-local
+            jobs in poll order, and the buckets still bound to a target.
+        """
+        local_jobs: List[Any] = []
+        remaining: OrderedDict[str, List[Any]] = OrderedDict()
+        for target_id, target_jobs in buckets.items():
+            if all(not self._job_requires_target(j) for j in target_jobs):
+                local_jobs.extend(target_jobs)
+            else:
+                remaining[target_id] = target_jobs
+        return local_jobs, remaining
+
     def _dispatch_job_batches(self, items: List[Any]) -> None:
         """Admit and dispatch not-yet-running CollectorJobs as per-target batches.
 
@@ -689,8 +729,20 @@ class ScheduledScanThread(threading.Thread):
         under a single launchpoint switch (and a single affinity slot).  Targets
         the affinity gate defers (a different target is active, or this one isn't
         confirmed reachable yet) are simply left for the next poll.
+
+        Collector-local jobs (file transfers against the collector's own disk)
+        skip all of that: they get their own worker with no affinity slot, so
+        they neither wait on the launchpoint nor keep a real target's work
+        deferred for a poll.
         """
-        for target_id, target_jobs in self._bucket_jobs_by_target(items).items():
+        buckets = self._bucket_jobs_by_target(items)
+        local_jobs, buckets = self._split_collector_local_buckets(buckets)
+        if local_jobs:
+            for job_item in local_jobs:
+                self.scheduled_scan_map[job_item.id] = job_item
+            Thread(target=partial(self._process_local_job_batch, list(local_jobs))).start()
+
+        for target_id, target_jobs in buckets.items():
             mode = self._admit_work(target_id)
             if mode is None:
                 continue
@@ -738,6 +790,96 @@ class ScheduledScanThread(threading.Thread):
                     self.pending_job_completions[jid] = p
             return set(batch.keys())
 
+    @staticmethod
+    def _run_jobs(jobs: List[Any], results: Dict[str, Any], run_errors: Dict[str, str]) -> None:
+        """Execute each job, recording its result or its error.
+
+        Per-job failures are captured rather than raised so one bad job can't
+        abort the rest of the batch.
+        """
+        from reverge_collector.job_executor import run_job
+
+        for job_item in jobs:
+            try:
+                results[job_item.id] = run_job(job_item.job_type, job_item.args)
+            except Exception as e:
+                run_errors[job_item.id] = str(e)
+                logging.getLogger(__name__).error('Job %s failed: %s', job_item.id, e)
+                logging.getLogger(__name__).debug(traceback.format_exc())
+
+    @staticmethod
+    def _terminal_job_batch(
+        jobs: List[Any], results: Dict[str, Any], run_errors: Dict[str, str]
+    ) -> Dict[str, Dict[str, Any]]:
+        """Build the job_id -> ``{status, result, err_msg}`` map for one batch."""
+        batch: Dict[str, Dict[str, Any]] = {}
+        for job_item in jobs:
+            if job_item.id in run_errors:
+                batch[job_item.id] = {
+                    'status': data_model.ScanStatus.ERROR.value,
+                    'result': None,
+                    'err_msg': run_errors[job_item.id],
+                }
+            else:
+                batch[job_item.id] = {
+                    'status': data_model.ScanStatus.COMPLETED.value,
+                    'result': results.get(job_item.id),
+                    'err_msg': None,
+                }
+        return batch
+
+    def _mark_jobs_running(self, jobs: List[Any]) -> None:
+        """Best-effort RUNNING status for every job in a batch.
+
+        A failure here (server briefly unreachable) must never stop the work —
+        the terminal status carries the real outcome.
+        """
+        for job_item in jobs:
+            try:
+                self.recon_manager.update_job_status(
+                    job_item.id, data_model.ScanStatus.RUNNING.value
+                )
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    'Job %s: failed to set RUNNING status; proceeding anyway',
+                    job_item.id,
+                )
+
+    def _process_local_job_batch(self, jobs: List[Any]) -> None:
+        """Execute collector-local CollectorJobs and report their results.
+
+        These jobs (file uploads/downloads against the collector's own disk)
+        never send a packet to the target, so this path deliberately skips the
+        whole launchpoint dance: no affinity slot, no connection lock, no
+        connect_to_target, no switch back to the extender.  That keeps a file
+        transfer off the critical path of real target work — and off the
+        target's network entirely.
+
+        The launchpoint may be parked on some other target while these run.  If
+        that makes the status report fail, ``_report_job_batch`` queues the
+        completion for the next poll exactly as the target path does, so the
+        already-executed job is never re-run.
+        """
+        if not jobs:
+            return
+
+        queued_for_retry: set = set()
+        try:
+            self._mark_jobs_running(jobs)
+
+            results: Dict[str, Any] = {}
+            run_errors: Dict[str, str] = {}
+            self._run_jobs(jobs, results, run_errors)
+
+            queued_for_retry |= self._report_job_batch(
+                self._terminal_job_batch(jobs, results, run_errors)
+            )
+        finally:
+            with self.scan_thread_lock:
+                for job_item in jobs:
+                    if job_item.id not in queued_for_retry:
+                        self.scheduled_scan_map.pop(job_item.id, None)
+
     def _process_job_with_slot(self, job_item, mode: str = 'switch') -> None:
         """Execute a single CollectorJob (batch-of-one) and report the result."""
         self._process_job_batch_with_slot([job_item], mode)
@@ -758,8 +900,6 @@ class ScheduledScanThread(threading.Thread):
         never aborts its siblings.  A launchpoint-switch failure fails the whole
         batch (no target to run on).
         """
-        from reverge_collector.job_executor import run_job
-
         if not jobs:
             return
 
@@ -783,16 +923,7 @@ class ScheduledScanThread(threading.Thread):
                 raise _LaunchpointSwitchError('Failed connecting to extender')
 
             # RUNNING for every job (best-effort, still on the extender/server).
-            for job_item in jobs:
-                try:
-                    self.recon_manager.update_job_status(
-                        job_item.id, data_model.ScanStatus.RUNNING.value
-                    )
-                except Exception:
-                    logging.getLogger(__name__).warning(
-                        'Job %s: failed to set RUNNING status; proceeding anyway',
-                        job_item.id,
-                    )
+            self._mark_jobs_running(jobs)
 
             results: Dict[str, Any] = {}
             run_errors: Dict[str, str] = {}
@@ -811,13 +942,7 @@ class ScheduledScanThread(threading.Thread):
 
                 # Run every job on the committed target.  Per-job failures are
                 # captured so one bad job can't abort the rest of the batch.
-                for job_item in jobs:
-                    try:
-                        results[job_item.id] = run_job(job_item.job_type, job_item.args)
-                    except Exception as e:
-                        run_errors[job_item.id] = str(e)
-                        logging.getLogger(__name__).error('Job %s failed: %s', job_item.id, e)
-                        logging.getLogger(__name__).debug(traceback.format_exc())
+                self._run_jobs(jobs, results, run_errors)
 
             finally:
                 # After target work, make sure the server is reachable to report
@@ -830,22 +955,9 @@ class ScheduledScanThread(threading.Thread):
 
             # Build each job's terminal status and report the whole batch in a
             # single request (one round-trip / one retry ladder for the group).
-            batch: Dict[str, Dict[str, Any]] = {}
-            for job_item in jobs:
-                if job_item.id in run_errors:
-                    batch[job_item.id] = {
-                        'status': data_model.ScanStatus.ERROR.value,
-                        'result': None,
-                        'err_msg': run_errors[job_item.id],
-                    }
-                else:
-                    result = results.get(job_item.id)
-                    batch[job_item.id] = {
-                        'status': data_model.ScanStatus.COMPLETED.value,
-                        'result': result,
-                        'err_msg': None,
-                    }
-            queued_for_retry |= self._report_job_batch(batch)
+            queued_for_retry |= self._report_job_batch(
+                self._terminal_job_batch(jobs, results, run_errors)
+            )
 
         except _LaunchpointSwitchError as e:
             # No usable target/network for the batch: error out every job.

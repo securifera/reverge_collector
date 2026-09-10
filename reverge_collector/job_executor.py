@@ -14,6 +14,7 @@ import logging
 import os
 import subprocess
 import tempfile
+from typing import Optional
 
 import requests
 
@@ -410,6 +411,39 @@ HANDLERS = {
     'directory_list': execute_directory_list,
     'http_request': execute_http_request,
 }
+
+
+# Job types whose work happens entirely on the collector host — no packet ever
+# leaves for the target.  The poller uses this to run them without moving the
+# launchpoint off the extender (see ScheduledScanThread._process_local_job_batch).
+# Anything not listed keeps the safe default of running target-connected.
+COLLECTOR_LOCAL_JOB_TYPES = frozenset(
+    {
+        'file_upload',
+        'file_download',
+    }
+)
+
+
+def job_requires_target(job_type: str, execution_scope: Optional[str] = None) -> bool:
+    """Report whether a job needs the launchpoint connected to its target.
+
+    Args:
+        job_type: One of the keys in HANDLERS.
+        execution_scope: Optional per-job override sent by the server —
+            ``'collector'`` forces collector-local execution, ``'target'``
+            forces the target connection.  This lets the backend classify a new
+            job type without waiting on a collector release; any other value
+            (including None) falls back to ``COLLECTOR_LOCAL_JOB_TYPES``.
+
+    Returns:
+        bool: True when the job must run with the launchpoint on the target.
+    """
+    if execution_scope == 'collector':
+        return False
+    if execution_scope == 'target':
+        return True
+    return job_type not in COLLECTOR_LOCAL_JOB_TYPES
 
 
 def run_job(job_type: str, args_json) -> dict:
