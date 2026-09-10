@@ -428,6 +428,129 @@ class TestCollectorLocalJobDispatch:
         assert MockThread.call_args.kwargs['target'].func == t._process_local_job_batch
 
 
+class TestLocalJobTargetInterlock:
+    """Cross-poll ordering: a local job and target work for the SAME target must
+    never overlap, even when they arrive in different polls."""
+
+    def test_target_bucket_defers_while_local_jobs_for_that_target_run(self):
+        t = make_thread()
+        # Poll N dispatched a local batch for target A (still in flight).
+        with patch('reverge_collector.recon_manager.Thread'):
+            t._dispatch_job_batches([make_job('j1', target_id='A', job_type='file_upload')])
+
+        # Poll N+1 brings target work for the same target.
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j2', target_id='A', job_type='shell')])
+
+        MockThread.assert_not_called()
+        assert 'j2' not in t.scheduled_scan_map
+        # No affinity slot was consumed by the deferral.
+        assert t._no_workers_in_flight()
+
+    def test_local_bucket_defers_while_target_work_for_that_target_runs(self):
+        t = make_thread()
+        with patch('reverge_collector.recon_manager.Thread'):
+            t._dispatch_job_batches([make_job('j1', target_id='A', job_type='shell')])
+
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j2', target_id='A', job_type='file_download')])
+
+        MockThread.assert_not_called()
+        assert 'j2' not in t.scheduled_scan_map
+
+    def test_local_bucket_is_not_deferred_by_a_scan_on_the_same_target(self):
+        """The interlock guards job-vs-job ordering only.  A scan holding the
+        target must not stall a file transfer for minutes — nothing about a
+        scan can consume the uploaded file."""
+        t = make_thread()
+        # A scan (not a job) holds target A's affinity slot.
+        assert t._admit_work('A') == 'switch'
+
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j1', target_id='A', job_type='file_download')])
+
+        assert MockThread.call_args.kwargs['target'].func == t._process_local_job_batch
+        assert 'j1' in t.scheduled_scan_map
+
+    def test_interlock_is_per_target_not_global(self):
+        """In-flight local work for A must not hold back target B."""
+        t = make_thread()
+        with patch('reverge_collector.recon_manager.Thread'):
+            t._dispatch_job_batches([make_job('j1', target_id='A', job_type='file_upload')])
+
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j2', target_id='B', job_type='shell')])
+
+        assert MockThread.call_count == 1
+        assert 'j2' in t.scheduled_scan_map
+
+    def test_local_jobs_for_a_different_target_still_dispatch(self):
+        t = make_thread()
+        with patch('reverge_collector.recon_manager.Thread'):
+            t._dispatch_job_batches([make_job('j1', target_id='A', job_type='shell')])
+
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j2', target_id='B', job_type='file_download')])
+
+        assert MockThread.call_args.kwargs['target'].func == t._process_local_job_batch
+
+    def test_target_job_registry_clears_when_that_batch_finishes(self):
+        """Deferred local jobs are admitted once the target batch drains."""
+        cm = MagicMock()
+        cm.connect_to_extender.return_value = True
+        cm.connect_to_target.return_value = True
+        t = make_thread(connection_manager=cm)
+        job = make_job('j1', target_id='A', job_type='shell')
+        with patch('reverge_collector.recon_manager.Thread'):
+            t._dispatch_job_batches([job])
+
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ):
+            t._process_job_batch_with_slot([job], 'switch')
+
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j2', target_id='A', job_type='file_upload')])
+        assert MockThread.call_args.kwargs['target'].func == t._process_local_job_batch
+
+    def test_registry_clears_when_the_local_batch_finishes(self):
+        """Once the local batch drains, the deferred target work is admitted."""
+        t = make_thread()
+        job = make_job('j1', target_id='A', job_type='file_upload')
+        with patch('reverge_collector.recon_manager.Thread'):
+            t._dispatch_job_batches([job])
+
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ):
+            t._process_local_job_batch([job])
+
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j2', target_id='A', job_type='shell')])
+        assert MockThread.call_count == 1
+        assert 'j2' in t.scheduled_scan_map
+
+    def test_registry_clears_even_when_a_local_job_report_fails(self):
+        """A queued-for-retry completion must not pin the target forever."""
+        t = make_thread()
+        t.recon_manager.update_jobs_status_batch.side_effect = Exception('500')
+        job = make_job('j1', target_id='A', job_type='file_download')
+        with patch('reverge_collector.recon_manager.Thread'):
+            t._dispatch_job_batches([job])
+
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ):
+            t._process_local_job_batch([job])
+
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j2', target_id='A', job_type='shell')])
+        assert MockThread.call_count == 1
+
+
 class TestProcessLocalJobBatch:
     def test_runs_and_reports_without_touching_the_connection(self):
         cm = MagicMock()

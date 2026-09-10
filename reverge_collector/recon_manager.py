@@ -302,6 +302,13 @@ class ScheduledScanThread(threading.Thread):
         #                              reverge server is reachable from it; peers
         #                              are only admitted once this is True
         self._target_state_lock = threading.Lock()
+        # target_id -> count of CollectorJobs currently running for it, split by
+        # which path is running them.  Guarded by _target_state_lock; see
+        # _dispatch_job_batches for how the pair keeps collector-local and
+        # target-connected jobs for one target from overlapping.  Scans are
+        # deliberately not tracked here — only job-vs-job ordering matters.
+        self._local_jobs_in_flight: Dict[str, int] = {}
+        self._target_jobs_in_flight: Dict[str, int] = {}
         self._active_target_id: Optional[str] = None
         self._active_worker_count = 0
         self._active_target_reachable = False
@@ -354,6 +361,29 @@ class ScheduledScanThread(threading.Thread):
             if self._active_worker_count == 0:
                 self._active_target_id = None
                 self._active_target_reachable = False
+
+    def _note_jobs_started(self, registry: Dict[str, int], jobs: List[Any]) -> None:
+        """Register in-flight jobs against their targets in ``registry``."""
+        with self._target_state_lock:
+            for job_item in jobs:
+                target_id = getattr(job_item, 'target_id', None)
+                registry[target_id] = registry.get(target_id, 0) + 1
+
+    def _note_jobs_finished(self, registry: Dict[str, int], jobs: List[Any]) -> None:
+        """Drop finished jobs from ``registry``, clearing drained targets."""
+        with self._target_state_lock:
+            for job_item in jobs:
+                target_id = getattr(job_item, 'target_id', None)
+                remaining = registry.get(target_id, 0) - 1
+                if remaining > 0:
+                    registry[target_id] = remaining
+                else:
+                    registry.pop(target_id, None)
+
+    def _jobs_running_for(self, registry: Dict[str, int], target_id: Optional[str]) -> bool:
+        """Whether ``registry`` has jobs in flight for ``target_id``."""
+        with self._target_state_lock:
+            return registry.get(target_id, 0) > 0
 
     def _mark_target_reachable(self, reachable: bool) -> None:
         """Record whether the active target can reach the server.
@@ -703,22 +733,26 @@ class ScheduledScanThread(threading.Thread):
         """Separate buckets that need no target connection at all.
 
         A bucket qualifies only when EVERY job in it is collector-local (an
-        upload/download of the collector's own filesystem).  A local job queued
-        alongside target work for the same target stays with that batch so the
-        two can't be reordered — an upload the following shell command consumes
-        must still run first.
+        upload/download of the collector's own filesystem) AND no target-
+        connected job for that target is in flight.  Both conditions protect
+        ordering: a local job queued alongside target work for the same target
+        stays with that batch, and one that arrives while an earlier poll's
+        target work is still running is deferred instead of overtaking it.  An
+        upload a following shell command consumes must always run first.
 
         Returns:
             ``(local_jobs, remaining_buckets)`` — the flattened collector-local
             jobs in poll order, and the buckets still bound to a target.
+            Deferred local buckets appear in neither and are re-evaluated on the
+            next poll.
         """
         local_jobs: List[Any] = []
         remaining: OrderedDict[str, List[Any]] = OrderedDict()
         for target_id, target_jobs in buckets.items():
-            if all(not self._job_requires_target(j) for j in target_jobs):
-                local_jobs.extend(target_jobs)
-            else:
+            if any(self._job_requires_target(j) for j in target_jobs):
                 remaining[target_id] = target_jobs
+            elif not self._jobs_running_for(self._target_jobs_in_flight, target_id):
+                local_jobs.extend(target_jobs)
         return local_jobs, remaining
 
     def _dispatch_job_batches(self, items: List[Any]) -> None:
@@ -734,20 +768,34 @@ class ScheduledScanThread(threading.Thread):
         skip all of that: they get their own worker with no affinity slot, so
         they neither wait on the launchpoint nor keep a real target's work
         deferred for a poll.
+
+        The two paths interlock per target so jobs for one target can never
+        overlap across polls: a target bucket is deferred while local jobs for
+        that target are still running, and a local bucket is deferred while
+        target-connected jobs for it are.  Without it, a shell job arriving one
+        poll after an upload it consumes could start before the file was
+        written.  Scans are deliberately outside the interlock — only job-vs-job
+        ordering is at stake, so a long scan never stalls a file transfer.
         """
         buckets = self._bucket_jobs_by_target(items)
         local_jobs, buckets = self._split_collector_local_buckets(buckets)
         if local_jobs:
             for job_item in local_jobs:
                 self.scheduled_scan_map[job_item.id] = job_item
+            # Registered before the worker starts so a target bucket dispatched
+            # later in this same poll already sees the target as busy.
+            self._note_jobs_started(self._local_jobs_in_flight, local_jobs)
             Thread(target=partial(self._process_local_job_batch, list(local_jobs))).start()
 
         for target_id, target_jobs in buckets.items():
+            if self._jobs_running_for(self._local_jobs_in_flight, target_id):
+                continue
             mode = self._admit_work(target_id)
             if mode is None:
                 continue
             for job_item in target_jobs:
                 self.scheduled_scan_map[job_item.id] = job_item
+            self._note_jobs_started(self._target_jobs_in_flight, target_jobs)
             Thread(
                 target=partial(self._process_job_batch_with_slot, list(target_jobs), mode)
             ).start()
@@ -875,6 +923,9 @@ class ScheduledScanThread(threading.Thread):
                 self._terminal_job_batch(jobs, results, run_errors)
             )
         finally:
+            # Released unconditionally: a completion queued for retry has still
+            # finished running, so it must not pin the target's work forever.
+            self._note_jobs_finished(self._local_jobs_in_flight, jobs)
             with self.scan_thread_lock:
                 for job_item in jobs:
                     if job_item.id not in queued_for_retry:
@@ -975,6 +1026,9 @@ class ScheduledScanThread(threading.Thread):
         finally:
             if cm and not is_peer:
                 cm.free_connection_lock()
+            # Release this batch from the per-target job registry so deferred
+            # collector-local jobs for the same target can be dispatched.
+            self._note_jobs_finished(self._target_jobs_in_flight, jobs)
             # Release this worker's single slot in the affinity gate so the
             # target can drain and a different target can take the launchpoint.
             self._finish_work()
