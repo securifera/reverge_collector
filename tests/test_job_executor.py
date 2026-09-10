@@ -579,3 +579,39 @@ def test_file_download_clamps_an_oversized_length(tmp_path, monkeypatch):
 
     out = job_executor.execute_file_download({'remote_path': str(f), 'length': 10_000})
     assert out['bytes_returned'] == 64
+
+
+# ---------------------------------------------------------------------------
+# job_requires_target — target-network classification
+# ---------------------------------------------------------------------------
+
+
+def test_file_transfer_job_types_do_not_require_the_target():
+    """Uploads/downloads touch only the collector's own filesystem."""
+    assert job_executor.job_requires_target('file_upload') is False
+    assert job_executor.job_requires_target('file_download') is False
+
+
+def test_other_job_types_require_the_target():
+    assert job_executor.job_requires_target('shell') is True
+    assert job_executor.job_requires_target('python') is True
+    assert job_executor.job_requires_target('http_request') is True
+    assert job_executor.job_requires_target('directory_list') is True
+
+
+def test_unknown_job_type_requires_the_target():
+    """Unknown types keep the safe (target-connected) default."""
+    assert job_executor.job_requires_target('some_future_type') is True
+
+
+def test_execution_scope_collector_overrides_the_type_table():
+    assert job_executor.job_requires_target('shell', execution_scope='collector') is False
+
+
+def test_execution_scope_target_overrides_the_type_table():
+    assert job_executor.job_requires_target('file_download', execution_scope='target') is True
+
+
+def test_unrecognized_execution_scope_falls_back_to_the_type_table():
+    assert job_executor.job_requires_target('shell', execution_scope='nonsense') is True
+    assert job_executor.job_requires_target('file_upload', execution_scope='') is False

@@ -351,6 +351,285 @@ class TestDispatchJobBatches:
 
 
 # ===========================================================================
+# Collector-local jobs (no target network)
+# ===========================================================================
+
+
+class TestCollectorLocalJobDispatch:
+    """file_upload/file_download run on the collector itself, so they must not
+    take an affinity slot, the connection lock, or move the launchpoint."""
+
+    def test_local_jobs_dispatch_off_the_target_path(self):
+        t = make_thread()
+        jobs = [
+            make_job('j1', target_id='A', job_type='file_download'),
+            make_job('j2', target_id='A', job_type='file_upload'),
+        ]
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches(jobs)
+
+        assert MockThread.call_count == 1
+        p = MockThread.call_args.kwargs['target']
+        assert p.func == t._process_local_job_batch
+        assert [j.id for j in p.args[0]] == ['j1', 'j2']
+        assert set(t.scheduled_scan_map) == {'j1', 'j2'}
+        # No affinity slot consumed: a different target can still be admitted.
+        assert t._no_workers_in_flight()
+
+    def test_local_jobs_do_not_block_a_different_target(self):
+        """A download for target A used to eat the poll's only launchpoint
+        slot, deferring target B's real work to the next poll."""
+        t = make_thread()
+        items = [
+            make_job('j1', target_id='A', job_type='file_download'),
+            make_job('j2', target_id='B', job_type='shell'),
+        ]
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches(items)
+
+        targets = [c.kwargs['target'] for c in MockThread.call_args_list]
+        assert {p.func for p in targets} == {
+            t._process_local_job_batch,
+            t._process_job_batch_with_slot,
+        }
+        assert set(t.scheduled_scan_map) == {'j1', 'j2'}
+
+    def test_local_job_sharing_a_target_batch_keeps_ordering(self):
+        """A local job queued alongside target work for the SAME target stays in
+        that batch, so an upload can't overtake the shell job that consumes it."""
+        t = make_thread()
+        items = [
+            make_job('j1', target_id='A', job_type='file_upload'),
+            make_job('j2', target_id='A', job_type='shell'),
+        ]
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches(items)
+
+        assert MockThread.call_count == 1
+        p = MockThread.call_args.kwargs['target']
+        assert p.func == t._process_job_batch_with_slot
+        assert [j.id for j in p.args[0]] == ['j1', 'j2']
+
+    def test_job_without_a_job_type_still_dispatches_to_the_target_path(self):
+        """A malformed/legacy item missing job_type must not break the poll."""
+        t = make_thread()
+        job = SimpleNamespace(id='j1', target_id='A', _type='job')
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([job])
+        assert MockThread.call_args.kwargs['target'].func == t._process_job_batch_with_slot
+        assert set(t.scheduled_scan_map) == {'j1'}
+
+    def test_server_execution_scope_field_overrides_the_type_table(self):
+        t = make_thread()
+        job = make_job('j1', target_id='A', job_type='shell')
+        job.execution_scope = 'collector'
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([job])
+        assert MockThread.call_args.kwargs['target'].func == t._process_local_job_batch
+
+
+class TestLocalJobTargetInterlock:
+    """Cross-poll ordering: a local job and target work for the SAME target must
+    never overlap, even when they arrive in different polls."""
+
+    def test_target_bucket_defers_while_local_jobs_for_that_target_run(self):
+        t = make_thread()
+        # Poll N dispatched a local batch for target A (still in flight).
+        with patch('reverge_collector.recon_manager.Thread'):
+            t._dispatch_job_batches([make_job('j1', target_id='A', job_type='file_upload')])
+
+        # Poll N+1 brings target work for the same target.
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j2', target_id='A', job_type='shell')])
+
+        MockThread.assert_not_called()
+        assert 'j2' not in t.scheduled_scan_map
+        # No affinity slot was consumed by the deferral.
+        assert t._no_workers_in_flight()
+
+    def test_local_bucket_defers_while_target_work_for_that_target_runs(self):
+        t = make_thread()
+        with patch('reverge_collector.recon_manager.Thread'):
+            t._dispatch_job_batches([make_job('j1', target_id='A', job_type='shell')])
+
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j2', target_id='A', job_type='file_download')])
+
+        MockThread.assert_not_called()
+        assert 'j2' not in t.scheduled_scan_map
+
+    def test_local_bucket_is_not_deferred_by_a_scan_on_the_same_target(self):
+        """The interlock guards job-vs-job ordering only.  A scan holding the
+        target must not stall a file transfer for minutes — nothing about a
+        scan can consume the uploaded file."""
+        t = make_thread()
+        # A scan (not a job) holds target A's affinity slot.
+        assert t._admit_work('A') == 'switch'
+
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j1', target_id='A', job_type='file_download')])
+
+        assert MockThread.call_args.kwargs['target'].func == t._process_local_job_batch
+        assert 'j1' in t.scheduled_scan_map
+
+    def test_interlock_is_per_target_not_global(self):
+        """In-flight local work for A must not hold back target B."""
+        t = make_thread()
+        with patch('reverge_collector.recon_manager.Thread'):
+            t._dispatch_job_batches([make_job('j1', target_id='A', job_type='file_upload')])
+
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j2', target_id='B', job_type='shell')])
+
+        assert MockThread.call_count == 1
+        assert 'j2' in t.scheduled_scan_map
+
+    def test_local_jobs_for_a_different_target_still_dispatch(self):
+        t = make_thread()
+        with patch('reverge_collector.recon_manager.Thread'):
+            t._dispatch_job_batches([make_job('j1', target_id='A', job_type='shell')])
+
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j2', target_id='B', job_type='file_download')])
+
+        assert MockThread.call_args.kwargs['target'].func == t._process_local_job_batch
+
+    def test_target_job_registry_clears_when_that_batch_finishes(self):
+        """Deferred local jobs are admitted once the target batch drains."""
+        cm = MagicMock()
+        cm.connect_to_extender.return_value = True
+        cm.connect_to_target.return_value = True
+        t = make_thread(connection_manager=cm)
+        job = make_job('j1', target_id='A', job_type='shell')
+        with patch('reverge_collector.recon_manager.Thread'):
+            t._dispatch_job_batches([job])
+
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ):
+            t._process_job_batch_with_slot([job], 'switch')
+
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j2', target_id='A', job_type='file_upload')])
+        assert MockThread.call_args.kwargs['target'].func == t._process_local_job_batch
+
+    def test_registry_clears_when_the_local_batch_finishes(self):
+        """Once the local batch drains, the deferred target work is admitted."""
+        t = make_thread()
+        job = make_job('j1', target_id='A', job_type='file_upload')
+        with patch('reverge_collector.recon_manager.Thread'):
+            t._dispatch_job_batches([job])
+
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ):
+            t._process_local_job_batch([job])
+
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j2', target_id='A', job_type='shell')])
+        assert MockThread.call_count == 1
+        assert 'j2' in t.scheduled_scan_map
+
+    def test_registry_clears_even_when_a_local_job_report_fails(self):
+        """A queued-for-retry completion must not pin the target forever."""
+        t = make_thread()
+        t.recon_manager.update_jobs_status_batch.side_effect = Exception('500')
+        job = make_job('j1', target_id='A', job_type='file_download')
+        with patch('reverge_collector.recon_manager.Thread'):
+            t._dispatch_job_batches([job])
+
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ):
+            t._process_local_job_batch([job])
+
+        with patch('reverge_collector.recon_manager.Thread') as MockThread:
+            t._dispatch_job_batches([make_job('j2', target_id='A', job_type='shell')])
+        assert MockThread.call_count == 1
+
+
+class TestProcessLocalJobBatch:
+    def test_runs_and_reports_without_touching_the_connection(self):
+        cm = MagicMock()
+        t = make_thread(connection_manager=cm)
+        jobs = [
+            make_job('j1', job_type='file_download'),
+            make_job('j2', job_type='file_upload'),
+        ]
+        for j in jobs:
+            t.scheduled_scan_map[j.id] = j
+
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ) as rj:
+            t._process_local_job_batch(jobs)
+
+        assert rj.call_count == 2
+        cm.get_connection_lock.assert_not_called()
+        cm.connect_to_target.assert_not_called()
+        cm.connect_to_extender.assert_not_called()
+        assert t.recon_manager.update_jobs_status_batch.call_count == 1
+        assert _reported_statuses(t.recon_manager) == [data_model.ScanStatus.COMPLETED.value] * 2
+        assert t.scheduled_scan_map == {}
+
+    def test_one_failure_does_not_abort_the_rest(self):
+        t = make_thread()
+        jobs = [
+            make_job('j1', job_type='file_download'),
+            make_job('j2', job_type='file_download', args='boom'),
+            make_job('j3', job_type='file_upload'),
+        ]
+        for j in jobs:
+            t.scheduled_scan_map[j.id] = j
+
+        def _run(job_type, args):
+            if args == 'boom':
+                raise RuntimeError('handler crashed')
+            return {'exit_code': 0}
+
+        with patch('reverge_collector.job_executor.run_job', side_effect=_run):
+            t._process_local_job_batch(jobs)
+
+        statuses = _reported_statuses(t.recon_manager)
+        assert statuses.count(data_model.ScanStatus.COMPLETED.value) == 2
+        assert statuses.count(data_model.ScanStatus.ERROR.value) == 1
+        assert t.scheduled_scan_map == {}
+
+    def test_report_failure_queues_for_retry_and_keeps_map_entry(self):
+        t = make_thread()
+        t.recon_manager.update_jobs_status_batch.side_effect = Exception('500')
+        job = make_job('j1', job_type='file_download')
+        t.scheduled_scan_map[job.id] = job
+
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ):
+            t._process_local_job_batch([job])
+
+        # Not popped: the poll loop must not re-run the already-executed job.
+        assert 'j1' in t.scheduled_scan_map
+        assert 'j1' in t.pending_job_completions
+
+    def test_running_status_failure_is_swallowed(self):
+        t = make_thread()
+        t.recon_manager.update_job_status.side_effect = Exception('server down')
+        job = make_job('j1', job_type='file_upload')
+
+        with patch(
+            'reverge_collector.job_executor.run_job',
+            return_value={'exit_code': 0},
+        ):
+            t._process_local_job_batch([job])
+
+        assert data_model.ScanStatus.COMPLETED.value in _reported_statuses(t.recon_manager)
+
+
+# ===========================================================================
 # process_collector_settings
 # ===========================================================================
 
